@@ -1,0 +1,251 @@
+{
+  "total_dialogs": 44,
+  "pipeline_success_rate": 1.0,
+  "assistant_end_rate": 0.6818181818181818,
+  "module_success_rate": {
+    "message_classifier": 1.0,
+    "screening_assistant": 1.0,
+    "screening_autofill": 1.0,
+    "verdict_classifier": 1.0
+  },
+  "prompts": {
+    "message_classifier": {
+      "id": "pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726",
+      "version": 4
+    },
+    "screening_assistant": {
+      "id": "pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf",
+      "version": 4
+    },
+    "screening_autofill": {
+      "id": "pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902",
+      "version": 13
+    },
+    "verdict_classifier": {
+      "id": "pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1",
+      "version": 2
+    }
+  },
+  "case_reports": [
+    {
+      "dialog_file": "@Aurika_Sb_aefremov_pro.dialog.jsonl",
+      "report": "tests/reports/dialogs/@Aurika_Sb_aefremov_pro.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@Aurika_Sb_de1f_in.dialog.jsonl",
+      "report": "tests/reports/dialogs/@Aurika_Sb_de1f_in.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@GalinaItHr_aleksandrkazyaev.dialog.jsonl",
+      "report": "tests/reports/dialogs/@GalinaItHr_aleksandrkazyaev.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@GalinaItHr_oxy_act.dialog.jsonl",
+      "report": "tests/reports/dialogs/@GalinaItHr_oxy_act.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@Sabina_HRpro_alxsemn.dialog.jsonl",
+      "report": "tests/reports/dialogs/@Sabina_HRpro_alxsemn.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alexiosHR_apelsinus.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alexiosHR_apelsinus.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alexiosHR_dimlie.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alexiosHR_dimlie.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alexiosHR_headline_sa.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alexiosHR_headline_sa.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alexiosHR_rodgenk.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alexiosHR_rodgenk.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alexiosHR_vadimk_p.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alexiosHR_vadimk_p.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alice_angel_a_digital_geopot.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alice_angel_a_digital_geopot.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@alice_angel_a_manfred251278.dialog.jsonl",
+      "report": "tests/reports/dialogs/@alice_angel_a_manfred251278.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@anastasiaRecIt_kunishuter.dialog.jsonl",
+      "report": "tests/reports/dialogs/@anastasiaRecIt_kunishuter.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@barbara_onthetop_alenashkiper.dialog.jsonl",
+      "report": "tests/reports/dialogs/@barbara_onthetop_alenashkiper.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@barbara_onthetop_bhavenger.dialog.jsonl",
+      "report": "tests/reports/dialogs/@barbara_onthetop_bhavenger.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@barbara_onthetop_kalevas.dialog.jsonl",
+      "report": "tests/reports/dialogs/@barbara_onthetop_kalevas.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@barbara_onthetop_kmishichev.dialog.jsonl",
+      "report": "tests/reports/dialogs/@barbara_onthetop_kmishichev.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@barbara_onthetop_nov1zar.dialog.jsonl",
+      "report": "tests/reports/dialogs/@barbara_onthetop_nov1zar.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_apolulyakh.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_apolulyakh.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_asetabalana.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_asetabalana.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_dexogen.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_dexogen.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_djdish.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_djdish.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_enemy_jizer.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_enemy_jizer.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_myasnik45.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_myasnik45.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_tknjfs.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_tknjfs.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_xenomorphling.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_xenomorphling.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@it_anna_it_yulia_nikulina.dialog.jsonl",
+      "report": "tests/reports/dialogs/@it_anna_it_yulia_nikulina.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@itrecruiter_kir_quickmike.dialog.jsonl",
+      "report": "tests/reports/dialogs/@itrecruiter_kir_quickmike.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@larisHR_it_dtarkhov.dialog.jsonl",
+      "report": "tests/reports/dialogs/@larisHR_it_dtarkhov.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@leyla_baby_dosy788.dialog.jsonl",
+      "report": "tests/reports/dialogs/@leyla_baby_dosy788.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@lizafromIT_d_abramov.dialog.jsonl",
+      "report": "tests/reports/dialogs/@lizafromIT_d_abramov.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@marian_vIT_i_ll_ride.dialog.jsonl",
+      "report": "tests/reports/dialogs/@marian_vIT_i_ll_ride.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@marinaHRit_guitaraster.dialog.jsonl",
+      "report": "tests/reports/dialogs/@marinaHRit_guitaraster.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@marinaHRit_levcharino.dialog.jsonl",
+      "report": "tests/reports/dialogs/@marinaHRit_levcharino.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@marinaHRit_stormstr1ke.dialog.jsonl",
+      "report": "tests/reports/dialogs/@marinaHRit_stormstr1ke.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@mary_itrecruter_artemkrivonozhko.dialog.jsonl",
+      "report": "tests/reports/dialogs/@mary_itrecruter_artemkrivonozhko.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@natali_fromTech_kalvinovanton.dialog.jsonl",
+      "report": "tests/reports/dialogs/@natali_fromTech_kalvinovanton.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@proHRalena_morozov_mike.dialog.jsonl",
+      "report": "tests/reports/dialogs/@proHRalena_morozov_mike.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@proHRalena_sobergrim.dialog.jsonl",
+      "report": "tests/reports/dialogs/@proHRalena_sobergrim.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@roza_hrpro_artemgrunin.dialog.jsonl",
+      "report": "tests/reports/dialogs/@roza_hrpro_artemgrunin.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@sveta_superhr_dkrut.dialog.jsonl",
+      "report": "tests/reports/dialogs/@sveta_superhr_dkrut.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@vestaProIt_belotelov163.dialog.jsonl",
+      "report": "tests/reports/dialogs/@vestaProIt_belotelov163.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@victoria_itrec_mustdie_green.dialog.jsonl",
+      "report": "tests/reports/dialogs/@victoria_itrec_mustdie_green.json",
+      "success": true
+    },
+    {
+      "dialog_file": "@victoria_itrec_zazaelio.dialog.jsonl",
+      "report": "tests/reports/dialogs/@victoria_itrec_zazaelio.json",
+      "success": true
+    }
+  ]
+}

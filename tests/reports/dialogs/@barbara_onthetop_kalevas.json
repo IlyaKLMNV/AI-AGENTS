@@ -1,0 +1,72 @@
+{
+  "dialog_file": "@barbara_onthetop_kalevas.dialog.jsonl",
+  "cdm_file": "cdm_01.json",
+  "candidate_messages": [
+    "I don't understand russian",
+    "I am not available for hiring...If you want a private connection, contact me.",
+    "Thanks"
+  ],
+  "dialog_text": "Рекрутер: Алексей, здравствуйте!\n\nМеня зовут Варя, я внешний IT-рекрутер и помогаю в поиске специалистов для компании. Обратила внимание на ваш профиль в LinkedIn и ваш опыт в DevOps, что идеально подходит для позиции Senior DevOps-инженер.\n\nКомпания — российский вендор, разрабатывающий собственные программные продукты и заказные решения с 1997 года. В цифрах: более 100 миллионов пользователей, 22 офиса по всей стране, свыше 3000 сотрудников. В портфеле — более 6800 реализованных проектов в 83 регионах и более 20 федеральных заказных решений.\n\nЧто предстоит делать:\n- Поддержка, оптимизация и развитие существующей инфраструктуры\n- Настройка высокодоступных и высоконагруженных систем\n- Автоматизация тестирования и деплоя на разные среды\n- Настройка журналирования и мониторинга\n- Организация CI/CD пайплайнов (Gitlab, Ansible, Docker)\n\nТребования к кандидатам:\n- Опыт работы в DevOps не менее 3 лет\n- Знание инструментов автоматизации и оркестрации\n- Навыки настройки CI/CD, мониторинга и логирования\n\nЗаработная плата: обсуждается после собеседования и зависит от опыта и навыков.\n\nПодходит ли вам эта вакансия? Готовы ли рассматривать новые предложения? Буду рада продолжить диалог и обсудить все детали.\nКандидат: I don't understand russian\nРекрутер: Thank you for letting me know! I’ll continue in English.\n\nFor our screening, I need to clarify two things first: \nWhat are your salary expectations? And in which city are you currently based?\nКандидат: I am not available for hiring...If you want a private connection, contact me.\nРекрутер: Thank you for your response! I appreciate the clarification. If your situation changes and you become interested in professional opportunities, feel free to reach out any time. Wishing you all the best!\nКандидат: Thanks",
+  "classifier_outputs": [
+    {
+      "text": "I don't understand russian",
+      "label": "human_needed"
+    },
+    {
+      "text": "I am not available for hiring...If you want a private connection, contact me.",
+      "label": "human_needed"
+    },
+    {
+      "text": "Thanks",
+      "label": "human_needed"
+    }
+  ],
+  "assistant_turns": [
+    {
+      "role": "candidate",
+      "text": "I don't understand russian"
+    },
+    {
+      "role": "assistant",
+      "text": "Если так удобнее, можем продолжить на английском. \n\nTo start, could you please share your salary expectations (in RUB, net) and let me know which city you are currently based in?"
+    },
+    {
+      "role": "candidate",
+      "text": "I am not available for hiring...If you want a private connection, contact me."
+    },
+    {
+      "role": "assistant",
+      "text": "Thank you for letting me know. In that case, I won't take more of your time. Best of luck with your next steps!"
+    }
+  ],
+  "assistant_ended": true,
+  "autofill": {
+    "preferred_location": "",
+    "min_salary": "",
+    "max_salary": "",
+    "additional_info": [
+      {
+        "question": "What are your salary expectations?",
+        "answer": "I am not available for hiring...If you want a private connection, contact me."
+      },
+      {
+        "question": "In which city are you currently based?",
+        "answer": "I am not available for hiring...If you want a private connection, contact me."
+      },
+      {
+        "question": "Please describe your current role or experience in DevOps.",
+        "answer": "Thanks"
+      }
+    ],
+    "work_format": ""
+  },
+  "verdict": "deadlock",
+  "modules": {
+    "message_classifier": true,
+    "screening_assistant": true,
+    "screening_autofill": true,
+    "verdict_classifier": true
+  },
+  "errors": {},
+  "success": true
+}

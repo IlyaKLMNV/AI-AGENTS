@@ -1,2 +1,0 @@
-OK=3 FAIL=1
-PROMPTS={"message_classifier": {"id": "pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726", "version": 3}, "screening_assistant": {"id": "pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf", "version": 4}, "screening_autofill": {"id": "pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902", "version": 2}, "verdict_classifier": {"id": "pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1", "version": 1}}

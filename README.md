@@ -52,21 +52,20 @@ python -m app.runner gen-fixtures
 - пересоздаёт набор CDM-вакансий (`tests/fixtures/cdm/cdm_*.json`) из расширенного `SAMPLES`;
 - оставляет отчёт в консоли.
 
-## Тесты и e2e-прогоны
+## Тесты и отчётность
 
-- Мини-юниты (классификатор + smoke-тест ассистента):
+- Полный прогон по всем диалогам:
   ```bash
   python -m app.runner unit
   ```
-  По окончании отчёт сохраняется в `tests/reports/unit_<timestamp>.txt` с фиксацией prompt id/версий.
+  Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждого файла из `tests/fixtures/dialogs_parsed/`.  
+  Результаты:
+  - сводка `tests/reports/run_<timestamp>.json` — агрегированные метрики (pipeline success rate, success по модулям, список отчётов);
+  - детальные логи по каждому диалогу: `tests/reports/dialogs/<dialog>.json` (весь текст, решения классификатора, все ответы ассистента по шагам, JSON от autofill, финальный вердикт, статусы модулей, ошибки).
 
-- Сквозной прогон (ассистент → autofill → verdict):
-  ```bash
-  python -m app.runner e2e
-  ```
-  Репорт лежит в `tests/reports/e2e_<timestamp>.json`.
+- `python -m app.runner e2e` — алиас, который выполняет тот же полный прогон (оставлен для обратной совместимости).
 
-Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы Responses API завершатся ошибкой.
+Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы OpenAI Responses API завершатся ошибкой.
 
 ## Запуск демо-сценариев
 
