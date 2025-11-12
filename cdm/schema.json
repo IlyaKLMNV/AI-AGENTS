@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CanonicalDataModel",
+  "type": "object",
+  "required": ["vacancy", "candidate"],
+  "properties": {
+    "vacancy": {
+      "type": "object",
+      "required": ["title", "company_name"],
+      "properties": {
+        "title": { "type": "string" },
+        "company_name": { "type": "string" },
+        "company_description": { "type": ["string", "null"] },
+        "company_industry": { "type": ["string", "null"] },
+        "location": { "type": ["string", "null"] },
+        "work_format": { "enum": ["remote", "office", "hybrid", null] },
+        "salary_range_from": { "type": ["integer", "null"] },
+        "salary_range_to": { "type": ["integer", "null"] },
+        "responsibilities": { "type": ["string", "null"] },
+        "vacancy_stack": { "type": ["string", "null"] },
+        "vacancy_skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "questions": { "type": ["string", "null"] }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["recruiter_name", "candidate_name"],
+      "properties": {
+        "recruiter_name": { "type": "string" },
+        "candidate_name": { "type": "string" },
+        "candidate_contacts": {
+          "type": "array",
+          "items": { "type": "object" },
+          "default": []
+        },
+        "candidate_job_list": {
+          "type": "array",
+          "items": { "type": "object" },
+          "default": []
+        },
+        "candidate_skills": {
+          "type": "array",
+          "items": { "type": "object" },
+          "default": []
+        }
+      }
+    }
+  }
+}

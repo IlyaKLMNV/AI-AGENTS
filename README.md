@@ -1,6 +1,16 @@
 # AI Agents Workspace
 
-Этот репозиторий объединяет несколько ассистентов, использующих OpenAI Responses API для автоматизации этапов коммуникации с кандидатом.
+Этот репозиторий объединяет несколько ассистентов, использующих OpenAI Responses API для автоматизации переписки рекрутеров с кандидатами. Поверх них есть единый раннер, который генерирует фикстуры, гоняет юнит- и e2e-тесты и собирает отчёты.
+
+## Структура проекта
+
+- `app/runner.py` — CLI, который генерирует фикстуры (`gen-fixtures`), запускает дымовые тесты (`unit`) и e2e-пайплайн (`e2e`).
+- `tests/tools/convert_dialogs.py` — конвертер сырых чатов (`cases/messages_*.json`) в `.dialog.jsonl` и одиночные реплики.
+- `tests/tools/make_vacancies.py` — генератор канонических вакансий (CDM). Содержит 20+ пресетов, собранных на основе реальных переписок.
+- `tests/fixtures/` — артефакты (cdm, parsed dialogs, reports). При каждом `gen-fixtures` пересоздаются автоматически.
+- `adapters/adapters.py` — преобразование CDM → входные структуры ассистентов (`vacancy_info`, формы и т.д.), а также сборка текстового диалога.
+- `messageLabelGenerator/`, `screeningAssistant/`, `screening_autofill/`, `verdict_classifier/` — основные модули, работающие с конкретными промптами.
+- `common/settings.py` — загрузка `.env` и доступ к `OPENAI_API_KEY`.
 
 ## Основные компоненты
 
@@ -28,6 +38,35 @@
    ```
 
 3. Создайте файл `.env` (см. `.env.example`) и укажите действующий `OPENAI_API_KEY`.
+
+## Генерация фикстур
+
+Скопируйте сырые чаты в `tests/fixtures/dialogs_raw/` (формат как в `cases/messages_*.json`). Затем выполните:
+
+```bash
+python -m app.runner gen-fixtures
+```
+
+Команда:
+- конвертирует все `dialogs_raw/*.json` в `dialogs_parsed/*.dialog.jsonl` и `messages_single/*.jsonl`;
+- пересоздаёт набор CDM-вакансий (`tests/fixtures/cdm/cdm_*.json`) из расширенного `SAMPLES`;
+- оставляет отчёт в консоли.
+
+## Тесты и e2e-прогоны
+
+- Мини-юниты (классификатор + smoke-тест ассистента):
+  ```bash
+  python -m app.runner unit
+  ```
+  По окончании отчёт сохраняется в `tests/reports/unit_<timestamp>.txt` с фиксацией prompt id/версий.
+
+- Сквозной прогон (ассистент → autofill → verdict):
+  ```bash
+  python -m app.runner e2e
+  ```
+  Репорт лежит в `tests/reports/e2e_<timestamp>.json`.
+
+Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы Responses API завершатся ошибкой.
 
 ## Запуск демо-сценариев
 

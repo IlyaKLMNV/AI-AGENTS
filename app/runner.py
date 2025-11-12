@@ -1,277 +1,261 @@
-"""Unified CLI entry point to exercise project assistants."""
-
 from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Dict, Iterable, Optional
+import os
+import pathlib
+import subprocess
+import time
+import sys
+from typing import Any, Dict, Iterable, List
 
-from common.settings import OPENAI_API_KEY
-from screeningAssistant.screeningAss import (
-    Assistants,
-    AssistantError as ScreeningAssistantError,
-)
-from screening_autofill.screeningAutofill import (
-    ScreeningAutofill,
-    AssistantError as AutofillAssistantError,
-)
-from verdict_classifier.chatClassifierLLM import (
-    ChatClassifierAssistant,
-    AssistantError as VerdictAssistantError,
-)
+import yaml
 
-CASES_DIR = Path(__file__).resolve().parent.parent / "cases"
+from adapters.adapters import dialog_to_text, names_from_cdm, to_vacancy_info
+from messageLabelGenerator.classifierLLM import ClassifierAssistant
+from screeningAssistant.screeningAss import Assistants as ScreeningAssistants
+from screening_autofill.screeningAutofill import ScreeningAutofill
+from verdict_classifier.chatClassifierLLM import ChatClassifierAssistant
 
-
-DEMO_DIALOG = (
-    "Candidate: Hi! Is remote work possible?\n"
-    "Recruiter: Hello! Yes, we plan a remote-friendly format.\n"
-    "Candidate: I am based in Prague and expect at least 4000 EUR.\n"
-)
-
-VACANCY_INFO: Dict[str, object] = {
-    "title": "Python Developer",
-    "company_name": "Acme Corp",
-    "responsibilities": "Build and maintain internal automation services.",
-    "work_format": "remote",
-    "location": "Remote",
-    "min_salary": "3500 EUR",
-    "max_salary": "4500 EUR",
-    "company_info": {
-        "firm_description": "Acme Corp builds data platforms for fintech clients.",
-        "vacancy_url": "https://example.com/vacancy/python-developer",
-    },
-    "questions": (
-        "1. What is your current location?\n"
-        "2. What salary range are you expecting?\n"
-        "3. Do you have production experience with Django or FastAPI?"
-    ),
-}
-
-RECRUITER_NAME = "Recruiter Smith"
-DEFAULT_CANDIDATE_NAME = "Candidate Doe"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PYTHON_BIN = sys.executable
+FIXTURES_DIR = ROOT / "tests" / "fixtures"
+RAW_DIR = FIXTURES_DIR / "dialogs_raw"
+PARSED_DIR = FIXTURES_DIR / "dialogs_parsed"
+MSGS_DIR = FIXTURES_DIR / "messages_single" / "unlabeled"
+CDM_DIR = FIXTURES_DIR / "cdm"
+CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
+REPORTS_DIR = ROOT / "tests" / "reports"
 
 
-@dataclass
-class CaseData:
-    dialog: str
-    vacancy_info: Dict[str, object]
-    recruiter_name: str
-    candidate_name: str
+def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _resolve_case_path(case: str) -> Path:
-    candidate = Path(case)
-    if candidate.is_file():
-        return candidate
+def ensure_dirs() -> None:
+    for directory in (RAW_DIR, PARSED_DIR, MSGS_DIR, CDM_DIR, REPORTS_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
 
-    if not case.endswith(".json"):
-        candidate = CASES_DIR / f"{case}.json"
-    else:
-        candidate = CASES_DIR / case
 
-    if candidate.is_file():
-        return candidate
+def run_subprocess(args: List[str]) -> None:
+    subprocess.run(args, cwd=ROOT, check=True)
 
-    raise FileNotFoundError(
-        f"Could not find JSON case '{case}'. "
-        f"Checked absolute path and {CASES_DIR}"
+
+# ---------- Commands ----------
+
+def cmd_gen_fixtures(_: argparse.Namespace) -> None:
+    """Convert raw dialogs and ensure CDM fixtures exist."""
+    ensure_dirs()
+    run_subprocess(
+        [
+            PYTHON_BIN,
+            "-m",
+            "tests.tools.convert_dialogs",
+            "--in_dir",
+            str(RAW_DIR),
+            "--out_parsed_dir",
+            str(PARSED_DIR),
+            "--out_msgs_dir",
+            str(MSGS_DIR),
+        ]
     )
-
-
-def _load_text_dialog(path: Optional[str]) -> str:
-    if not path:
-        return DEMO_DIALOG
-
-    dialog_path = Path(path)
-    if not dialog_path.is_file():
-        raise FileNotFoundError(f"Dialog file not found: {dialog_path}")
-
-    return dialog_path.read_text(encoding="utf-8")
-
-
-def _infer_names_from_messages(
-    messages: Iterable[dict[str, object]],
-    recruiter_fallback: str,
-    candidate_fallback: str,
-) -> tuple[str, str]:
-    recruiter = recruiter_fallback or RECRUITER_NAME
-    candidate = candidate_fallback or DEFAULT_CANDIDATE_NAME
-
-    for message in messages:
-        owner = message.get("is_owner")
-        username = str(message.get("username") or "").strip()
-
-        if owner and recruiter == RECRUITER_NAME and username:
-            recruiter = username
-        if not owner and candidate == DEFAULT_CANDIDATE_NAME and username:
-            candidate = username
-
-    return recruiter, candidate
-
-
-def _format_dialog(messages: Iterable[dict[str, object]], recruiter_name: str, candidate_name: str) -> str:
-    lines = []
-    for message in messages:
-        text = str(message.get("text") or "").strip()
-        if not text:
-            continue
-        owner = message.get("is_owner")
-        speaker = recruiter_name if owner else candidate_name
-        role = "Recruiter" if owner else "Candidate"
-        lines.append(f"{role} ({speaker}): {text}")
-    return "\n".join(lines)
-
-
-def _load_case(case: str) -> CaseData:
-    case_path = _resolve_case_path(case)
-    payload = json.loads(case_path.read_text(encoding="utf-8"))
-
-    messages: Iterable[dict[str, object]]
-    vacancy = VACANCY_INFO.copy()
-    recruiter = RECRUITER_NAME
-    candidate = DEFAULT_CANDIDATE_NAME
-
-    if isinstance(payload, dict):
-        messages = payload.get("messages") or []
-        if not isinstance(messages, list):
-            raise ValueError(f"'messages' must be a list in {case_path}")
-
-        vacancy = payload.get("vacancy_info") or vacancy
-        recruiter = payload.get("recruiter_name") or recruiter
-        candidate = payload.get("candidate_name") or candidate
-    elif isinstance(payload, list):
-        messages = payload
-    else:
-        raise ValueError(f"Unsupported JSON structure in {case_path}")
-
-    recruiter, candidate = _infer_names_from_messages(messages, recruiter, candidate)
-    dialog = _format_dialog(messages, recruiter, candidate)
-
-    if not dialog:
-        raise ValueError(f"No textual messages found in {case_path}")
-
-    return CaseData(
-        dialog=dialog,
-        vacancy_info=vacancy,
-        recruiter_name=recruiter,
-        candidate_name=candidate,
+    for existing in CDM_DIR.glob("*.json"):
+        existing.unlink()
+    run_subprocess(
+        [
+            PYTHON_BIN,
+            "-m",
+            "tests.tools.make_vacancies",
+            "--out_dir",
+            str(CDM_DIR),
+            "--n",
+            "3",
+        ]
     )
+    print("Fixtures generated.")
 
 
-def _ensure_api_key() -> None:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is empty. Populate .env before running demos.")
+def _component_cfg(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
+    return cfg.get(name) or {}
 
 
-def run_verdict(dialog: str) -> None:
-    classifier = ChatClassifierAssistant()
-    try:
-        result = classifier.run(dialog)
-    except VerdictAssistantError as exc:
-        raise RuntimeError(f"verdict classifier call failed: {exc}") from exc
+def _prompt_report(cfg: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    summary: Dict[str, Dict[str, Any]] = {}
+    for component in (
+        "message_classifier",
+        "screening_assistant",
+        "screening_autofill",
+        "verdict_classifier",
+    ):
+        comp_cfg = _component_cfg(cfg, component)
+        summary[component] = {
+            "id": comp_cfg.get("prompt_id"),
+            "version": comp_cfg.get("prompt_version"),
+        }
+    return summary
 
-    print("\n[VERDICT CLASSIFIER]")
-    print(result)
 
-
-def run_autofill(dialog: str) -> None:
-    autofiller = ScreeningAutofill()
-    try:
-        payload = autofiller.run(dialog)
-    except AutofillAssistantError as exc:
-        raise RuntimeError(f"screening autofill call failed: {exc}") from exc
-
-    print("\n[SCREENING AUTOFILL]")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+def classify_message(message_text: str, cfg: Dict[str, Any]) -> str:
+    mc_cfg = _component_cfg(cfg, "message_classifier")
+    assistant = ClassifierAssistant(
+        prompt_id=mc_cfg.get("prompt_id"),
+        prompt_version=mc_cfg.get("prompt_version"),
+    )
+    return assistant.run(message_text).strip()
 
 
 def run_screening_assistant(
-    dialog: str,
-    candidate_name: str,
-    recruiter_name: str,
-    vacancy_info: Dict[str, object],
-) -> None:
-    assistant = Assistants(
-        api_key=OPENAI_API_KEY,
+    cdm_path: pathlib.Path,
+    transcript_messages: List[str],
+    cfg: Dict[str, Any],
+) -> Dict[str, object]:
+    cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
+    vacancy_info = to_vacancy_info(cdm)
+    names = names_from_cdm(cdm)
+    sa_cfg = _component_cfg(cfg, "screening_assistant")
+    assistant = ScreeningAssistants(
+        api_key=os.environ.get("OPENAI_API_KEY"),
         vacancy_info=vacancy_info,
-        recruiter_name=recruiter_name,
-        candidate_name=candidate_name,
+        recruiter_name=names["recruiter_name"],
+        candidate_name=names["candidate_name"],
+        prompt_id=sa_cfg.get("prompt_id"),
+        prompt_version=sa_cfg.get("prompt_version"),
     )
 
-    try:
-        conversation_id = assistant.create_thread()
-        result = assistant.add_message_and_run(conversation_id, dialog)
-    except ScreeningAssistantError as exc:
-        raise RuntimeError(f"screening assistant call failed: {exc}") from exc
+    conversation_id = assistant.create_thread()
+    turns: List[tuple[str, str]] = []
+    ended = False
+    for user_msg in transcript_messages:
+        result = assistant.add_message_and_run(conversation_id, user_msg)
+        turns.append(("candidate", user_msg))
+        response_text = result.response if result and result.response else ""
+        if response_text:
+            turns.append(("assistant", response_text))
+        if result and result.conversation_end:
+            ended = True
+            break
+        if len(turns) > 20:
+            break
+    return {"conversation_id": conversation_id, "ended": ended, "turns": turns}
 
-    print("\n[SCREENING ASSISTANT]")
-    if result is None:
-        print("No response returned.")
+
+def run_autofill(dialog_text: str, cfg: Dict[str, Any]) -> Dict[str, object]:
+    af_cfg = _component_cfg(cfg, "screening_autofill")
+    autofiller = ScreeningAutofill(
+        prompt_id=af_cfg.get("prompt_id"),
+        prompt_version=af_cfg.get("prompt_version"),
+    )
+    return autofiller.run(dialog_text)
+
+
+def run_verdict(dialog_text: str, cfg: Dict[str, Any]) -> str:
+    verdict_cfg = _component_cfg(cfg, "verdict_classifier")
+    classifier = ChatClassifierAssistant(
+        prompt_id=verdict_cfg.get("prompt_id"),
+        prompt_version=verdict_cfg.get("prompt_version"),
+    )
+    return classifier.run(dialog_text).strip()
+
+
+def _load_candidate_messages(dialog_path: pathlib.Path, limit: int) -> List[str]:
+    lines = [
+        json.loads(line)
+        for line in dialog_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    return [entry["text"] for entry in lines if entry.get("role") == "candidate"][:limit]
+
+
+def cmd_unit(_: argparse.Namespace) -> None:
+    """Smoke tests for classifier and screening assistant flows."""
+    ensure_dirs()
+    if not CFG_PATH.is_file():
+        raise FileNotFoundError(f"Config not found: {CFG_PATH}")
+    cfg = load_yaml(CFG_PATH)
+
+    ok, fail = 0, 0
+    samples = [
+        ("И сколько БФТ Холдинг платит за эту роль?", "acceptance"),
+        ("Нет, спасибо", "no_reason"),
+        ("Спасибо, уже нашёл работу", "reason_farewell"),
+        ("Это к Никите Чугунову?", "human_needed"),
+    ]
+    for sample_text, expected in samples:
+        got = classify_message(sample_text, cfg)
+        if got == expected:
+            ok += 1
+        else:
+            fail += 1
+            print(f"[MC FAIL] '{sample_text}' -> got={got}, expected={expected}")
+
+    any_dialog = next(PARSED_DIR.glob("*.dialog.jsonl"), None)
+    cdm_path = next(CDM_DIR.glob("*.json"), None)
+    if any_dialog and cdm_path:
+        candidate_msgs = _load_candidate_messages(any_dialog, limit=3)
+        if candidate_msgs:
+            sa_res = run_screening_assistant(cdm_path, candidate_msgs, cfg)
+            if sa_res["ended"]:
+                ok += 1
+            else:
+                fail += 1
+                print("[SA FAIL] conversation did not end (no END flag)")
+        else:
+            print(f"[SA SKIP] No candidate messages in {any_dialog.name}")
+    else:
+        print("[SA SKIP] Missing parsed dialogs or CDM fixtures. Run gen-fixtures first.")
+
+    print(f"[UNIT] OK={ok} FAIL={fail}")
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / f"unit_{int(time.time())}.txt"
+    prompt_snapshot = json.dumps(_prompt_report(cfg), ensure_ascii=False)
+    report_path.write_text(f"OK={ok} FAIL={fail}\nPROMPTS={prompt_snapshot}", encoding="utf-8")
+
+
+def cmd_e2e(_: argparse.Namespace) -> None:
+    """End-to-end: assistant -> autofill -> verdict -> report."""
+    ensure_dirs()
+    if not CFG_PATH.is_file():
+        raise FileNotFoundError(f"Config not found: {CFG_PATH}")
+    cfg = load_yaml(CFG_PATH)
+    any_dialog = next(PARSED_DIR.glob("*.dialog.jsonl"), None)
+    cdm_path = next(CDM_DIR.glob("*.json"), None)
+    if not any_dialog or not cdm_path:
+        print(f"No parsed dialogs or CDM fixtures. Run: {PYTHON_BIN} -m app.runner gen-fixtures")
         return
 
-    print(f"conversation_end={result.conversation_end}")
-    if result.response:
-        print(result.response)
+    candidate_msgs = _load_candidate_messages(any_dialog, limit=6)
+    sa_res = run_screening_assistant(cdm_path, candidate_msgs, cfg)
+    dialog_text = dialog_to_text(str(any_dialog))
+    autofill_payload = run_autofill(dialog_text, cfg)
+    verdict = run_verdict(dialog_text, cfg)
 
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run demo scenarios against project assistants.")
-    parser.add_argument(
-        "--demo",
-        choices=("verdict", "autofill", "assistant"),
-        required=True,
-        help="Select which assistant to exercise.",
-    )
-    parser.add_argument(
-        "--file",
-        help="Path to a UTF-8 encoded dialog file. Falls back to an internal demo dialog.",
-    )
-    parser.add_argument(
-        "--case",
-        help="Name or path of JSON conversation placed in the cases/ directory.",
-    )
-    parser.add_argument(
-        "--candidate",
-        default=DEFAULT_CANDIDATE_NAME,
-        help="Name passed to screening assistant demo.",
-    )
-    return parser
+    report = {
+        "dialog_file": any_dialog.name,
+        "assistant_ended": sa_res["ended"],
+        "autofill": autofill_payload,
+        "verdict": verdict,
+        "prompts": _prompt_report(cfg),
+    }
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / f"e2e_{int(time.time())}.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("E2E report ->", report_path)
 
 
 def main() -> None:
-    _ensure_api_key()
-    parser = build_parser()
+    parser = argparse.ArgumentParser(description="Utilities for fixtures and assistant runs.")
+    subparsers = parser.add_subparsers(dest="cmd", required=True)
+    subparsers.add_parser("gen-fixtures")
+    subparsers.add_parser("unit")
+    subparsers.add_parser("e2e")
     args = parser.parse_args()
 
-    if args.case:
-        case = _load_case(args.case)
-    else:
-        dialog = _load_text_dialog(args.file)
-        case = CaseData(
-            dialog=dialog,
-            vacancy_info=VACANCY_INFO,
-            recruiter_name=RECRUITER_NAME,
-            candidate_name=args.candidate,
-        )
-
-    runners: Dict[str, Callable[[str], None]] = {
-        "verdict": run_verdict,
-        "autofill": run_autofill,
-    }
-
-    if args.demo in runners:
-        runners[args.demo](case.dialog)
-        return
-
-    run_screening_assistant(
-        case.dialog,
-        case.candidate_name,
-        case.recruiter_name,
-        case.vacancy_info,
-    )
+    if args.cmd == "gen-fixtures":
+        cmd_gen_fixtures(args)
+    elif args.cmd == "unit":
+        cmd_unit(args)
+    elif args.cmd == "e2e":
+        cmd_e2e(args)
 
 
 if __name__ == "__main__":

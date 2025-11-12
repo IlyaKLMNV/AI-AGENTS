@@ -84,18 +84,26 @@ class ThreadManager:
 
 
 class RunManager:
-    def __init__(self,
-                 client,
-                 system_prompt: str):
+    def __init__(
+        self,
+        client,
+        system_prompt: str,
+        system_prompt_version: Optional[int] = None,
+    ):
         self.system_prompt = system_prompt
+        self.system_prompt_version = system_prompt_version
         self.client = client
+
+    def _prompt_payload(self) -> dict[str, object]:
+        payload = {"id": self.system_prompt}
+        if self.system_prompt_version is not None:
+            payload["version"] = str(self.system_prompt_version)
+        return payload
 
     def respond(self, user_input: str, conversation_id: str) -> ConversationResult:
         try:
             response = self.client.responses.create(
-                prompt={
-                    "id": self.system_prompt,
-                },
+                prompt=self._prompt_payload(),
                 conversation=conversation_id,
                 input=user_input
             )
@@ -117,11 +125,22 @@ class RunManager:
 
 
 class Assistants:
-    def __init__(self, api_key, vacancy_info, recruiter_name, candidate_name):
-        self.prompt_id = "pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf"
+    DEFAULT_PROMPT = "pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf"
+
+    def __init__(
+        self,
+        api_key,
+        vacancy_info,
+        recruiter_name,
+        candidate_name,
+        prompt_id: Optional[str] = None,
+        prompt_version: Optional[int] = None,
+    ):
+        self.prompt_id = prompt_id or self.DEFAULT_PROMPT
+        self.prompt_version = prompt_version
         self.client = OpenAI(api_key=api_key)
         self.thread_manager = ThreadManager(self.client, vacancy_info, recruiter_name, candidate_name)
-        self.run_manager = RunManager(self.client, self.prompt_id)
+        self.run_manager = RunManager(self.client, self.prompt_id, self.prompt_version)
         self.message_filter = MessageFilter()
 
     def create_thread(self) -> int:
