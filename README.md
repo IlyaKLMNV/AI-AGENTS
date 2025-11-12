@@ -54,16 +54,14 @@ python -m app.runner gen-fixtures
 
 ## Тесты и отчётность
 
-- Полный прогон по всем диалогам:
+- Полный прогон по всем диалогам (по умолчанию берутся первые 10 файлов, можно увеличить флагом `--limit`):
   ```bash
-  python -m app.runner unit
+  python -m app.runner unit --limit 10
   ```
   Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждого файла из `tests/fixtures/dialogs_parsed/`.  
   Результаты:
-  - сводка `tests/reports/run_<timestamp>.json` — агрегированные метрики (pipeline success rate, success по модулям, список отчётов);
-  - детальные логи по каждому диалогу: `tests/reports/dialogs/<dialog>.json` (весь текст, решения классификатора, все ответы ассистента по шагам, JSON от autofill, финальный вердикт, статусы модулей, ошибки).
-
-- `python -m app.runner e2e` — алиас, который выполняет тот же полный прогон (оставлен для обратной совместимости).
+  - в каталоге `tests/reports/runs/<дата>_<время>_n<count>/report-<дата>_<время>_n<count>.json` — агрегированные метрики прогона (pipeline success rate, соблюдение первого касания, распределение меток, расход токенов и т.д.);
+  - в `tests/reports/runs/<...>/dialogs/<dialog>.json` — детальные логи каждого диалога (текст, решения классификатора, все ответы ассистента, JSON от autofill, вердикт, токены, ошибки).
 
 Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы OpenAI Responses API завершатся ошибкой.
 

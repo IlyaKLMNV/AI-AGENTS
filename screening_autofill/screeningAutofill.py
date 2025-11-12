@@ -25,6 +25,7 @@ class BaseAssistant:
         self.system_prompt = system_prompt
         self.system_prompt_version = prompt_version
         self.json_schema = json_schema
+        self.last_usage: Optional[Any] = None
 
     def _prompt_payload(self) -> dict[str, Any]:
         payload = {"id": self.system_prompt}
@@ -39,6 +40,7 @@ class BaseAssistant:
                 input=user_input,
                 text={"format": self.json_schema},
             )
+            self.last_usage = getattr(response, "usage", None)
             response_text = response.output_text
             if not response_text:
                 raise AssistantError("Ответ от ассистента пустой")

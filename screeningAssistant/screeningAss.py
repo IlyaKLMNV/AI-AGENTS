@@ -6,9 +6,10 @@ from openai import OpenAI
 
 
 class ConversationResult:
-    def __init__(self, response: Optional[str], conversation_end: bool):
+    def __init__(self, response: Optional[str], conversation_end: bool, usage: Optional[dict] = None):
         self.response = response
         self.conversation_end = conversation_end
+        self.usage = usage
 
 
 class AssistantError(Exception):
@@ -93,6 +94,7 @@ class RunManager:
         self.system_prompt = system_prompt
         self.system_prompt_version = system_prompt_version
         self.client = client
+        self.last_usage: Optional[dict] = None
 
     def _prompt_payload(self) -> dict[str, object]:
         payload = {"id": self.system_prompt}
@@ -107,18 +109,20 @@ class RunManager:
                 conversation=conversation_id,
                 input=user_input
             )
+            usage = getattr(response, "usage", None)
+            self.last_usage = usage
             response_text = response.output_text
             if not response_text:
-                return ConversationResult(None, True)
+                return ConversationResult(None, True, usage)
 
             if "мне нужно будет уточнить этот момент у коллег" in response_text.lower():
-                return ConversationResult(None, True)
+                return ConversationResult(None, True, usage)
 
             conversation_end = "END" in response_text
             if conversation_end:
                 response_text = response_text.replace("END", "").strip()
 
-            return ConversationResult(response_text, conversation_end)
+            return ConversationResult(response_text, conversation_end, usage)
 
         except Exception as e:
             raise AssistantError(f'Ошибка при получении ответа: {e!r}')
@@ -142,6 +146,7 @@ class Assistants:
         self.thread_manager = ThreadManager(self.client, vacancy_info, recruiter_name, candidate_name)
         self.run_manager = RunManager(self.client, self.prompt_id, self.prompt_version)
         self.message_filter = MessageFilter()
+        self.last_usage: Optional[dict] = None
 
     def create_thread(self) -> int:
         return self.thread_manager.create_thread()
@@ -151,4 +156,5 @@ class Assistants:
             return ConversationResult("Извините за беспокойство!", True)
 
         run = self.run_manager.respond(message, conversation_id)
+        self.last_usage = getattr(run, "usage", None)
         return run
