@@ -17,3 +17,11 @@ verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
   prompt_version: 2
   seed: 1234
+  
+candidate_simulator:
+  difficult:
+    prompt_id: pmpt_6915e1d5c7c481909590ae7e4f5d5d500e448dd6e0485552
+    prompt_version: 2
+  ideal:
+    prompt_id: pmpt_6915e984ed688195b3cadd0240baea95049b4ba49bfd5df4
+    prompt_version: 1

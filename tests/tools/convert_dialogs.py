@@ -21,44 +21,32 @@ def normalize_text(value: str | None) -> str:
 def convert_raw_to_parsed(
     raw_path: pathlib.Path,
     parsed_path: pathlib.Path,
-    messages_path: pathlib.Path,
 ) -> None:
     data = json.loads(raw_path.read_text(encoding="utf-8"))
     parsed_lines: list[str] = []
-    messages_single: list[str] = []
     for message in data:
         text = normalize_text(message.get("text"))
         if not text:
             continue
         role = "assistant" if message.get("is_owner") else "candidate"
         parsed_lines.append(json.dumps({"role": role, "text": text}, ensure_ascii=False))
-        if role == "candidate":
-            messages_single.append(json.dumps({"text": text}, ensure_ascii=False))
     parsed_path.write_text("\n".join(parsed_lines), encoding="utf-8")
-    messages_path.write_text("\n".join(messages_single), encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--in_dir", default="tests/fixtures/dialogs_raw")
     parser.add_argument("--out_parsed_dir", default="tests/fixtures/dialogs_parsed")
-    parser.add_argument(
-        "--out_msgs_dir",
-        default="tests/fixtures/messages_single/unlabeled",
-    )
     args = parser.parse_args()
 
     in_dir = pathlib.Path(args.in_dir)
     out_parsed = pathlib.Path(args.out_parsed_dir)
     out_parsed.mkdir(parents=True, exist_ok=True)
-    out_msgs = pathlib.Path(args.out_msgs_dir)
-    out_msgs.mkdir(parents=True, exist_ok=True)
 
     for raw_file in in_dir.glob("*.json"):
         parsed_file = out_parsed / (raw_file.stem.replace("messages_", "") + ".dialog.jsonl")
-        msg_file = out_msgs / (raw_file.stem.replace("messages_", "") + ".jsonl")
-        convert_raw_to_parsed(raw_file, parsed_file, msg_file)
-        print(f"OK {raw_file.name} -> {parsed_file.name} and {msg_file.name}")
+        convert_raw_to_parsed(raw_file, parsed_file)
+        print(f"OK {raw_file.name} -> {parsed_file.name}")
 
 
 if __name__ == "__main__":

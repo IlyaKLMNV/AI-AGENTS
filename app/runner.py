@@ -12,8 +12,9 @@ from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List
 
 import yaml
+from openai import OpenAI
 
-from adapters.adapters import dialog_to_text, names_from_cdm, to_vacancy_info
+from adapters.adapters import names_from_cdm, to_vacancy_info
 from messageLabelGenerator.classifierLLM import ClassifierAssistant
 from screeningAssistant.screeningAss import Assistants as ScreeningAssistants
 from screening_autofill.screeningAutofill import ScreeningAutofill
@@ -24,12 +25,36 @@ PYTHON_BIN = sys.executable
 FIXTURES_DIR = ROOT / "tests" / "fixtures"
 RAW_DIR = FIXTURES_DIR / "dialogs_raw"
 PARSED_DIR = FIXTURES_DIR / "dialogs_parsed"
-MSGS_DIR = FIXTURES_DIR / "messages_single" / "unlabeled"
 CDM_DIR = FIXTURES_DIR / "cdm"
 CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 REPORTS_DIR = ROOT / "tests" / "reports"
 RUNS_DIR = REPORTS_DIR / "runs"
-DEFAULT_DIALOG_LIMIT = 10
+DEFAULT_DIALOG_LIMIT = 5
+MAX_SIMULATION_TURNS = 10
+CANDIDATE_PROFILES = {
+    "difficult": {
+        "name": "Вадим Соколов",
+        "persona": (
+            "Скептичный кандидат: любит проверять, бот ли с ним говорит, требует раскрыть зарплату,"
+            " интересуется ФИО руководителя, пытается выбить максимум условий, но сам не имеет"
+            " полного релевантного опыта. Часто отвечает вопросом на вопрос, может игнорировать просьбы,"
+            " просит удалёнку за рубежом, подозревает собеседника."
+        ),
+        "goals": (
+            "Получить максимальную вилку (700k+), выведать детали компании и удостовериться, что общается не бот."
+        ),
+    },
+    "ideal": {
+        "name": "Мария Кузнецова",
+        "persona": (
+            "Опытный senior product-лид с 8+ годами в финтехе. Вежлива, отвечает по существу, делится кейсами,"
+            " адекватно формулирует зарплатные ожидания (450-500k netto), готова к офису/гибриду."
+        ),
+        "goals": (
+            "Быстро пройти квалификацию, показать релевантный опыт и договориться о следующем этапе."
+        ),
+    },
+}
 
 
 def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
@@ -37,7 +62,7 @@ def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    for directory in (RAW_DIR, PARSED_DIR, MSGS_DIR, CDM_DIR, REPORTS_DIR, RUNS_DIR):
+    for directory in (RAW_DIR, PARSED_DIR, CDM_DIR, REPORTS_DIR, RUNS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -59,8 +84,6 @@ def cmd_gen_fixtures(_: argparse.Namespace) -> None:
             str(RAW_DIR),
             "--out_parsed_dir",
             str(PARSED_DIR),
-            "--out_msgs_dir",
-            str(MSGS_DIR),
         ]
     )
     for existing in CDM_DIR.glob("*.json"):
@@ -73,7 +96,7 @@ def cmd_gen_fixtures(_: argparse.Namespace) -> None:
             "--out_dir",
             str(CDM_DIR),
             "--n",
-            "3",
+            "5",
         ]
     )
     print("Fixtures generated.")
@@ -124,6 +147,40 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["input_tokens"] += input_tokens
     bucket["output_tokens"] += output_tokens
     bucket["total_tokens"] += total_tokens
+
+
+class CandidateSimulator:
+    def __init__(self, prompt_id: str, prompt_version: str | int | None):
+        api_key = os.environ.get("OPENAI_API_KEY")
+        self.client = OpenAI(api_key=api_key)
+        self.prompt_id = prompt_id
+        self.prompt_version = str(prompt_version) if prompt_version is not None else None
+        self.last_usage: Any = None
+
+    def generate(
+        self,
+        history: List[Dict[str, str]],
+        vacancy: Dict[str, Any],
+        profile: Dict[str, Any],
+    ) -> str:
+        payload_lines = ["You are role-playing as a job candidate."]
+        payload_lines.append("Candidate Persona:")
+        payload_lines.append(json.dumps(profile, ensure_ascii=False))
+        payload_lines.append("Vacancy:")
+        payload_lines.append(json.dumps(vacancy, ensure_ascii=False))
+        payload_lines.append("Dialog History (JSON list of turns):")
+        payload_lines.append(json.dumps(history, ensure_ascii=False))
+        payload_lines.append("Task: respond to the recruiter in Russian, stay in character.")
+        payload = "\n".join(payload_lines)
+        prompt = {"id": self.prompt_id}
+        if self.prompt_version is not None:
+            prompt["version"] = self.prompt_version
+        response = self.client.responses.create(prompt=prompt, input=payload)
+        self.last_usage = getattr(response, "usage", None)
+        text = (getattr(response, "output_text", "") or "").strip()
+        if not text:
+            raise AssistantError("Candidate simulator returned empty response.")
+        return text
 
 
 def classify_message(message_text: str, cfg: Dict[str, Any]) -> tuple[str, Any]:
@@ -199,18 +256,6 @@ def run_verdict(dialog_text: str, cfg: Dict[str, Any]) -> tuple[str, Dict[str, i
     return verdict, usage_dict
 
 
-def _load_candidate_messages(dialog_path: pathlib.Path, limit: int | None = None) -> List[str]:
-    lines = [
-        json.loads(line)
-        for line in dialog_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    messages = [entry["text"] for entry in lines if entry.get("role") == "candidate"]
-    if limit is None:
-        return messages
-    return messages[:limit]
-
-
 def _write_dialog_report(dialog_report: Dict[str, Any], target_dir: pathlib.Path) -> pathlib.Path:
     filename = dialog_report["dialog_file"].replace(".dialog.jsonl", "") + ".json"
     path = target_dir / filename
@@ -219,19 +264,24 @@ def _write_dialog_report(dialog_report: Dict[str, Any], target_dir: pathlib.Path
 
 
 def run_dialog_case(
-    dialog_path: pathlib.Path,
     cdm_path: pathlib.Path,
     cfg: Dict[str, Any],
+    candidate_simulator: CandidateSimulator,
+    candidate_profile: Dict[str, Any],
+    candidate_profile_key: str,
+    scenario_name: str,
 ) -> Dict[str, Any]:
     start_time = time.perf_counter()
-    dialog_text = dialog_to_text(str(dialog_path))
-    candidate_msgs = _load_candidate_messages(dialog_path, limit=None)
+    cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
+    vacancy_info = to_vacancy_info(cdm)
+    names = names_from_cdm(cdm)
     classifier_results: List[Dict[str, str]] = []
     modules_status = {
         "message_classifier": False,
         "screening_assistant": False,
         "screening_autofill": False,
         "verdict_classifier": False,
+        "candidate_simulator": False,
     }
     errors: Dict[str, str] = {}
     module_usage = {
@@ -239,41 +289,85 @@ def run_dialog_case(
         "screening_assistant": _blank_usage(),
         "screening_autofill": _blank_usage(),
         "verdict_classifier": _blank_usage(),
+        "candidate_simulator": _blank_usage(),
     }
 
-    for msg in candidate_msgs:
-        try:
-            label, usage = classify_message(msg, cfg)
-            classifier_results.append({"text": msg, "label": label})
-            _accumulate_usage(module_usage["message_classifier"], usage)
-        except Exception as exc:
-            errors["message_classifier"] = str(exc)
-            break
+    sa_cfg = _component_cfg(cfg, "screening_assistant")
+    assistant = ScreeningAssistants(
+        api_key=os.environ.get("OPENAI_API_KEY"),
+        vacancy_info=vacancy_info,
+        recruiter_name=names["recruiter_name"],
+        candidate_name=names["candidate_name"],
+        prompt_id=sa_cfg.get("prompt_id"),
+        prompt_version=sa_cfg.get("prompt_version"),
+    )
+    conversation_id = assistant.create_thread()
+    template_args = {
+        "recruiter_name": names["recruiter_name"],
+        "candidate_name": candidate_profile.get("name") or names["candidate_name"],
+        "company": vacancy_info["company_name"],
+        "title": vacancy_info["title"],
+        "location": vacancy_info.get("location") or vacancy_info.get("work_format") or "",
+    }
+    template = cdm.get("first_message_template", "")
+    try:
+        first_message = template.format(**template_args) if template else ""
+    except Exception:
+        first_message = template or ""
+    if not first_message:
+        first_message = (
+            f"Здравствуйте, {template_args['candidate_name']}! Это {template_args['recruiter_name']} из "
+            f"{template_args['company']}. Подскажите, пожалуйста, где вы сейчас находитесь и "
+            "какая net-компенсация будет комфортна?"
+        )
+    conversation: List[Dict[str, str]] = [{"role": "assistant", "text": first_message}]
+    assistant_ended = False
+
+    try:
+        for turn in range(MAX_SIMULATION_TURNS):
+            try:
+                candidate_message = candidate_simulator.generate(conversation, cdm["vacancy"], candidate_profile)
+                _accumulate_usage(module_usage["candidate_simulator"], getattr(candidate_simulator, "last_usage", None))
+                conversation.append({"role": "candidate", "text": candidate_message})
+            except Exception as exc:
+                errors["candidate_simulator"] = str(exc)
+                break
+
+            try:
+                label, usage = classify_message(candidate_message, cfg)
+                classifier_results.append({"text": candidate_message, "label": label})
+                _accumulate_usage(module_usage["message_classifier"], usage)
+                modules_status["message_classifier"] = True
+            except Exception as exc:
+                errors["message_classifier"] = str(exc)
+                break
+
+            result = assistant.add_message_and_run(conversation_id, candidate_message)
+            _accumulate_usage(module_usage["screening_assistant"], getattr(assistant, "last_usage", None))
+            response_text = result.response if result and result.response else ""
+            if response_text:
+                conversation.append({"role": "assistant", "text": response_text})
+            if result and result.conversation_end:
+                assistant_ended = True
+                break
+    except Exception as exc:
+        errors.setdefault("screening_assistant", str(exc))
     else:
+        modules_status["candidate_simulator"] = True
+        modules_status["screening_assistant"] = True
+
+    if "message_classifier" not in errors and classifier_results:
         modules_status["message_classifier"] = True
 
-    assistant_result: Dict[str, Any] | None = None
-    try:
-        assistant_result, assistant_usage = run_screening_assistant(cdm_path, candidate_msgs, cfg)
-        modules_status["screening_assistant"] = True
-        _accumulate_usage(module_usage["screening_assistant"], assistant_usage)
-    except Exception as exc:
-        errors["screening_assistant"] = str(exc)
-
-    assistant_turns = []
-    assistant_ended = False
     first_message_compliance: bool | None = None
-    if assistant_result:
-        assistant_turns = [
-            {"role": role, "text": text} for role, text in assistant_result["turns"]
-        ]
-        assistant_ended = bool(assistant_result.get("ended"))
-        first_reply = next((turn for turn in assistant_turns if turn["role"] == "assistant"), None)
-        if first_reply:
-            text = first_reply["text"].lower()
-            salary_mentioned = any(keyword in text for keyword in ("зарплат", "вилка", "доход"))
-            location_mentioned = any(keyword in text for keyword in ("город", "локац", "формат работы"))
-            first_message_compliance = salary_mentioned and location_mentioned
+    first_reply = conversation[0] if conversation else None
+    if first_reply and first_reply.get("text"):
+        text = first_reply["text"].lower()
+        salary_mentioned = any(keyword in text for keyword in ("зарплат", "вилка", "доход"))
+        location_mentioned = any(keyword in text for keyword in ("город", "локац", "формат работы"))
+        first_message_compliance = salary_mentioned and location_mentioned
+
+    dialog_text = conversation_to_text(conversation)
 
     autofill_payload: Dict[str, Any] | None = None
     try:
@@ -300,12 +394,10 @@ def run_dialog_case(
     module_usage["total"] = total_usage
 
     return {
-        "dialog_file": dialog_path.name,
+        "dialog_file": scenario_name,
         "cdm_file": cdm_path.name,
-        "candidate_messages": candidate_msgs,
-        "dialog_text": dialog_text,
         "classifier_outputs": classifier_results,
-        "assistant_turns": assistant_turns,
+        "conversation": conversation,
         "assistant_ended": assistant_ended,
         "first_message_compliance": first_message_compliance,
         "autofill": autofill_payload,
@@ -315,6 +407,7 @@ def run_dialog_case(
         "success": success,
         "duration_sec": duration,
         "token_usage": module_usage,
+        "candidate_profile": candidate_profile_key,
     }
 
 
@@ -332,18 +425,15 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         if first_message_checks
         else 0.0
     )
-    assistant_turn_counts = [
-        sum(1 for turn in case["assistant_turns"] if turn["role"] == "assistant")
-        for case in cases
-    ]
-    avg_assistant_turns = (
-        sum(assistant_turn_counts) / len(assistant_turn_counts) if assistant_turn_counts else 0.0
-    )
     classifier_entries = [entry for case in cases for entry in case["classifier_outputs"]]
     label_counts: Dict[str, int] = {}
     for entry in classifier_entries:
         label = entry.get("label") or "unknown"
         label_counts[label] = label_counts.get(label, 0) + 1
+    verdict_counts: Dict[str, int] = {}
+    for case in cases:
+        verdict_value = case.get("verdict") or "unknown"
+        verdict_counts[verdict_value] = verdict_counts.get(verdict_value, 0) + 1
 
     module_stats: Dict[str, Dict[str, int]] = {}
     for case in cases:
@@ -362,21 +452,15 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         "screening_assistant": _blank_usage(),
         "screening_autofill": _blank_usage(),
         "verdict_classifier": _blank_usage(),
+        "candidate_simulator": _blank_usage(),
     }
     total_usage = _blank_usage()
     for case in cases:
         case_usage = case.get("token_usage") or {}
-        for module in ("message_classifier", "screening_assistant", "screening_autofill", "verdict_classifier"):
+        for module in ("message_classifier", "screening_assistant", "screening_autofill", "verdict_classifier", "candidate_simulator"):
             _accumulate_usage(token_usage_totals[module], case_usage.get(module))
         _accumulate_usage(total_usage, case_usage.get("total"))
 
-    classifier_metrics = {
-        "samples": 0,
-        "accuracy": None,
-        "per_class": {},
-        "confusion_matrix": {},
-        "note": "Ground truth labels not provided; only label distribution is reported.",
-    }
     avg_duration = (
         sum(case.get("duration_sec") or 0.0 for case in cases) / total if total else 0.0
     )
@@ -386,10 +470,9 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         "pipeline_success_rate": (success_count / total) if total else 0.0,
         "assistant_end_rate": (assistant_end / total) if total else 0.0,
         "first_message_compliance_rate": first_message_rate,
-        "average_assistant_turns": avg_assistant_turns,
         "average_duration_sec": avg_duration,
         "classifier_label_distribution": label_counts,
-        "classifier_metrics": classifier_metrics,
+        "verdict_distribution": verdict_counts,
         "module_success_rate": module_success_rate,
         "token_usage_by_module": token_usage_totals,
         "token_usage_total": total_usage,
@@ -402,28 +485,47 @@ def _assign_cdm_files() -> List[pathlib.Path]:
         raise FileNotFoundError("No CDM fixtures found. Run gen-fixtures first.")
     return cdm_files
 
+def conversation_to_text(conversation: List[Dict[str, str]]) -> str:
+    lines: List[str] = []
+    for turn in conversation:
+        role = "Recruiter" if turn.get("role") == "assistant" else "Candidate"
+        text = turn.get("text") or ""
+        lines.append(f"{role}: {text}")
+    return "\n".join(lines)
+
 
 def cmd_unit(args: argparse.Namespace) -> None:
-    """Run the entire pipeline for each parsed dialog and store rich reports."""
+    """Run the entire pipeline for each vacancy against selected candidate personas."""
     ensure_dirs()
     if not CFG_PATH.is_file():
         raise FileNotFoundError(f"Config not found: {CFG_PATH}")
     cfg = load_yaml(CFG_PATH)
 
-    dialog_files = sorted(PARSED_DIR.glob("*.dialog.jsonl"))
-    if not dialog_files:
-        print("No parsed dialogs. Run: python -m app.runner gen-fixtures")
-        return
     cdm_files = _assign_cdm_files()
-
-    limit = getattr(args, "limit", DEFAULT_DIALOG_LIMIT) or DEFAULT_DIALOG_LIMIT
-    dialog_files = dialog_files[:limit]
-    if not dialog_files:
-        print("No dialogs to process with the provided limit.")
+    limit = max(1, getattr(args, "limit", DEFAULT_DIALOG_LIMIT))
+    vacancies = cdm_files[:limit]
+    if not vacancies:
+        print("No CDM fixtures. Run: python -m app.runner gen-fixtures")
         return
-    total = len(dialog_files)
+
+    selected_profiles = list(getattr(args, "candidate_profiles", list(CANDIDATE_PROFILES.keys())))
+    sim_cfg = cfg.get("candidate_simulator") or {}
+    simulators: Dict[str, CandidateSimulator] = {}
+    for key in selected_profiles:
+        profile_cfg = sim_cfg.get(key)
+        if not profile_cfg:
+            raise ValueError(f"Missing candidate_simulator config for profile '{key}'.")
+        profile = CANDIDATE_PROFILES.get(key)
+        if profile is None:
+            raise ValueError(f"No candidate profile definition for '{key}'.")
+        simulators[key] = CandidateSimulator(
+            prompt_id=profile_cfg.get("prompt_id"),
+            prompt_version=profile_cfg.get("prompt_version"),
+        )
+
     started_at = datetime.datetime.now()
-    run_id = f"{started_at.strftime('%Y%m%d_%H%M%S')}_n{total}"
+    total_cases = len(vacancies) * len(selected_profiles)
+    run_id = f"{started_at.strftime('%Y%m%d_%H%M%S')}_n{total_cases}"
     run_dir = RUNS_DIR / run_id
     dialog_dir = run_dir / "dialogs"
     dialog_dir.mkdir(parents=True, exist_ok=True)
@@ -431,31 +533,44 @@ def cmd_unit(args: argparse.Namespace) -> None:
     cases = []
     case_refs = []
     failures = []
-    for idx, dialog_path in enumerate(dialog_files):
-        cdm_path = cdm_files[idx % len(cdm_files)]
-        print(f"[{idx + 1}/{total}] Processing {dialog_path.name} (CDM: {cdm_path.name})")
-        case = run_dialog_case(dialog_path, cdm_path, cfg)
-        cases.append(case)
-        report_path = _write_dialog_report(case, dialog_dir)
-        status_icon = "✓" if case["success"] else "✗"
-        print(f"    {status_icon} modules={case['modules']} assistant_end={case['assistant_ended']}")
-        report_rel = str(report_path.relative_to(ROOT))
-        case_refs.append(
-            {
-                "dialog_file": case["dialog_file"],
-                "report": report_rel,
-                "success": case["success"],
-            }
-        )
-        if not case["success"]:
-            failures.append(
+    case_counter = 0
+    for cdm_path in vacancies:
+        for profile_key in selected_profiles:
+            case_counter += 1
+            scenario_name = f"{cdm_path.stem}__{profile_key}"
+            print(f"[{case_counter}/{total_cases}] Processing {scenario_name} (CDM: {cdm_path.name})")
+            profile = CANDIDATE_PROFILES[profile_key]
+            simulator = simulators[profile_key]
+            case = run_dialog_case(
+                cdm_path,
+                cfg,
+                simulator,
+                profile,
+                profile_key,
+                scenario_name,
+            )
+            cases.append(case)
+            report_path = _write_dialog_report(case, dialog_dir)
+            status_icon = "✓" if case["success"] else "✗"
+            print(f"    {status_icon} modules={case['modules']} assistant_end={case['assistant_ended']}")
+            report_rel = str(report_path.relative_to(ROOT))
+            case_refs.append(
                 {
                     "dialog_file": case["dialog_file"],
-                    "modules_failed": [module for module, status in case["modules"].items() if not status],
-                    "errors": case["errors"],
+                    "candidate_profile": profile_key,
                     "report": report_rel,
+                    "success": case["success"],
                 }
             )
+            if not case["success"]:
+                failures.append(
+                    {
+                        "dialog_file": case["dialog_file"],
+                        "modules_failed": [module for module, status in case["modules"].items() if not status],
+                        "errors": case["errors"],
+                        "report": report_rel,
+                    }
+                )
 
     summary = _compute_summary(cases)
     summary["prompts"] = _prompt_report(cfg)
@@ -478,7 +593,14 @@ def main() -> None:
         "--limit",
         type=int,
         default=DEFAULT_DIALOG_LIMIT,
-        help=f"Maximum number of dialogs to process (default: {DEFAULT_DIALOG_LIMIT}).",
+        help=f"Maximum number of vacancies to process (default: {DEFAULT_DIALOG_LIMIT}).",
+    )
+    unit_parser.add_argument(
+        "--candidate-profiles",
+        nargs="+",
+        choices=tuple(CANDIDATE_PROFILES.keys()),
+        default=list(CANDIDATE_PROFILES.keys()),
+        help="Candidate personas to simulate (default: %(default)s).",
     )
     args = parser.parse_args()
 

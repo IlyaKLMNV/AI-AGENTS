@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import pathlib
 from typing import Any, Dict, List
 
 
@@ -11,7 +9,7 @@ def _safe_list(value: List[Any] | None) -> List[Any]:
 
 def to_input_form(cdm: Dict[str, Any]) -> Dict[str, Any]:
     vacancy = cdm["vacancy"]
-    candidate = cdm["candidate"]
+    candidate = cdm.get("candidate") or {}
     recruiter_name = candidate.get("recruiter_name") or "Рекрутер"
     candidate_name = candidate.get("candidate_name") or "Кандидат"
     return {
@@ -53,24 +51,8 @@ def to_vacancy_info(cdm: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def names_from_cdm(cdm: Dict[str, Any]) -> Dict[str, str]:
-    candidate = cdm["candidate"]
+    candidate = cdm.get("candidate") or {}
     return {
         "recruiter_name": candidate.get("recruiter_name") or "Рекрутер",
         "candidate_name": candidate.get("candidate_name") or "Кандидат",
     }
-
-
-def dialog_to_text(dialog_jsonl_path: str) -> str:
-    """Convert a parsed dialog (.jsonl) to user/assistant transcript text."""
-    path = pathlib.Path(dialog_jsonl_path)
-    lines: List[str] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        obj = json.loads(raw_line)
-        text = (obj.get("text") or "").strip()
-        if not text:
-            continue
-        if obj.get("role") == "assistant":
-            lines.append(f"Рекрутер: {text}")
-        else:
-            lines.append(f"Кандидат: {text}")
-    return "\n".join(lines)

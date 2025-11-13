@@ -32,23 +32,36 @@
    - PowerShell (Windows): `.venv\Scripts\Activate.ps1`
    - Bash/WSL/Linux/macOS: `source .venv/bin/activate`
 
-2. Установите зависимости.
+2. Установите зависимости (в активированном `.venv`; если не активировали, используйте `python3` вместо `python`).
    ```bash
    python -m pip install -r requirements.txt
    ```
 
 3. Создайте файл `.env` (см. `.env.example`) и укажите действующий `OPENAI_API_KEY`.
+   - Для запуска в WSL/macOS/Linux можно экспортировать ключ напрямую:
+     ```bash
+     export OPENAI_API_KEY=sk-...
+     ```
+     или загрузить весь `.env`:
+     ```bash
+     set -a
+     . ./.env
+     set +a
+     ```
 
 ## Генерация фикстур
 
 Скопируйте сырые чаты в `tests/fixtures/dialogs_raw/` (формат как в `cases/messages_*.json`). Затем выполните:
 
 ```bash
+# внутри .venv
 python -m app.runner gen-fixtures
+# либо, если .venv не активировано
+python3 -m app.runner gen-fixtures
 ```
 
 Команда:
-- конвертирует все `dialogs_raw/*.json` в `dialogs_parsed/*.dialog.jsonl` и `messages_single/*.jsonl`;
+- конвертирует все `dialogs_raw/*.json` в `dialogs_parsed/*.dialog.jsonl`;
 - пересоздаёт набор CDM-вакансий (`tests/fixtures/cdm/cdm_*.json`) из расширенного `SAMPLES`;
 - оставляет отчёт в консоли.
 
@@ -56,18 +69,26 @@ python -m app.runner gen-fixtures
 
 - Полный прогон по всем диалогам (по умолчанию берутся первые 10 файлов, можно увеличить флагом `--limit`):
   ```bash
-  python -m app.runner unit --limit 10
+  python -m app.runner unit --limit 10 --candidate-profile difficult   # в активированном .venv
+  # или
+  python3 -m app.runner unit --limit 10 --candidate-profile ideal
   ```
   Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждого файла из `tests/fixtures/dialogs_parsed/`.  
   Результаты:
-  - в каталоге `tests/reports/runs/<дата>_<время>_n<count>/report-<дата>_<время>_n<count>.json` — агрегированные метрики прогона (pipeline success rate, соблюдение первого касания, распределение меток, расход токенов и т.д.);
+  - в каталоге `tests/reports/runs/<дата>_<время>_n<count>/report-<дата>_<время>_n<count>.json` — агрегированные метрики прогона (pipeline success rate, соблюдение первого касания, распределение меток/вердиктов, расход токенов и т.д.);
   - в `tests/reports/runs/<...>/dialogs/<dialog>.json` — детальные логи каждого диалога (текст, решения классификатора, все ответы ассистента, JSON от autofill, вердикт, токены, ошибки).
 
 Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы OpenAI Responses API завершатся ошибкой.
 
+> 💡 Чтобы сцена соответствовала исходной вакансии, можно положить рядом с parsed-диалогом CDM с тем же корневым именем:
+> `tests/fixtures/dialogs_parsed/@alexiosHR_apelsinus.dialog.jsonl` ↔ `tests/fixtures/cdm/@alexiosHR_apelsinus.json`.
+> При запуске `unit` такой CDM будет подобран автоматически; если файла нет, подставляется любой из `cdm_*.json`.
+>
+> Роль кандидата теперь исполняет отдельный LLM: выберите `--candidate-profile difficult` (сложный кандидат, задающий неудобные вопросы) или `--candidate-profile ideal` (сильный кандидат, старающийся пройти интервью). Промпты находятся в `tests/tools/model.yaml` в секции `candidate_simulator`.
+
 ## Запуск демо-сценариев
 
-Все команды выполняются из корня репозитория при активированном окружении.
+Все команды выполняются из корня репозитория при активированном окружении (`python …`). Если окружение не активировано, используйте `python3 …`.
 
 - Классификатор ответов кандидатов:
   ```bash
