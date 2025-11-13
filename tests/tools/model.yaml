@@ -22,7 +22,7 @@ candidate_simulator:
   difficult:
     display_name: "Вадим"
     prompt_id: pmpt_6915e1d5c7c481909590ae7e4f5d5d500e448dd6e0485552
-    prompt_version: 3
+    prompt_version: 4
   ideal:
     display_name: "Мария"
     prompt_id: pmpt_6915e984ed688195b3cadd0240baea95049b4ba49bfd5df4

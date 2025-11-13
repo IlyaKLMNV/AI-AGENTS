@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import sys
@@ -31,41 +32,7 @@ REPORTS_DIR = ROOT / "tests" / "reports"
 RUNS_DIR = REPORTS_DIR / "runs"
 DEFAULT_DIALOG_LIMIT = 5
 MAX_SIMULATION_TURNS = 10
-QUESTION_STOPWORDS = {
-    "какой",
-    "какие",
-    "какая",
-    "где",
-    "когда",
-    "ваш",
-    "ваши",
-    "ваша",
-    "сейчас",
-    "пожалуйста",
-    "подскажите",
-    "можно",
-    "нужно",
-    "будет",
-    "будут",
-    "для",
-    "это",
-    "или",
-    "формат",
-    "есть",
-    "ли",
-    "от",
-    "до",
-    "про",
-    "нам",
-    "вас",
-    "прошу",
-    "подсказать",
-    "хотел",
-    "хотела",
-    "интересует",
-    "интересуют",
-    "о",
-}
+QUESTION_TOKEN_MIN_LENGTH = 4
 
 
 def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
@@ -162,20 +129,8 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
 
 def _question_keywords(question: str) -> set[str]:
     cleaned = re.sub(r"[^\w\s]", " ", question.lower())
-    tokens = {token for token in cleaned.split() if len(token) >= 4 and token not in QUESTION_STOPWORDS}
-    heuristics = set()
-    if "зарп" in question.lower() or "доход" in question.lower():
-        heuristics.update({"зарп", "доход", "вилка"})
-    if "город" in question.lower() or "локац" in question.lower():
-        heuristics.update({"город", "локац", "формат работы"})
-    if "формат" in question.lower():
-        heuristics.update({"формат", "офис", "гибрид"})
-    if "компенс" in question.lower():
-        heuristics.add("компенс")
-    tokens.update(heuristics)
+    tokens = {token for token in cleaned.split() if len(token) >= QUESTION_TOKEN_MIN_LENGTH}
     return tokens
-
-
 class CandidateSimulator:
     def __init__(self, prompt_id: str, prompt_version: str | int | None, display_name: str | None = None):
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -217,43 +172,6 @@ def classify_message(message_text: str, cfg: Dict[str, Any]) -> tuple[str, Any]:
     )
     label = assistant.run(message_text).strip()
     return label, getattr(assistant, "last_usage", None)
-
-
-def run_screening_assistant(
-    cdm_path: pathlib.Path,
-    transcript_messages: List[str],
-    cfg: Dict[str, Any],
-) -> tuple[Dict[str, object], Dict[str, int]]:
-    cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
-    vacancy_info = to_vacancy_info(cdm)
-    names = names_from_cdm(cdm)
-    sa_cfg = _component_cfg(cfg, "screening_assistant")
-    assistant = ScreeningAssistants(
-        api_key=os.environ.get("OPENAI_API_KEY"),
-        vacancy_info=vacancy_info,
-        recruiter_name=names["recruiter_name"],
-        candidate_name=names["candidate_name"],
-        prompt_id=sa_cfg.get("prompt_id"),
-        prompt_version=sa_cfg.get("prompt_version"),
-    )
-
-    conversation_id = assistant.create_thread()
-    turns: List[tuple[str, str]] = []
-    ended = False
-    usage_totals = _blank_usage()
-    for user_msg in transcript_messages:
-        result = assistant.add_message_and_run(conversation_id, user_msg)
-        _accumulate_usage(usage_totals, getattr(assistant, "last_usage", None))
-        turns.append(("candidate", user_msg))
-        response_text = result.response if result and result.response else ""
-        if response_text:
-            turns.append(("assistant", response_text))
-        if result and result.conversation_end:
-            ended = True
-            break
-        if len(turns) > 20:
-            break
-    return {"conversation_id": conversation_id, "ended": ended, "turns": turns}, usage_totals
 
 
 def run_autofill(dialog_text: str, cfg: Dict[str, Any]) -> tuple[Dict[str, object], Dict[str, int]]:
@@ -425,6 +343,14 @@ def run_dialog_case(
     except Exception as exc:
         errors["verdict_classifier"] = str(exc)
 
+    total_usage = _blank_usage()
+    token_usage = {}
+    for module_name, usage in module_usage.items():
+        token_usage[module_name] = usage.copy()
+        _accumulate_usage(total_usage, usage)
+    token_usage["total"] = total_usage
+
+    duration = time.perf_counter() - start_time
     success = all(modules_status.values())
     return {
         "dialog_file": scenario_name,
@@ -433,6 +359,14 @@ def run_dialog_case(
         "candidate_profile": candidate_profile_key,
         "assistant_ended": assistant_ended,
         "first_message_compliance": first_message_compliance,
+        "classifier_outputs": classifier_results,
+        "autofill": autofill_payload,
+        "verdict": verdict,
+        "modules": modules_status,
+        "errors": errors,
+        "token_usage": token_usage,
+        "success": success,
+        "duration_sec": duration,
     }
 
 
@@ -625,3 +559,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
