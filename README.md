@@ -67,24 +67,22 @@ python3 -m app.runner gen-fixtures
 
 ## Тесты и отчётность
 
-- Полный прогон по всем диалогам (по умолчанию берутся первые 10 файлов, можно увеличить флагом `--limit`):
+- Полный прогон по всем вакансиям (по умолчанию берутся первые 5 CDM, можно увеличить флагом `--limit`):
   ```bash
-  python -m app.runner unit --limit 10 --candidate-profile difficult   # в активированном .venv
+  python -m app.runner unit --limit 5 --candidate-profiles difficult ideal   # в активированном .venv
   # или
-  python3 -m app.runner unit --limit 10 --candidate-profile ideal
+  python3 -m app.runner unit --limit 5 --candidate-profiles difficult ideal
   ```
-  Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждого файла из `tests/fixtures/dialogs_parsed/`.  
+  Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждой вакансии из `tests/fixtures/cdm/`, последовательно прогоняя выбранных AI-кандидатов.  
   Результаты:
   - в каталоге `tests/reports/runs/<дата>_<время>_n<count>/report-<дата>_<время>_n<count>.json` — агрегированные метрики прогона (pipeline success rate, соблюдение первого касания, распределение меток/вердиктов, расход токенов и т.д.);
   - в `tests/reports/runs/<...>/dialogs/<dialog>.json` — детальные логи каждого диалога (текст, решения классификатора, все ответы ассистента, JSON от autofill, вердикт, токены, ошибки).
 
 Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы OpenAI Responses API завершатся ошибкой.
 
-> 💡 Чтобы сцена соответствовала исходной вакансии, можно положить рядом с parsed-диалогом CDM с тем же корневым именем:
-> `tests/fixtures/dialogs_parsed/@alexiosHR_apelsinus.dialog.jsonl` ↔ `tests/fixtures/cdm/@alexiosHR_apelsinus.json`.
-> При запуске `unit` такой CDM будет подобран автоматически; если файла нет, подставляется любой из `cdm_*.json`.
+> 💡 Если хотите зафиксировать конкретный сценарий, положите CDM рядом с parsed-диалогом (например, `@alexiosHR_apelsinus.dialog.jsonl` ↔ `tests/fixtures/cdm/@alexiosHR_apelsinus.json`). Иначе используется `cdm_*.json`.
 >
-> Роль кандидата теперь исполняет отдельный LLM: выберите `--candidate-profile difficult` (сложный кандидат, задающий неудобные вопросы) или `--candidate-profile ideal` (сильный кандидат, старающийся пройти интервью). Промпты находятся в `tests/tools/model.yaml` в секции `candidate_simulator`.
+> Симулятор кандидата управляется секцией `candidate_simulator` в `tests/tools/model.yaml`. Флаг `--candidate-profiles` принимает ключи из этой секции (например, `difficult`, `ideal`). По умолчанию прогоняются все перечисленные профили.
 
 ## Запуск демо-сценариев
 

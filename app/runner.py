@@ -31,29 +31,40 @@ REPORTS_DIR = ROOT / "tests" / "reports"
 RUNS_DIR = REPORTS_DIR / "runs"
 DEFAULT_DIALOG_LIMIT = 5
 MAX_SIMULATION_TURNS = 10
-CANDIDATE_PROFILES = {
-    "difficult": {
-        "name": "Вадим Соколов",
-        "persona": (
-            "Скептичный кандидат: любит проверять, бот ли с ним говорит, требует раскрыть зарплату,"
-            " интересуется ФИО руководителя, пытается выбить максимум условий, но сам не имеет"
-            " полного релевантного опыта. Часто отвечает вопросом на вопрос, может игнорировать просьбы,"
-            " просит удалёнку за рубежом, подозревает собеседника."
-        ),
-        "goals": (
-            "Получить максимальную вилку (700k+), выведать детали компании и удостовериться, что общается не бот."
-        ),
-    },
-    "ideal": {
-        "name": "Мария Кузнецова",
-        "persona": (
-            "Опытный senior product-лид с 8+ годами в финтехе. Вежлива, отвечает по существу, делится кейсами,"
-            " адекватно формулирует зарплатные ожидания (450-500k netto), готова к офису/гибриду."
-        ),
-        "goals": (
-            "Быстро пройти квалификацию, показать релевантный опыт и договориться о следующем этапе."
-        ),
-    },
+QUESTION_STOPWORDS = {
+    "какой",
+    "какие",
+    "какая",
+    "где",
+    "когда",
+    "ваш",
+    "ваши",
+    "ваша",
+    "сейчас",
+    "пожалуйста",
+    "подскажите",
+    "можно",
+    "нужно",
+    "будет",
+    "будут",
+    "для",
+    "это",
+    "или",
+    "формат",
+    "есть",
+    "ли",
+    "от",
+    "до",
+    "про",
+    "нам",
+    "вас",
+    "прошу",
+    "подсказать",
+    "хотел",
+    "хотела",
+    "интересует",
+    "интересуют",
+    "о",
 }
 
 
@@ -149,28 +160,43 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["total_tokens"] += total_tokens
 
 
+def _question_keywords(question: str) -> set[str]:
+    cleaned = re.sub(r"[^\w\s]", " ", question.lower())
+    tokens = {token for token in cleaned.split() if len(token) >= 4 and token not in QUESTION_STOPWORDS}
+    heuristics = set()
+    if "зарп" in question.lower() or "доход" in question.lower():
+        heuristics.update({"зарп", "доход", "вилка"})
+    if "город" in question.lower() or "локац" in question.lower():
+        heuristics.update({"город", "локац", "формат работы"})
+    if "формат" in question.lower():
+        heuristics.update({"формат", "офис", "гибрид"})
+    if "компенс" in question.lower():
+        heuristics.add("компенс")
+    tokens.update(heuristics)
+    return tokens
+
+
 class CandidateSimulator:
-    def __init__(self, prompt_id: str, prompt_version: str | int | None):
+    def __init__(self, prompt_id: str, prompt_version: str | int | None, display_name: str | None = None):
         api_key = os.environ.get("OPENAI_API_KEY")
         self.client = OpenAI(api_key=api_key)
         self.prompt_id = prompt_id
         self.prompt_version = str(prompt_version) if prompt_version is not None else None
         self.last_usage: Any = None
+        self.display_name = display_name
 
     def generate(
         self,
         history: List[Dict[str, str]],
         vacancy: Dict[str, Any],
-        profile: Dict[str, Any],
     ) -> str:
-        payload_lines = ["You are role-playing as a job candidate."]
-        payload_lines.append("Candidate Persona:")
-        payload_lines.append(json.dumps(profile, ensure_ascii=False))
-        payload_lines.append("Vacancy:")
-        payload_lines.append(json.dumps(vacancy, ensure_ascii=False))
-        payload_lines.append("Dialog History (JSON list of turns):")
-        payload_lines.append(json.dumps(history, ensure_ascii=False))
-        payload_lines.append("Task: respond to the recruiter in Russian, stay in character.")
+        payload_lines = [
+            "Dialog history (JSON list of turns, role is assistant/candidate):",
+            json.dumps(history, ensure_ascii=False),
+            "Vacancy payload:",
+            json.dumps(vacancy, ensure_ascii=False),
+            "Task: respond на русском, оставаясь в рамках заданного промпта.",
+        ]
         payload = "\n".join(payload_lines)
         prompt = {"id": self.prompt_id}
         if self.prompt_version is not None:
@@ -259,7 +285,12 @@ def run_verdict(dialog_text: str, cfg: Dict[str, Any]) -> tuple[str, Dict[str, i
 def _write_dialog_report(dialog_report: Dict[str, Any], target_dir: pathlib.Path) -> pathlib.Path:
     filename = dialog_report["dialog_file"].replace(".dialog.jsonl", "") + ".json"
     path = target_dir / filename
-    path.write_text(json.dumps(dialog_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = {
+        "candidate_profile": dialog_report.get("candidate_profile"),
+        "cdm_file": dialog_report.get("cdm_file"),
+        "conversation": dialog_report.get("conversation", []),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
@@ -267,7 +298,6 @@ def run_dialog_case(
     cdm_path: pathlib.Path,
     cfg: Dict[str, Any],
     candidate_simulator: CandidateSimulator,
-    candidate_profile: Dict[str, Any],
     candidate_profile_key: str,
     scenario_name: str,
 ) -> Dict[str, Any]:
@@ -304,7 +334,7 @@ def run_dialog_case(
     conversation_id = assistant.create_thread()
     template_args = {
         "recruiter_name": names["recruiter_name"],
-        "candidate_name": candidate_profile.get("name") or names["candidate_name"],
+        "candidate_name": candidate_simulator.display_name or candidate_profile_key.replace("_", " ").title(),
         "company": vacancy_info["company_name"],
         "title": vacancy_info["title"],
         "location": vacancy_info.get("location") or vacancy_info.get("work_format") or "",
@@ -326,7 +356,7 @@ def run_dialog_case(
     try:
         for turn in range(MAX_SIMULATION_TURNS):
             try:
-                candidate_message = candidate_simulator.generate(conversation, cdm["vacancy"], candidate_profile)
+                candidate_message = candidate_simulator.generate(conversation, cdm["vacancy"])
                 _accumulate_usage(module_usage["candidate_simulator"], getattr(candidate_simulator, "last_usage", None))
                 conversation.append({"role": "candidate", "text": candidate_message})
             except Exception as exc:
@@ -362,10 +392,20 @@ def run_dialog_case(
     first_message_compliance: bool | None = None
     first_reply = conversation[0] if conversation else None
     if first_reply and first_reply.get("text"):
-        text = first_reply["text"].lower()
-        salary_mentioned = any(keyword in text for keyword in ("зарплат", "вилка", "доход"))
-        location_mentioned = any(keyword in text for keyword in ("город", "локац", "формат работы"))
-        first_message_compliance = salary_mentioned and location_mentioned
+        first_text = first_reply["text"].lower()
+        questions_text = cdm["vacancy"].get("questions") or ""
+        question_lines = [line.strip() for line in questions_text.splitlines() if line.strip()]
+        required_questions = question_lines[:2]
+        if required_questions:
+            compliance = True
+            for q in required_questions:
+                keywords = _question_keywords(q)
+                if not keywords:
+                    continue
+                if not any(keyword.lower() in first_text for keyword in keywords):
+                    compliance = False
+                    break
+            first_message_compliance = compliance
 
     dialog_text = conversation_to_text(conversation)
 
@@ -386,28 +426,13 @@ def run_dialog_case(
         errors["verdict_classifier"] = str(exc)
 
     success = all(modules_status.values())
-    duration = time.perf_counter() - start_time
-
-    total_usage = _blank_usage()
-    for usage in module_usage.values():
-        _accumulate_usage(total_usage, usage)
-    module_usage["total"] = total_usage
-
     return {
         "dialog_file": scenario_name,
         "cdm_file": cdm_path.name,
-        "classifier_outputs": classifier_results,
         "conversation": conversation,
+        "candidate_profile": candidate_profile_key,
         "assistant_ended": assistant_ended,
         "first_message_compliance": first_message_compliance,
-        "autofill": autofill_payload,
-        "verdict": verdict,
-        "modules": modules_status,
-        "errors": errors,
-        "success": success,
-        "duration_sec": duration,
-        "token_usage": module_usage,
-        "candidate_profile": candidate_profile_key,
     }
 
 
@@ -425,40 +450,27 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         if first_message_checks
         else 0.0
     )
-    classifier_entries = [entry for case in cases for entry in case["classifier_outputs"]]
+    classifier_entries = [
+        (case.get("dialog_file"), entry.get("label"))
+        for case in cases
+        for entry in case["classifier_outputs"]
+    ]
     label_counts: Dict[str, int] = {}
-    for entry in classifier_entries:
-        label = entry.get("label") or "unknown"
+    label_dialogs: Dict[str, List[str]] = {}
+    for dialog_name, label in classifier_entries:
+        label = label or "unknown"
         label_counts[label] = label_counts.get(label, 0) + 1
+        label_dialogs.setdefault(label, []).append(dialog_name or "unknown")
     verdict_counts: Dict[str, int] = {}
+    verdict_dialogs: Dict[str, List[str]] = {}
     for case in cases:
         verdict_value = case.get("verdict") or "unknown"
         verdict_counts[verdict_value] = verdict_counts.get(verdict_value, 0) + 1
+        verdict_dialogs.setdefault(verdict_value, []).append(case.get("dialog_file") or "unknown")
 
-    module_stats: Dict[str, Dict[str, int]] = {}
-    for case in cases:
-        for module, status in case["modules"].items():
-            stat = module_stats.setdefault(module, {"passed": 0, "total": 0})
-            stat["total"] += 1
-            if status:
-                stat["passed"] += 1
-
-    module_success_rate = {
-        module: (data["passed"] / data["total"]) if data["total"] else 0.0
-        for module, data in module_stats.items()
-    }
-    token_usage_totals = {
-        "message_classifier": _blank_usage(),
-        "screening_assistant": _blank_usage(),
-        "screening_autofill": _blank_usage(),
-        "verdict_classifier": _blank_usage(),
-        "candidate_simulator": _blank_usage(),
-    }
     total_usage = _blank_usage()
     for case in cases:
         case_usage = case.get("token_usage") or {}
-        for module in ("message_classifier", "screening_assistant", "screening_autofill", "verdict_classifier", "candidate_simulator"):
-            _accumulate_usage(token_usage_totals[module], case_usage.get(module))
         _accumulate_usage(total_usage, case_usage.get("total"))
 
     avg_duration = (
@@ -473,8 +485,8 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         "average_duration_sec": avg_duration,
         "classifier_label_distribution": label_counts,
         "verdict_distribution": verdict_counts,
-        "module_success_rate": module_success_rate,
-        "token_usage_by_module": token_usage_totals,
+        "classifier_dialogs": label_dialogs,
+        "verdict_dialogs": verdict_dialogs,
         "token_usage_total": total_usage,
     }
 
@@ -508,19 +520,24 @@ def cmd_unit(args: argparse.Namespace) -> None:
         print("No CDM fixtures. Run: python -m app.runner gen-fixtures")
         return
 
-    selected_profiles = list(getattr(args, "candidate_profiles", list(CANDIDATE_PROFILES.keys())))
     sim_cfg = cfg.get("candidate_simulator") or {}
+    available_profiles = list(sim_cfg.keys())
+    if not available_profiles:
+        raise ValueError("candidate_simulator section is empty in config.")
+    if getattr(args, "candidate_profiles", None):
+        selected_profiles = [p for p in args.candidate_profiles if p in sim_cfg]
+    else:
+        selected_profiles = available_profiles
+    if not selected_profiles:
+        raise ValueError("No valid candidate profiles selected.")
+
     simulators: Dict[str, CandidateSimulator] = {}
     for key in selected_profiles:
-        profile_cfg = sim_cfg.get(key)
-        if not profile_cfg:
-            raise ValueError(f"Missing candidate_simulator config for profile '{key}'.")
-        profile = CANDIDATE_PROFILES.get(key)
-        if profile is None:
-            raise ValueError(f"No candidate profile definition for '{key}'.")
+        profile_cfg = sim_cfg[key]
         simulators[key] = CandidateSimulator(
             prompt_id=profile_cfg.get("prompt_id"),
             prompt_version=profile_cfg.get("prompt_version"),
+            display_name=profile_cfg.get("display_name"),
         )
 
     started_at = datetime.datetime.now()
@@ -539,13 +556,11 @@ def cmd_unit(args: argparse.Namespace) -> None:
             case_counter += 1
             scenario_name = f"{cdm_path.stem}__{profile_key}"
             print(f"[{case_counter}/{total_cases}] Processing {scenario_name} (CDM: {cdm_path.name})")
-            profile = CANDIDATE_PROFILES[profile_key]
             simulator = simulators[profile_key]
             case = run_dialog_case(
                 cdm_path,
                 cfg,
                 simulator,
-                profile,
                 profile_key,
                 scenario_name,
             )
@@ -598,9 +613,7 @@ def main() -> None:
     unit_parser.add_argument(
         "--candidate-profiles",
         nargs="+",
-        choices=tuple(CANDIDATE_PROFILES.keys()),
-        default=list(CANDIDATE_PROFILES.keys()),
-        help="Candidate personas to simulate (default: %(default)s).",
+        help="Candidate personas to simulate (keys from candidate_simulator section). Default: all profiles.",
     )
     args = parser.parse_args()
 
