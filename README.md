@@ -1,120 +1,75 @@
 # AI Agents Workspace
 
-Этот репозиторий объединяет несколько ассистентов, использующих OpenAI Responses API для автоматизации переписки рекрутеров с кандидатами. Поверх них есть единый раннер, который генерирует фикстуры, гоняет юнит- и e2e-тесты и собирает отчёты.
+Набор AI-ассистентов для автоматизации переписки рекрутёра с кандидатом:
 
-## Структура проекта
+- ассистент-рекрутёр ведёт диалог по вакансии;
+- отдельный ассистент симулирует кандидата;
+- поверх диалога считаются базовые метрики и сохраняются отчёты.
 
-- `app/runner.py` — CLI, который генерирует фикстуры (`gen-fixtures`), запускает дымовые тесты (`unit`) и e2e-пайплайн (`e2e`).
-- `tests/tools/convert_dialogs.py` — конвертер сырых чатов (`cases/messages_*.json`) в `.dialog.jsonl` и одиночные реплики.
-- `tests/tools/make_vacancies.py` — генератор канонических вакансий (CDM). Содержит 20+ пресетов, собранных на основе реальных переписок.
-- `tests/fixtures/` — артефакты (cdm, parsed dialogs, reports). При каждом `gen-fixtures` пересоздаются автоматически.
-- `adapters/adapters.py` — преобразование CDM → входные структуры ассистентов (`vacancy_info`, формы и т.д.), а также сборка текстового диалога.
-- `messageLabelGenerator/`, `screeningAssistant/`, `screening_autofill/`, `verdict_classifier/` — основные модули, работающие с конкретными промптами.
-- `common/settings.py` — загрузка `.env` и доступ к `OPENAI_API_KEY`.
+Всё это гоняется через один тестовый пайплайн.
 
-## Основные компоненты
+---
 
-- `messageLabelGenerator/classifierLLM.py` — класс `ClassifierAssistant` использует промпт **`message_classifier`** (`pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726`) и возвращает метку отклика кандидата: `reason_farewell`, `no_reason`, `human_needed`, `acceptance`.
-- `screeningAssistant/screeningAss.py` — фасад `Assistants` управляет циклом скрининга, обращаясь к промпту **`screening_assistant`** (`pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf`). Внутри:
-  - `ThreadManager.create_thread` подготавливает контекст вакансии;
-  - `RunManager.respond` отправляет сообщения кандидата;
-  - `Assistants.add_message_and_run` возвращает результат общения и признак завершения.
-- `screening_autofill/screeningAutofill.py` — `ScreeningAutofill` работает с промптом **`screening_autofill_prompt`** (`pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902`) и возвращает JSON-форму с данными кандидата.
-- `verdict_classifier/chatClassifierLLM.py` — `ChatClassifierAssistant` обращается к промпту **`verdict_classifier`** (`pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1`) и классифицирует завершенные диалоги (`passed`, `failed`, `deadlock`).
-- `common/settings.py` — загружает `.env` и предоставляет `OPENAI_API_KEY`.
+## Структура
 
-## Подготовка окружения
+- `app/runner.py` — CLI:
+  - `gen-fixtures` — генерирует тестовые вакансии (CDM);
+  - `unit` — запускает тестовый прогон (диалоги + метрики).
+- `tests/tools/make_vacancies.py` — создаёт CDM-вакансии.
+- `tests/fixtures/cdm/` — входные данные (CDM).
+- `tests/reports/runs/` — результаты прогонов (отчёты и диалоги).
+- `adapters/adapters.py` — конвертирует CDM в структуры для ассистентов.
+- `messageLabelGenerator/`, `screeningAssistant/`, `screening_autofill/`, `verdict_classifier/` — модули с промптами.
+- `telegramMessageGenerator-main/telegramGenerator.py` — генератор первого сообщения рекрутёра (“первое касание”), подключён к пайплайну через `runner.py`.
 
-1. Создайте виртуальное окружение.
-   ```bash
-   python3 -m venv .venv
-   ```
+---
 
-2. Активируйте окружение перед любыми командами `python`.
-   - PowerShell (Windows): `.venv\Scripts\Activate.ps1`
-   - Bash/WSL/Linux/macOS: `source .venv/bin/activate`
-   - Если по какой-то причине не хотите активировать `.venv`, используйте явный путь `./.venv/bin/python …` или `python3 …`, иначе команда `python` не найдётся.
-
-3. Установите зависимости (в активированном `.venv`; если не активировали, используйте `python3` вместо `python`).
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
-
-4. Создайте файл `.env` (см. `.env.example`) и укажите действующий `OPENAI_API_KEY`.
-   - Для запуска в WSL/macOS/Linux можно экспортировать ключ напрямую:
-     ```bash
-     export OPENAI_API_KEY=sk-...
-     ```
-     или загрузить весь `.env`:
-     ```bash
-     set -a
-     . ./.env
-     set +a
-     ```
-
-## Генерация фикстур
-
-Скопируйте сырые чаты в `tests/fixtures/dialogs_raw/` (формат как в `cases/messages_*.json`). Затем выполните:
+## Установка
 
 ```bash
-# внутри .venv
+python -m venv .venv
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+# Linux / macOS / WSL
+# source .venv/bin/activate
+
+python -m pip install -r requirements.txt
+
+
+- Укажите ключ в .env (см. .env.example) или через окружение:
+export OPENAI_API_KEY=sk-...
+
+---
+
+## Генерация фикстур (Создаёт/пересоздаёт набор тестовых вакансий в tests/fixtures/cdm/):
 python -m app.runner gen-fixtures
-# либо, если .venv не активировано
-python3 -m app.runner gen-fixtures
-```
 
-Команда:
-- конвертирует все `dialogs_raw/*.json` в `dialogs_parsed/*.dialog.jsonl`;
-- пересоздаёт набор CDM-вакансий (`tests/fixtures/cdm/cdm_*.json`) из расширенного `SAMPLES`;
-- оставляет отчёт в консоли.
+## Запуск тестового пайплайна (Полный прогон по CDM-вакансиям и выбранным профилям кандидатов):
+python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
 
-## Тесты и отчётность
+## Параметры:
+--limit — сколько CDM-файлов взять из tests/fixtures/cdm/ (по умолчанию 5);
 
-- Полный прогон по всем вакансиям (по умолчанию берутся первые 5 CDM, можно увеличить флагом `--limit`):
-  ```bash
-  python -m app.runner unit --limit 5 --candidate-profiles difficult ideal   # в активированном .venv
-  # или
-  python3 -m app.runner unit --limit 5 --candidate-profiles difficult ideal
-  ```
-  Команда запускает весь пайплайн (message_classifier → screening_assistant → screening_autofill → verdict_classifier) для каждой вакансии из `tests/fixtures/cdm/`, последовательно прогоняя выбранных AI-кандидатов.  
-  Результаты:
-  - в каталоге `tests/reports/runs/<дата>_<время>_n<count>/report-<дата>_<время>_n<count>.json` — агрегированные метрики прогона (pipeline success rate, соблюдение первого касания, распределение меток/вердиктов, расход токенов и т.д.);
-  - в `tests/reports/runs/<...>/dialogs/<dialog>.json` — детальные логи каждого диалога (текст, решения классификатора, все ответы ассистента, JSON от autofill, вердикт, токены, ошибки).
+--candidate-profiles — какие профили кандидатов использовать (ключи из tests/tools/model.yaml, например difficult, ideal).
 
-Убедитесь, что перед запуском выставлен `OPENAI_API_KEY` (через `.env` или `export`), иначе вызовы OpenAI Responses API завершатся ошибкой.
+## Результаты
 
-> 💡 Если хотите зафиксировать конкретный сценарий, положите CDM рядом с parsed-диалогом (например, `@alexiosHR_apelsinus.dialog.jsonl` ↔ `tests/fixtures/cdm/@alexiosHR_apelsinus.json`). Иначе используется `cdm_*.json`.
->
-> Симулятор кандидата управляется секцией `candidate_simulator` в `tests/tools/model.yaml`. Флаг `--candidate-profiles` принимает ключи из этой секции (например, `difficult`, `ideal`). По умолчанию прогоняются все перечисленные профили.
+- После прогона:
 
-## Проверка модулей вручную
+- сводный отчёт:
+tests/reports/runs/<run_id>/report-<run_id>.json
 
-CLI `app.runner` теперь содержит только команды `gen-fixtures` и `unit`. Отдельные демо-флаги `--demo verdict/autofill/assistant` удалены: вся функциональность гоняется через пайплайн `unit`, где подключены все промпты последовательно (message_classifier → screening_assistant → screening_autofill → verdict_classifier). Для диагностики конкретного модуля:
+- диалоги по кейсам:
+tests/reports/runs/<run_id>/dialogs/*.json
 
-- запустите `python -m app.runner unit …` с минимальным `--limit` и нужными `--candidate-profiles`, чтобы получить репорты актуальных прогонов;
-- или импортируйте интересующий класс и вызывайте его напрямую (см. примеры ниже).
+## В отчётах есть:
 
-## Примеры использования модулей
+- текст диалогов,
 
-```python
-from messageLabelGenerator.classifierLLM import ClassifierAssistant
+- факт, завершил ли ассистент разговор сам,
 
-clf = ClassifierAssistant()
-label = clf.run("Кандидат: здравствуйте, удаленная работа подходит?")
-print(label)
-```
+- простой чек по первому сообщению рекрутёра (покрывает ли ключевые вопросы),
 
-```python
-from screening_autofill.screeningAutofill import ScreeningAutofill
+- ошибки модулей (если были),
 
-autofill = ScreeningAutofill()
-form = autofill.run("Диалог кандидата с рекрутером...")
-print(form)
-```
-
-```python
-from verdict_classifier.chatClassifierLLM import ChatClassifierAssistant
-
-verdict = ChatClassifierAssistant()
-print(verdict.run("Полный текст завершенного диалога"))
-```
+- использование токенов по модулям.
