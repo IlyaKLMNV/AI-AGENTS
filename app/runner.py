@@ -223,6 +223,14 @@ def run_dialog_case(
     cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
     vacancy_info = to_vacancy_info(cdm)
     names = names_from_cdm(cdm)
+    candidate_display_name = (
+        (candidate_simulator.display_name or "").strip()
+        or names.get("candidate_name")
+        or (candidate_profile_key.replace("_", " ").title() if candidate_profile_key else None)
+        or "Кандидат"
+    )
+    cdm.setdefault("candidate", {})["candidate_name"] = candidate_display_name
+    names["candidate_name"] = candidate_display_name
     classifier_results: List[Dict[str, str]] = []
     modules_status = {
         "message_classifier": False,
@@ -252,7 +260,7 @@ def run_dialog_case(
     conversation_id = assistant.create_thread()
     template_args = {
         "recruiter_name": names["recruiter_name"],
-        "candidate_name": candidate_simulator.display_name or candidate_profile_key.replace("_", " ").title(),
+        "candidate_name": candidate_display_name,
         "company": vacancy_info["company_name"],
         "title": vacancy_info["title"],
         "location": vacancy_info.get("location") or vacancy_info.get("work_format") or "",

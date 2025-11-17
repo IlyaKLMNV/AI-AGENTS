@@ -29,15 +29,18 @@
    ```bash
    python3 -m venv .venv
    ```
+
+2. Активируйте окружение перед любыми командами `python`.
    - PowerShell (Windows): `.venv\Scripts\Activate.ps1`
    - Bash/WSL/Linux/macOS: `source .venv/bin/activate`
+   - Если по какой-то причине не хотите активировать `.venv`, используйте явный путь `./.venv/bin/python …` или `python3 …`, иначе команда `python` не найдётся.
 
-2. Установите зависимости (в активированном `.venv`; если не активировали, используйте `python3` вместо `python`).
+3. Установите зависимости (в активированном `.venv`; если не активировали, используйте `python3` вместо `python`).
    ```bash
    python -m pip install -r requirements.txt
    ```
 
-3. Создайте файл `.env` (см. `.env.example`) и укажите действующий `OPENAI_API_KEY`.
+4. Создайте файл `.env` (см. `.env.example`) и укажите действующий `OPENAI_API_KEY`.
    - Для запуска в WSL/macOS/Linux можно экспортировать ключ напрямую:
      ```bash
      export OPENAI_API_KEY=sk-...
@@ -84,27 +87,12 @@ python3 -m app.runner gen-fixtures
 >
 > Симулятор кандидата управляется секцией `candidate_simulator` в `tests/tools/model.yaml`. Флаг `--candidate-profiles` принимает ключи из этой секции (например, `difficult`, `ideal`). По умолчанию прогоняются все перечисленные профили.
 
-## Запуск демо-сценариев
+## Проверка модулей вручную
 
-Все команды выполняются из корня репозитория при активированном окружении (`python …`). Если окружение не активировано, используйте `python3 …`.
+CLI `app.runner` теперь содержит только команды `gen-fixtures` и `unit`. Отдельные демо-флаги `--demo verdict/autofill/assistant` удалены: вся функциональность гоняется через пайплайн `unit`, где подключены все промпты последовательно (message_classifier → screening_assistant → screening_autofill → verdict_classifier). Для диагностики конкретного модуля:
 
-- Классификатор ответов кандидатов:
-  ```bash
-  python -m app.runner --demo verdict
-  ```
-- Автозаполнение анкеты:
-  ```bash
-  python -m app.runner --demo autofill
-  ```
-- Скрининг ассистент (диалог):
-  ```bash
-  python -m app.runner --demo assistant
-  ```
-
-Для пользовательского диалога передайте путь к файлу:
-```bash
-python -m app.runner --demo verdict --file path/to/dialog.txt
-```
+- запустите `python -m app.runner unit …` с минимальным `--limit` и нужными `--candidate-profiles`, чтобы получить репорты актуальных прогонов;
+- или импортируйте интересующий класс и вызывайте его напрямую (см. примеры ниже).
 
 ## Примеры использования модулей
 
