@@ -10,10 +10,12 @@ import subprocess
 import time
 import sys
 from collections.abc import Mapping
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 import yaml
 from openai import OpenAI
+
+import traceback
 
 from adapters.adapters import names_from_cdm, to_vacancy_info, to_input_form
 from messageLabelGenerator.classifierLLM import ClassifierAssistant, AssistantError
@@ -32,30 +34,38 @@ REPORTS_DIR = ROOT / "tests" / "reports"
 RUNS_DIR = REPORTS_DIR / "runs"
 DEFAULT_DIALOG_LIMIT = 5
 MAX_SIMULATION_TURNS = 10
-QUESTION_TOKEN_MIN_LENGTH = 4
 
-# Подключаем генератор Telegram-сообщений (адаптер)
+# Подключаем генератор Telegram сообщений (адаптер)
 TELEGRAM_GEN_DIR = ROOT / "telegramMessageGenerator-main"
 if TELEGRAM_GEN_DIR.is_dir():
     sys.path.append(str(TELEGRAM_GEN_DIR))
 
+TELEGRAM_GENERATOR_AVAILABLE: bool = False
+TELEGRAM_IMPORT_ERROR: str | None = None
+
 try:
     from telegramGenerator import InputForm as TGInputForm, TelegramMessageGenerator  # type: ignore
+
     TELEGRAM_GENERATOR_AVAILABLE = True
-except Exception:
+    TELEGRAM_IMPORT_ERROR = None
+except Exception as exc:
     TGInputForm = None  # type: ignore
     TelegramMessageGenerator = None  # type: ignore
     TELEGRAM_GENERATOR_AVAILABLE = False
+    TELEGRAM_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    print(f"[telegram_generator] import failed: {TELEGRAM_IMPORT_ERROR}", file=sys.stderr)
+    traceback.print_exc()
 
 
 # ---------- Utils ----------
+
 
 def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def ensure_dirs() -> None:
-    """Создаём только те директории, которые реально нужны пайплайну."""
+    """Создаем только те директории, которые реально нужны пайплайну."""
     for directory in (CDM_DIR, REPORTS_DIR, RUNS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -133,16 +143,100 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["total_tokens"] += total_tokens
 
 
-def _question_keywords(question: str) -> set[str]:
-    cleaned = re.sub(r"[^\w\s]", " ", question.lower())
-    tokens = {token for token in cleaned.split() if len(token) >= QUESTION_TOKEN_MIN_LENGTH}
-    return tokens
+# --- эвристики для первого касания ---
+
+
+def _asked_about_location(text: str, vacancy_info: Dict[str, Any]) -> bool:
+    """Спрашивает ли сообщение про город / локацию / формат работы."""
+    t = text.lower()
+    patterns = [
+        "город",
+        "находитесь",
+        "локац",
+        "офис",
+        "удал",
+        "remote",
+        "гибрид",
+        "формат работы",
+        "timezone",
+        "часовой пояс",
+    ]
+    if any(p in t for p in patterns):
+        return True
+    # прямое упоминание города из вакансии
+    location = (vacancy_info.get("location") or "").lower()
+    if location and location in t:
+        return True
+    return False
+
+
+def _asked_about_salary(text: str) -> bool:
+    """Спрашивает ли сообщение про деньги / вилку / компенсацию."""
+    t = text.lower()
+    patterns = [
+        "зп",
+        "зарплат",
+        "компенсац",
+        "доход",
+        "оплат",
+        "вилка",
+        "net",
+        "gross",
+        "уровень дохода",
+        "уровень компенсации",
+        "уровень оплаты",
+        "ожидания по зп",
+        "ожидания по зарплате",
+    ]
+    return any(p in t for p in patterns)
+
+
+def _asked_about_experience(text: str, vacancy: Dict[str, Any]) -> bool:
+    """
+    Спрашивает ли сообщение про опыт - общие слова и ключевые скиллы из вакансии.
+    """
+    t = text.lower()
+    base_patterns = [
+        "опыт",
+        "experience",
+        "сколько лет",
+        "стаж",
+        "background",
+        "работали ли вы",
+        "работали раньше",
+        "делали ли вы",
+        "проекты с",
+    ]
+    if any(p in t for p in base_patterns):
+        return True
+
+    # ключевые навыки из вакансии
+    skills = vacancy.get("vacancy_skills") or []
+    for skill in skills:
+        skill = str(skill).lower()
+        if skill and skill in t:
+            return True
+
+    # фразы из responsibilities
+    responsibilities = (vacancy.get("responsibilities") or "").lower()
+    for token in re.split(r"[,\.\n;/]+", responsibilities):
+        token = token.strip()
+        if len(token) >= 5 and token in t:
+            return True
+
+    return False
 
 
 # ---------- Candidate simulator ----------
 
+
 class CandidateSimulator:
-    def __init__(self, prompt_id: str, prompt_version: str | int | None, display_name: str | None = None):
+    def __init__(
+        self,
+        prompt_id: str,
+        prompt_version: str | int | None,
+        display_name: str | None = None,
+    ):
         api_key = os.environ.get("OPENAI_API_KEY")
         self.client = OpenAI(api_key=api_key)
         self.prompt_id = prompt_id
@@ -175,6 +269,7 @@ class CandidateSimulator:
 
 
 # ---------- Module wrappers ----------
+
 
 def classify_message(message_text: str, cfg: Dict[str, Any]) -> tuple[str, Any]:
     mc_cfg = _component_cfg(cfg, "message_classifier")
@@ -224,21 +319,52 @@ def _write_dialog_report(dialog_report: Dict[str, Any], target_dir: pathlib.Path
     return path
 
 
-# ---------- First-touch generator adapter ----------
+# ---------- First touch helpers ----------
+
+
+def _build_classifier_cutoff_reply(
+    label: str,
+    names: Dict[str, str],
+    vacancy_info: Dict[str, Any],
+) -> str:
+    """Шаблонный ответ рекрутера, если по первому сообщению решили завершить диалог."""
+    candidate_name = names.get("candidate_name") or "коллега"
+    title = vacancy_info.get("title") or "вакансия"
+    company = vacancy_info.get("company_name") or ""
+
+    if label == "reason_farewell":
+        return (
+            f"Спасибо за ваш ответ, {candidate_name}! "
+            "Понимаю вашу позицию и не буду дальше отвлекать. "
+            "Если в будущем ситуация изменится, буду рада или рада вернуться к диалогу."
+        )
+    if label == "no_reason":
+        return (
+            f"Спасибо, что ответили, {candidate_name}. "
+            f"Зафиксирую, что {title} в {company} сейчас неактуальна. "
+            "Тогда не буду отвлекать вас дальше, хорошего дня."
+        )
+
+    return (
+        f"Спасибо за ваш ответ, {candidate_name}! "
+        "Если интерес к вакансии изменится, можем вернуться к общению."
+    )
+
 
 def _build_first_message(
     cdm: Dict[str, Any],
     names: Dict[str, str],
     vacancy_info: Dict[str, Any],
+    errors: Dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """
     Возвращает (текст первого сообщения, источник).
 
     Источники:
-      - "telegram_generator"          — успешно сгенерировано telegramMessageGenerator
-      - "telegram_generator_error"    — генератор упал, используется fallback
-      - "cdm_template" / "cdm_template_raw" — сообщение из шаблона CDM
-      - "fallback_default"            — жёстко прошитый текст по умолчанию
+      - "telegram_generator"          - успешно сгенерировано telegramMessageGenerator
+      - "telegram_generator_error"    - генератор упал или вернул пусто, используется fallback
+      - "cdm_template" / "cdm_template_raw" - сообщение из шаблона CDM
+      - "fallback_default"            - жестко прошитый текст по умолчанию
     """
     template_args = {
         "recruiter_name": names["recruiter_name"],
@@ -247,6 +373,19 @@ def _build_first_message(
         "title": vacancy_info["title"],
         "location": vacancy_info.get("location") or vacancy_info.get("work_format") or "",
     }
+
+    # если генератор недоступен - сохраним причину в errors один раз
+    if not TELEGRAM_GENERATOR_AVAILABLE and TELEGRAM_IMPORT_ERROR and errors is not None:
+        errors.setdefault("telegram_generator_import", TELEGRAM_IMPORT_ERROR)
+
+    telegram_source: str | None = None
+
+    print(
+        "[telegram_generator] debug: available="
+        f"{TELEGRAM_GENERATOR_AVAILABLE}, TGInputForm={bool(TGInputForm)}, "
+        f"TelegramMessageGenerator={bool(TelegramMessageGenerator)}",
+        file=sys.stderr,
+    )
 
     # 1) Пробуем telegramMessageGenerator, если доступен
     if TELEGRAM_GENERATOR_AVAILABLE and TGInputForm is not None and TelegramMessageGenerator is not None:
@@ -259,10 +398,19 @@ def _build_first_message(
             if first_message:
                 return first_message, "telegram_generator"
             else:
+                # генератор вернул пустую строку
+                if errors is not None:
+                    errors["telegram_generator"] = "empty_response"
+                print("[telegram_generator] Empty response from generator", file=sys.stderr)
                 return "", "telegram_generator_error"
-        except Exception:
-            # Не ломаем пайплайн: тихо откатываемся к старой логике
-            pass
+        except Exception as exc:
+            # явный лог
+            if errors is not None:
+                errors["telegram_generator"] = f"{type(exc).__name__}: {exc}"
+            print("[telegram_generator] ERROR while generating first message:", file=sys.stderr)
+            print(f"  {type(exc).__name__}: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            # не ломаем пайплайн - продолжаем на CDM-шаблон
 
     # 2) Шаблон из CDM
     template = cdm.get("first_message_template", "") or ""
@@ -273,19 +421,23 @@ def _build_first_message(
         first_message = template
         source = "cdm_template_raw"
 
-    # 3) Жёстко прошитый fallback
+    # 3) Жестко прошитый fallback
     if not first_message:
         first_message = (
             f"Здравствуйте, {template_args['candidate_name']}! Это {template_args['recruiter_name']} из "
             f"{template_args['company']}. Подскажите, пожалуйста, где вы сейчас находитесь и "
-            "какая net-компенсация будет комфортна?"
+            "какая net компенсация будет комфортна."
         )
         source = "fallback_default"
+
+    if telegram_source:
+        source = telegram_source
 
     return first_message, source
 
 
 # ---------- Core pipeline ----------
+
 
 def run_dialog_case(
     cdm_path: pathlib.Path,
@@ -297,9 +449,10 @@ def run_dialog_case(
     start_time = time.perf_counter()
     cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
     vacancy_info = to_vacancy_info(cdm)
+    vacancy = cdm.get("vacancy") or {}
     names = names_from_cdm(cdm)
 
-    # Вычисляем имя кандидата с приоритетами
+    # красивое отображаемое имя кандидата
     candidate_display_name = (
         (candidate_simulator.display_name or "").strip()
         or names.get("candidate_name")
@@ -326,6 +479,10 @@ def run_dialog_case(
         "candidate_simulator": _blank_usage(),
     }
 
+    # если генератор не завелся - запишем это в errors
+    if not TELEGRAM_GENERATOR_AVAILABLE and TELEGRAM_IMPORT_ERROR:
+        errors.setdefault("telegram_generator_import", TELEGRAM_IMPORT_ERROR)
+
     sa_cfg = _component_cfg(cfg, "screening_assistant")
     assistant = ScreeningAssistants(
         api_key=os.environ.get("OPENAI_API_KEY"),
@@ -337,14 +494,23 @@ def run_dialog_case(
     )
     conversation_id = assistant.create_thread()
 
-    # --- первое касание ---
-    first_message, first_message_source = _build_first_message(cdm, names, vacancy_info)
+    # первое касание
+    first_message, first_message_source = _build_first_message(cdm, names, vacancy_info, errors)
     conversation: List[Dict[str, str]] = [{"role": "assistant", "text": first_message}]
     assistant_ended = False
 
+    fm_text = first_message or ""
+    first_message_asked_location = _asked_about_location(fm_text, vacancy_info)
+    first_message_asked_salary = _asked_about_salary(fm_text)
+    first_message_asked_experience = _asked_about_experience(fm_text, vacancy)
+
+    classified_first = False
+    cutoff_labels = {"reason_farewell", "no_reason"}
+    cutoff_label_for_case: str | None = None
+
     try:
         for _turn in range(MAX_SIMULATION_TURNS):
-            # Кандидат
+            # кандидат
             try:
                 candidate_message = candidate_simulator.generate(conversation, cdm["vacancy"])
                 _accumulate_usage(
@@ -356,22 +522,36 @@ def run_dialog_case(
                 errors["candidate_simulator"] = str(exc)
                 break
 
-            # Классификатор сообщений
-            try:
-                label, usage = classify_message(candidate_message, cfg)
-                classifier_results.append({"text": candidate_message, "label": label})
-                _accumulate_usage(module_usage["message_classifier"], usage)
-                modules_status["message_classifier"] = True
-            except Exception as exc:
-                errors["message_classifier"] = str(exc)
-                break
+            # классификатор - только первое сообщение кандидата
+            if not classified_first:
+                try:
+                    label, usage = classify_message(candidate_message, cfg)
+                    classifier_results.append({"text": candidate_message, "label": label})
+                    _accumulate_usage(module_usage["message_classifier"], usage)
+                    modules_status["message_classifier"] = True
+                    classified_first = True
 
-            # Ассистент
+                    # ранний останов по reason_farewell / no_reason
+                    if label in cutoff_labels:
+                        cutoff_label_for_case = label
+                        cutoff_reply = _build_classifier_cutoff_reply(label, names, vacancy_info)
+                        conversation.append({"role": "assistant", "text": cutoff_reply})
+                        assistant_ended = True
+                        # считаем, что screening_assistant "отработал" ветку
+                        modules_status["screening_assistant"] = True
+                        break
+                except Exception as exc:
+                    errors["message_classifier"] = str(exc)
+                    break
+
+            # ассистент
             result = assistant.add_message_and_run(conversation_id, candidate_message)
             _accumulate_usage(
                 module_usage["screening_assistant"],
                 getattr(assistant, "last_usage", None),
             )
+            modules_status["screening_assistant"] = True
+
             response_text = result.response if result and result.response else ""
             if response_text:
                 conversation.append({"role": "assistant", "text": response_text})
@@ -382,33 +562,13 @@ def run_dialog_case(
         errors.setdefault("screening_assistant", str(exc))
     else:
         modules_status["candidate_simulator"] = True
-        modules_status["screening_assistant"] = True
 
     if "message_classifier" not in errors and classifier_results:
         modules_status["message_classifier"] = True
 
-    # --- метрика соответствия первым вопросам ---
-    first_message_compliance: bool | None = None
-    first_reply = conversation[0] if conversation else None
-    if first_reply and first_reply.get("text"):
-        first_text = first_reply["text"].lower()
-        questions_text = cdm["vacancy"].get("questions") or ""
-        question_lines = [line.strip() for line in questions_text.splitlines() if line.strip()]
-        required_questions = question_lines[:2]
-        if required_questions:
-            compliance = True
-            for q in required_questions:
-                keywords = _question_keywords(q)
-                if not keywords:
-                    continue
-                if not any(keyword.lower() in first_text for keyword in keywords):
-                    compliance = False
-                    break
-            first_message_compliance = compliance
-
     dialog_text = conversation_to_text(conversation)
 
-    # --- автофилл ---
+    # автофилл
     autofill_payload: Dict[str, Any] | None = None
     try:
         autofill_payload, autofill_usage = run_autofill(dialog_text, cfg)
@@ -417,16 +577,22 @@ def run_dialog_case(
     except Exception as exc:
         errors["screening_autofill"] = str(exc)
 
-    # --- вердикт ---
+    # вердикт
     verdict: str | None = None
     try:
-        verdict, verdict_usage = run_verdict(dialog_text, cfg)
+        # если классификатор первого сообщения дал reason_farewell / no_reason -
+        # фиксируем вердикт здесь и не дергаем вердикт-классификатор
+        if cutoff_label_for_case in cutoff_labels:
+            verdict = "failed"
+            verdict_usage = _blank_usage()
+        else:
+            verdict, verdict_usage = run_verdict(dialog_text, cfg)
         modules_status["verdict_classifier"] = True
         _accumulate_usage(module_usage["verdict_classifier"], verdict_usage)
     except Exception as exc:
         errors["verdict_classifier"] = str(exc)
 
-    # --- usage и summary ---
+    # агрегация использования токенов
     total_usage = _blank_usage()
     token_usage: Dict[str, Dict[str, int]] = {}
     for module_name, usage in module_usage.items():
@@ -442,8 +608,10 @@ def run_dialog_case(
         "conversation": conversation,
         "candidate_profile": candidate_profile_key,
         "assistant_ended": assistant_ended,
-        "first_message_compliance": first_message_compliance,
         "first_message_source": first_message_source,
+        "first_message_asked_location": first_message_asked_location,
+        "first_message_asked_salary": first_message_asked_salary,
+        "first_message_asked_experience": first_message_asked_experience,
         "classifier_outputs": classifier_results,
         "autofill": autofill_payload,
         "verdict": verdict,
@@ -459,16 +627,26 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     total = len(cases)
     success_count = sum(1 for case in cases if case["success"])
     assistant_end = sum(1 for case in cases if case.get("assistant_ended"))
-    first_message_checks = [
-        case.get("first_message_compliance")
-        for case in cases
-        if case.get("first_message_compliance") is not None
-    ]
-    first_message_rate = (
-        sum(1 for flag in first_message_checks if flag) / len(first_message_checks)
-        if first_message_checks
-        else 0.0
+
+    loc_flags = [bool(case.get("first_message_asked_location")) for case in cases]
+    sal_flags = [bool(case.get("first_message_asked_salary")) for case in cases]
+    exp_flags = [bool(case.get("first_message_asked_experience")) for case in cases]
+
+    first_message_location_rate = (
+        sum(1 for f in loc_flags if f) / len(loc_flags) if loc_flags else 0.0
     )
+    first_message_salary_rate = (
+        sum(1 for f in sal_flags if f) / len(sal_flags) if sal_flags else 0.0
+    )
+    first_message_experience_rate = (
+        sum(1 for f in exp_flags if f) / len(exp_flags) if exp_flags else 0.0
+    )
+
+    source_counts: Dict[str, int] = {}
+    for case in cases:
+        src = case.get("first_message_source") or "unknown"
+        source_counts[src] = source_counts.get(src, 0) + 1
+
     classifier_entries = [
         (case.get("dialog_file"), entry.get("label"))
         for case in cases
@@ -480,12 +658,15 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         label = label or "unknown"
         label_counts[label] = label_counts.get(label, 0) + 1
         label_dialogs.setdefault(label, []).append(dialog_name or "unknown")
+
     verdict_counts: Dict[str, int] = {}
     verdict_dialogs: Dict[str, List[str]] = {}
     for case in cases:
         verdict_value = case.get("verdict") or "unknown"
         verdict_counts[verdict_value] = verdict_counts.get(verdict_value, 0) + 1
-        verdict_dialogs.setdefault(verdict_value, []).append(case.get("dialog_file") or "unknown")
+        verdict_dialogs.setdefault(verdict_value, []).append(
+            case.get("dialog_file") or "unknown"
+        )
 
     total_usage = _blank_usage()
     for case in cases:
@@ -500,7 +681,10 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         "total_dialogs": total,
         "pipeline_success_rate": (success_count / total) if total else 0.0,
         "assistant_end_rate": (assistant_end / total) if total else 0.0,
-        "first_message_compliance_rate": first_message_rate,
+        "first_message_location_rate": first_message_location_rate,
+        "first_message_salary_rate": first_message_salary_rate,
+        "first_message_experience_rate": first_message_experience_rate,
+        "first_message_source_distribution": source_counts,
         "average_duration_sec": avg_duration,
         "classifier_label_distribution": label_counts,
         "verdict_distribution": verdict_counts,
@@ -528,13 +712,12 @@ def conversation_to_text(conversation: List[Dict[str, str]]) -> str:
 
 # ---------- Commands ----------
 
+
 def cmd_gen_fixtures(_: argparse.Namespace) -> None:
-    """Generate CDM fixtures for vacancies."""
+    """Генерация CDM фикстур для вакансий."""
     ensure_dirs()
-    # Чистим старые CDM
     for existing in CDM_DIR.glob("*.json"):
         existing.unlink()
-    # Генерим новые
     run_subprocess(
         [
             PYTHON_BIN,
@@ -543,18 +726,24 @@ def cmd_gen_fixtures(_: argparse.Namespace) -> None:
             "--out_dir",
             str(CDM_DIR),
             "--n",
-            "5",
+            "10",
         ]
     )
     print("CDM fixtures generated.")
 
 
 def cmd_unit(args: argparse.Namespace) -> None:
-    """Run the entire pipeline for each vacancy against selected candidate personas."""
+    """Запуск всего пайплайна для каждой вакансии и выбранных профилей кандидатов."""
     ensure_dirs()
     if not CFG_PATH.is_file():
         raise FileNotFoundError(f"Config not found: {CFG_PATH}")
     cfg = load_yaml(CFG_PATH)
+
+    print(
+        f"[telegram_generator] status at unit start: "
+        f"available={TELEGRAM_GENERATOR_AVAILABLE}, import_error={TELEGRAM_IMPORT_ERROR}",
+        file=sys.stderr,
+    )
 
     cdm_files = _assign_cdm_files()
     limit = max(1, getattr(args, "limit", DEFAULT_DIALOG_LIMIT))
@@ -598,7 +787,10 @@ def cmd_unit(args: argparse.Namespace) -> None:
         for profile_key in selected_profiles:
             case_counter += 1
             scenario_name = f"{cdm_path.stem}__{profile_key}"
-            print(f"[{case_counter}/{total_cases}] Processing {scenario_name} (CDM: {cdm_path.name})")
+            print(
+                f"[{case_counter}/{total_cases}] Processing {scenario_name} "
+                f"(CDM: {cdm_path.name})"
+            )
             simulator = simulators[profile_key]
             case = run_dialog_case(
                 cdm_path,
@@ -610,7 +802,12 @@ def cmd_unit(args: argparse.Namespace) -> None:
             cases.append(case)
             report_path = _write_dialog_report(case, dialog_dir)
             status_icon = "✓" if case["success"] else "✗"
-            print(f"    {status_icon} modules={case['modules']} assistant_end={case['assistant_ended']}")
+            print(
+                f"    {status_icon} modules={case['modules']} "
+                f"assistant_end={case['assistant_ended']} "
+                f"first_source={case.get('first_message_source')} "
+                f"errors={case.get('errors')}",
+            )
             report_rel = str(report_path.relative_to(ROOT))
             case_refs.append(
                 {

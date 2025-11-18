@@ -100,6 +100,107 @@ SAMPLES = [
             "Сразу уточню город и желаемый net-доход — это ключевые параметры на старте."
         ),
     ),
+    # --- новые примеры ---
+    dict(
+        title="Senior Backend Engineer (Marketplace)",
+        company_name="Mercury Market",
+        company_description="Маркетплейс с фокусом на b2c, команда строит ядро платёжного и каталожного сервисов.",
+        company_industry="E-commerce",
+        location="Москва",
+        work_format="hybrid",
+        salary_range_from=270000,
+        salary_range_to=350000,
+        responsibilities="Разработка backend-сервисов, интеграции с платёжными провайдерами, код-ревью.",
+        vacancy_stack="Python, FastAPI, PostgreSQL, Kafka",
+        vacancy_skills=["Backend", "FastAPI", "PostgreSQL"],
+        questions="1. В каком городе вы сейчас?\n2. Насколько комфортен гибридный формат?\n3. Опыт с высоконагруженными сервисами?",
+        first_message_template=(
+            "Здравствуйте, {candidate_name}! {recruiter_name} из {company}. "
+            "Ищем Senior Backend Engineer под ядро маркетплейса. "
+            "Подскажите, пожалуйста, где вы сейчас находитесь, насколько комфортен гибридный формат "
+            "и есть ли у вас опыт с высоконагруженными сервисами?"
+        ),
+    ),
+    dict(
+        title="Head of Data Platform",
+        company_name="NovaTech",
+        company_description="Технологическая компания строит единую data-платформу для продуктовых команд.",
+        company_industry="Tech",
+        location="Москва",
+        work_format="office",
+        salary_range_from=420000,
+        salary_range_to=550000,
+        responsibilities="Стратегия data-платформы, развитие команды, взаимодействие с CPO/CTO.",
+        vacancy_stack="Python, Spark, Airflow, ClickHouse",
+        vacancy_skills=["Data Platform", "Team Management", "Spark"],
+        questions="1. В каком городе вы находитесь?\n2. Готовы к офисному формату?\n3. Опыт построения data-платформ?",
+        first_message_template=(
+            "Здравствуйте, {candidate_name}! На связи {recruiter_name} из {company}. "
+            "Мы ищем Head of Data Platform. "
+            "Скажите, пожалуйста, в каком вы сейчас городе, готовы ли к офисному формату "
+            "и есть ли у вас опыт построения data-платформ?"
+        ),
+    ),
+    dict(
+        title="Lead Product Manager (B2B SaaS)",
+        company_name="CloudMetric",
+        company_description="B2B SaaS-платформа для мониторинга и алёртинга инфраструктуры.",
+        company_industry="SaaS",
+        location="Удалённо",
+        work_format="remote",
+        salary_range_from=280000,
+        salary_range_to=360000,
+        responsibilities="Развитие B2B-продукта, интервью с клиентами, постановка задач команде разработки.",
+        vacancy_stack="Product, Analytics, SaaS",
+        vacancy_skills=["Product management", "B2B", "Discovery"],
+        questions="1. В каком городе вы находитесь?\n2. Насколько важна для вас фиксированная ставка/бонус?\n3. Опыт работы с B2B SaaS?",
+        first_message_template=(
+            "Привет, {candidate_name}! {recruiter_name} из {company}. "
+            "У нас Lead Product Manager на B2B SaaS-платформу. "
+            "Расскажите, пожалуйста, из какого вы города, насколько важен баланс фикс/бонус "
+            "и есть ли опыт работы с B2B SaaS-продуктами?"
+        ),
+    ),
+    dict(
+        title="Engineering Manager (Analytics)",
+        company_name="Insightly",
+        company_description="Продуктовая компания строит решения для аналитики поведения пользователей.",
+        company_industry="Analytics",
+        location="Санкт-Петербург",
+        work_format="hybrid",
+        salary_range_from=300000,
+        salary_range_to=380000,
+        responsibilities="Управление командой инженеров, развитие аналитической платформы, найм.",
+        vacancy_stack="Python, ETL, DWH",
+        vacancy_skills=["People management", "ETL", "DWH"],
+        questions="1. В каком вы городе и открыты ли к СПб?\n2. Ожидаемая вилка net?\n3. Опыт управления инженерными командами?",
+        first_message_template=(
+            "Добрый день, {candidate_name}! {recruiter_name} из {company}. "
+            "В команду аналитической платформы ищем Engineering Manager. "
+            "Подскажите, пожалуйста, в каком вы сейчас городе и рассматриваете ли СПб, "
+            "какая net-вилка для вас комфортна и есть ли опыт управления инженерными командами?"
+        ),
+    ),
+    dict(
+        title="Senior ML Engineer (Computer Vision)",
+        company_name="VisionLab",
+        company_description="R&D-команда делает CV-решения для индустриальных клиентов.",
+        company_industry="AI",
+        location="Екатеринбург",
+        work_format="hybrid",
+        salary_range_from=320000,
+        salary_range_to=430000,
+        responsibilities="Разработка и продакшн ML-моделей, участие в ресёрче, оптимизация inference.",
+        vacancy_stack="Python, PyTorch, MLflow",
+        vacancy_skills=["Computer Vision", "PyTorch", "ML"],
+        questions="1. В каком вы городе и готовы ли к Екб?\n2. Ожидаемая компенсация?\n3. Опыт в computer vision?",
+        first_message_template=(
+            "Здравствуйте, {candidate_name}! {recruiter_name} из {company}. "
+            "Мы ищем Senior ML Engineer в направление computer vision. "
+            "Расскажите, пожалуйста, в каком вы сейчас городе и готовы ли к формату с Екб, "
+            "какая компенсация для вас комфортна и есть ли у вас опыт в CV-проектах?"
+        ),
+    ),
 ]
 
 
@@ -111,7 +212,6 @@ def make_cdm(recruiter_name: str = "Варя", candidate_name: str = "Канди
         "first_message_template": template,
         "candidate": {
             "recruiter_name": recruiter_name,
-            "candidate_name": candidate_name,
             "candidate_contacts": [],
             "candidate_job_list": [],
             "candidate_skills": [],
