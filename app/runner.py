@@ -628,6 +628,7 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     success_count = sum(1 for case in cases if case["success"])
     assistant_end = sum(1 for case in cases if case.get("assistant_ended"))
 
+    # --- метрики по первому сообщению ---
     loc_flags = [bool(case.get("first_message_asked_location")) for case in cases]
     sal_flags = [bool(case.get("first_message_asked_salary")) for case in cases]
     exp_flags = [bool(case.get("first_message_asked_experience")) for case in cases]
@@ -647,10 +648,11 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         src = case.get("first_message_source") or "unknown"
         source_counts[src] = source_counts.get(src, 0) + 1
 
+    # --- метрики по message_classifier ---
     classifier_entries = [
         (case.get("dialog_file"), entry.get("label"))
         for case in cases
-        for entry in case["classifier_outputs"]
+        for entry in case.get("classifier_outputs", [])
     ]
     label_counts: Dict[str, int] = {}
     label_dialogs: Dict[str, List[str]] = {}
@@ -659,6 +661,7 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         label_counts[label] = label_counts.get(label, 0) + 1
         label_dialogs.setdefault(label, []).append(dialog_name or "unknown")
 
+    # --- метрики по verdict_classifier ---
     verdict_counts: Dict[str, int] = {}
     verdict_dialogs: Dict[str, List[str]] = {}
     for case in cases:
@@ -668,30 +671,101 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
             case.get("dialog_file") or "unknown"
         )
 
+    # --- токены ---
     total_usage = _blank_usage()
     for case in cases:
         case_usage = case.get("token_usage") or {}
         _accumulate_usage(total_usage, case_usage.get("total"))
 
+    # --- длительность ---
     avg_duration = (
         sum(case.get("duration_sec") or 0.0 for case in cases) / total if total else 0.0
     )
 
-    return {
+    # --- метрика по screening_autofill: наличие QA-пар ---
+    if total:
+        addinfo_nonempty = 0
+        for case in cases:
+            af = case.get("autofill") or {}
+            additional_info = af.get("additional_info") or []
+            if isinstance(additional_info, list) and additional_info:
+                addinfo_nonempty += 1
+        screening_autofill_additional_info_nonempty_rate = addinfo_nonempty / total
+    else:
+        screening_autofill_additional_info_nonempty_rate = 0.0
+
+    summary: Dict[str, Any] = {
+        # общие / пайплайн
         "total_dialogs": total,
         "pipeline_success_rate": (success_count / total) if total else 0.0,
         "assistant_end_rate": (assistant_end / total) if total else 0.0,
+        "average_duration_sec": avg_duration,
+        "token_usage_total": total_usage,
+        # первое сообщение
         "first_message_location_rate": first_message_location_rate,
         "first_message_salary_rate": first_message_salary_rate,
         "first_message_experience_rate": first_message_experience_rate,
         "first_message_source_distribution": source_counts,
-        "average_duration_sec": avg_duration,
+        # message_classifier
         "classifier_label_distribution": label_counts,
-        "verdict_distribution": verdict_counts,
         "classifier_dialogs": label_dialogs,
+        # verdict_classifier
+        "verdict_distribution": verdict_counts,
         "verdict_dialogs": verdict_dialogs,
-        "token_usage_total": total_usage,
+        # screening_autofill
+        "screening_autofill_additional_info_nonempty_rate": screening_autofill_additional_info_nonempty_rate,
     }
+
+    # Группировка метрик по компонентам (для читаемости отчёта)
+    summary["metrics_by_component"] = {
+        "pipeline": [
+            "total_dialogs",
+            "pipeline_success_rate",
+            "assistant_end_rate",
+            "average_duration_sec",
+            "token_usage_total",
+        ],
+        "first_message": [
+            "first_message_location_rate",
+            "first_message_salary_rate",
+            "first_message_experience_rate",
+            "first_message_source_distribution",
+        ],
+        "message_classifier": [
+            "classifier_label_distribution",
+            "classifier_dialogs",
+        ],
+        "screening_assistant": [
+            "assistant_end_rate",
+            "average_duration_sec",
+        ],
+        "screening_autofill": [
+            "screening_autofill_additional_info_nonempty_rate",
+        ],
+        "verdict_classifier": [
+            "verdict_distribution",
+            "verdict_dialogs",
+        ],
+    }
+
+    # Краткие описания ключевых метрик
+    summary["metrics_description"] = {
+        "pipeline_success_rate": "Доля диалогов, где все модули пайплайна успешно отработали без ошибок.",
+        "assistant_end_rate": "Доля диалогов, где ассистент сам корректно завершил разговор.",
+        "average_duration_sec": "Средняя длительность диалога в секундах (по симуляциям).",
+        "token_usage_total": "Суммарное количество токенов (input/output) по всем модулям и диалогам.",
+        "first_message_location_rate": "Доля диалогов, где первое сообщение рекрутера спрашивает про локацию/город/формат.",
+        "first_message_salary_rate": "Доля диалогов, где первое сообщение рекрутера спрашивает про зарплату/вилку/компенсацию.",
+        "first_message_experience_rate": "Доля диалогов, где первое сообщение рекрутера затрагивает опыт или навыки кандидата.",
+        "first_message_source_distribution": "Распределение источников первого сообщения (CDM-шаблон, Telegram генератор, fallback и т.п.).",
+        "classifier_label_distribution": "Распределение меток, которые выдаёт message_classifier по первым сообщениям кандидата.",
+        "classifier_dialogs": "Список диалогов, сгруппированных по меткам message_classifier.",
+        "verdict_distribution": "Распределение финальных вердиктов по диалогам: passed / failed / deadlock.",
+        "verdict_dialogs": "Список диалогов, сгруппированных по финальным вердиктам.",
+        "screening_autofill_additional_info_nonempty_rate": "Доля диалогов, где screening_autofill нашёл хотя бы одну содержательную QA-пару в additional_info.",
+    }
+
+    return summary
 
 
 def _assign_cdm_files() -> List[pathlib.Path]:
