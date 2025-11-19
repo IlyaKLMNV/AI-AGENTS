@@ -438,7 +438,6 @@ def _build_first_message(
 
 # ---------- Core pipeline ----------
 
-
 def run_dialog_case(
     cdm_path: pathlib.Path,
     cfg: Dict[str, Any],
@@ -568,17 +567,9 @@ def run_dialog_case(
 
     dialog_text = conversation_to_text(conversation)
 
-    # автофилл
-    autofill_payload: Dict[str, Any] | None = None
-    try:
-        autofill_payload, autofill_usage = run_autofill(dialog_text, cfg)
-        modules_status["screening_autofill"] = True
-        _accumulate_usage(module_usage["screening_autofill"], autofill_usage)
-    except Exception as exc:
-        errors["screening_autofill"] = str(exc)
-
-    # вердикт
+    # --- вердикт ---
     verdict: str | None = None
+    verdict_usage: Dict[str, int] = _blank_usage()
     try:
         # если классификатор первого сообщения дал reason_farewell / no_reason -
         # фиксируем вердикт здесь и не дергаем вердикт-классификатор
@@ -591,6 +582,20 @@ def run_dialog_case(
         _accumulate_usage(module_usage["verdict_classifier"], verdict_usage)
     except Exception as exc:
         errors["verdict_classifier"] = str(exc)
+
+    # --- автофилл: ТОЛЬКО если вердикт == "passed" ---
+    autofill_payload: Dict[str, Any] | None = None
+    try:
+        if verdict == "passed":
+            autofill_payload, autofill_usage = run_autofill(dialog_text, cfg)
+            modules_status["screening_autofill"] = True
+            _accumulate_usage(module_usage["screening_autofill"], autofill_usage)
+        else:
+            # для failed / deadlock модуль автозаполнения по схеме не вызывается
+            # считаем его "успешно пропущенным по дизайну", чтобы не ломать pipeline_success_rate
+            modules_status["screening_autofill"] = True
+    except Exception as exc:
+        errors["screening_autofill"] = str(exc)
 
     # агрегация использования токенов
     total_usage = _blank_usage()
@@ -682,15 +687,16 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         sum(case.get("duration_sec") or 0.0 for case in cases) / total if total else 0.0
     )
 
-    # --- метрика по screening_autofill: наличие QA-пар ---
-    if total:
+    # --- метрика по screening_autofill: наличие QA-пар только для passed ---
+    passed_cases = [case for case in cases if case.get("verdict") == "passed"]
+    if passed_cases:
         addinfo_nonempty = 0
-        for case in cases:
+        for case in passed_cases:
             af = case.get("autofill") or {}
             additional_info = af.get("additional_info") or []
             if isinstance(additional_info, list) and additional_info:
                 addinfo_nonempty += 1
-        screening_autofill_additional_info_nonempty_rate = addinfo_nonempty / total
+        screening_autofill_additional_info_nonempty_rate = addinfo_nonempty / len(passed_cases)
     else:
         screening_autofill_additional_info_nonempty_rate = 0.0
 
@@ -713,7 +719,7 @@ def _compute_summary(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
         "verdict_distribution": verdict_counts,
         "verdict_dialogs": verdict_dialogs,
         # screening_autofill
-        "screening_autofill_additional_info_nonempty_rate": screening_autofill_additional_info_nonempty_rate,
+        "screening_autofill_additional_info_nonempty_rate": "Доля passed-диалогов, где screening_autofill нашёл хотя бы одну содержательную QA-пару в additional_info.",
     }
 
     # Группировка метрик по компонентам (для читаемости отчёта)
