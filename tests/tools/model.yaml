@@ -5,7 +5,7 @@ message_classifier:
 
 screening_assistant:
   prompt_id: pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf
-  prompt_version: 7
+  prompt_version: 13
   seed: 1234
 
 screening_autofill:
