@@ -1,31 +1,18 @@
 # AI Agents Workspace
 
-Набор AI-ассистентов для автоматизации переписки рекрутёра с кандидатом:
-
-- ассистент-рекрутёр ведёт диалог по вакансии;
-- отдельный ассистент симулирует кандидата;
-- поверх диалога считаются базовые метрики и сохраняются отчёты.
-
-Всё это гоняется через один тестовый пайплайн.
-
----
+Набор утилит и промптов для тестирования рекрутмент‑агентов. В репозитории есть полный пайплайн проверки нескольких модулей и отдельный скрипт для точечной проверки промпта `screening_assistant`.
 
 ## Структура
+- `app/runner.py` — основной тестовый пайплайн (генерация фикстур, интеграционный прогон всех модулей).
+- `app/screening_scenarios_runner.py` — проверка одного промпта `screening_assistant` на наборе поведенческих сценариев.
+- `tests/tools/model.yaml` — конфигурация с `prompt_id`/`prompt_version` для всех промптов (message_classifier, screening_assistant, screening_autofill, verdict_classifier, candidate_simulator профили).
+- `tests/fixtures/cdm/` — CDM‑фикстуры с вакансиями (генерируются `gen-fixtures`).
+- `tests/fixtures/screening_scenarios.csv` — CSV со сценариями для точечной проверки `screening_assistant`.
+- `tests/reports/runs/` — отчёты основного пайплайна.
+- `tests/reports/screening_scenarios/` — отчёты по скрипту `screening_scenarios_runner.py`.
+- `telegramMessageGenerator-main/` — опциональный генератор первого сообщения в Telegram (используется, если установлен и импортируется).
 
-- `app/runner.py` — CLI:
-  - `gen-fixtures` — генерирует тестовые вакансии (CDM);
-  - `unit` — запускает тестовый прогон (диалоги + метрики).
-- `tests/tools/make_vacancies.py` — создаёт CDM-вакансии.
-- `tests/fixtures/cdm/` — входные данные (CDM).
-- `tests/reports/runs/` — результаты прогонов (отчёты и диалоги).
-- `adapters/adapters.py` — конвертирует CDM в структуры для ассистентов.
-- `messageLabelGenerator/`, `screeningAssistant/`, `screening_autofill/`, `verdict_classifier/` — модули с промптами.
-- `telegramMessageGenerator-main/telegramGenerator.py` — генератор первого сообщения рекрутёра (“первое касание”), подключён к пайплайну через `runner.py`.
-
----
-
-## Установка
-
+## Подготовка окружения
 ```bash
 python -m venv .venv
 # Windows (PowerShell)
@@ -34,42 +21,75 @@ python -m venv .venv
 source .venv/bin/activate
 
 python -m pip install -r requirements.txt
+```
 
-- Укажите ключ в `.env` (см. `.env.example`) или через окружение:
-
+Создайте `.env` (можно скопировать из `.env.example`) и пропишите ключ:
 ```bash
-export OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=sk-...
+```
 
----
+Заполните `tests/tools/model.yaml`: задайте `prompt_id`/`prompt_version` для всех компонентов и профили в блоке `candidate_simulator` (ключи совпадают с именами профилей, которые передаются в `--candidate-profiles`).
 
-## Генерация фикстур (Создаёт/пересоздаёт набор тестовых вакансий в `tests/fixtures/cdm/`, по умолчанию генерируется 10 CDM):
+## Основной тестовый пайплайн (`app/runner.py`)
 
+### Что делает
+- Берёт CDM‑фикстуры из `tests/fixtures/cdm/` (каждая описывает вакансию и кандидата).
+- Для каждого профиля из `candidate_simulator` создаёт диалог: строит стартовое сообщение (через `telegramMessageGenerator`, шаблон из CDM или fallback), далее симулирует кандидата, прогоняет диалог через `screening_assistant`, классификатор сообщений, классификатор вердикта и `screening_autofill` для passed‑кейсов.
+- Сохраняет помодульные метрики, usage по токенам и отчёты в `tests/reports/runs/<run_id>/`.
+
+### Что нужно перед запуском
+- `tests/tools/model.yaml` должен содержать валидные prompt_id/prompt_version для всех компонентов и профилей.
+- В `tests/fixtures/cdm/` должны лежать CDM‑файлы (сгенерируйте через `gen-fixtures`, если пусто).
+- Переменная окружения `OPENAI_API_KEY` должна быть доступна процессу.
+- Если нужен генератор Telegram‑сообщений, убедитесь, что `telegramMessageGenerator-main` импортируется; иначе будет использован шаблон из CDM или встроенный fallback.
+
+### Запуск
+Генерация фикстур (10 CDM по умолчанию):
 ```bash
 python -m app.runner gen-fixtures
+```
 
-## Запуск тестового пайплайна (Полный прогон по CDM-вакансиям и выбранным профилям кандидатов):
-
+Интеграционный прогон:
 ```bash
-python -m app.runner unit --limit 5 --candidate-profiles difficult ideal)
+python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
+```
+Аргументы:
+- `--limit` — сколько CDM из `tests/fixtures/cdm/` брать в прогон (по умолчанию 5).
+- `--candidate-profiles` — какие профили из `candidate_simulator` использовать (по умолчанию все профили из `model.yaml`).
 
-## Параметры:
+### Результаты
+- Сводка: `tests/reports/runs/<run_id>/report-<run_id>.json`
+- Отчёты по отдельным диалогам: `tests/reports/runs/<run_id>/dialogs/*.json`
+В отчётах фиксируются успех/провалы модулей, вердикт, автозаполнение, usage и длительность.
 
-- `--limit` — сколько CDM-файлов взять из `tests/fixtures/cdm/` (по умолчанию 5);
-- `--candidate-profiles` — какие профили кандидатов использовать (ключи из `tests/tools/model.yaml`, например `difficult`, `ideal`).
+## Проверка промпта `screening_assistant` по сценариям (`app/screening_scenarios_runner.py`)
 
-## Результаты
+### Назначение
+Гоняет один промпт `screening_assistant` по набору поведенческих сценариев из CSV: генерирует сообщения кандидата, получает ответ ассистента и жёстко сравнивает его с ожидаемым поведением.
 
-После прогона:
+### Что нужно перед запуском
+- `OPENAI_API_KEY` в окружении.
+- В `tests/tools/model.yaml` в блоке `screening_assistant` должны быть заполнены `prompt_id` и (опционально) `prompt_version` нужного промпта.
+- CSV с сценариями (по умолчанию `tests/fixtures/screening_scenarios.csv`). Ожидаются колонки: `Название сценария`, `Краткое описание сценария`, поле с ожидаемым поведением (несколько вариантов названий) и поле с примерами диалогов.
 
-- сводный отчёт:  
-  `tests/reports/runs/<run_id>/report-<run_id>.json`
-- диалоги по кейсам:  
-  `tests/reports/runs/<run_id>/dialogs/*.json`
+### Запуск
+```bash
+python -m app.screening_scenarios_runner \
+  --csv-path tests/fixtures/screening_scenarios.csv \
+  --messages-per-scenario 3 \
+  --max-scenarios 20
+```
 
-## В отчётах есть:
+Параметры:
+- `--csv-path` — путь к CSV со сценариями (по умолчанию `tests/fixtures/screening_scenarios.csv`).
+- `--messages-per-scenario` — сколько реплик кандидата генерировать на сценарий (по умолчанию 3).
+- `--max-scenarios` — ограничение числа сценариев для быстрого прогона (по умолчанию нет, берутся все).
 
-- текст диалогов,
-- факт, завершил ли ассистент разговор сам,
-- простой чек по первому сообщению рекрутёра (покрывает ли ключевые вопросы),
-- ошибки модулей (если были),
-- использование токенов по модулям и базовые агрегированные метрики по пайплайну.
+### Как проходит тестирование
+1. Читаем сценарии из CSV и (опционально) обрезаем по `--max-scenarios`.
+2. Генерируем кандидатовские сообщения под каждый сценарий (`gpt-4.1-mini`).
+3. Прокидываем каждое сообщение в `screening_assistant` (prompt_id из `model.yaml`), собираем ответы.
+4. Оцениваем каждый ответ моделью `gpt-4.1` на соответствие ожидаемому поведению из CSV.
+5. Формируем отчёт `tests/reports/screening_scenarios/screening_scenarios_report_<timestamp>.json` с токенами, пройденными/заваленными шагами и использованием моделей.
+
+Запуск на Windows и Linux одинаковый (главное, чтобы активированное venv и переменная `OPENAI_API_KEY` были доступны).
