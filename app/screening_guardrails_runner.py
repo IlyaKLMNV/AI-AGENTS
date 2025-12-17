@@ -113,9 +113,10 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["total_tokens"] += total
 
 
-def _normalize_text(s: str) -> str:
+def _normalize_text(s: str, *, remove_end: bool = True) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
-    s = s.replace("END", "")
+    if remove_end:
+        s = s.replace("END", "")
     return s.strip()
 
 
@@ -150,6 +151,12 @@ def _safe_json_loads(text: str) -> Any:
         return json.loads(extracted)
 
 
+def _make_dialog_line(candidate_message: str, assistant_reply_raw: str) -> str:
+    cand = _normalize_text(candidate_message, remove_end=True)
+    asst = _normalize_text(assistant_reply_raw, remove_end=False)
+    return f"[candidate] {cand}\n[recruiter] {asst}"
+
+
 # ---------------- heuristics fallback ----------------
 
 STOP_WORDS = {
@@ -158,9 +165,23 @@ STOP_WORDS = {
     "пожалуйста", "спасибо", "поняла", "понял", "отлично", "хотела", "хотел", "уточнить",
 }
 
+FINISH_PATTERNS = [
+    r"\bэто\s+вся\s+информац",
+    r"\bэто\s+все\b",
+    r"\bвся\s+информация\b",
+    r"\bвсе\s+что\s+мне\s+нужно\b",
+    r"\bя\s+передам\b",
+    r"\bпередам\s+.*рекрутер",
+    r"\bвнутренн(ему|ий)\s+рекрутер",
+    r"\bследующ(ие|их)\s+шаг",
+    r"\bсвяжетс[яь]\s+с\s+вами\b",
+    r"\bна\s+данном\s+этапе\b",
+]
+FINISH_RE = re.compile("|".join(FINISH_PATTERNS), re.I)
+
 
 def _tokenize_for_similarity(text: str) -> List[str]:
-    t = _normalize_text(text).lower()
+    t = _normalize_text(text, remove_end=True).lower()
     t = re.sub(r"[^a-zа-я0-9\s]", " ", t, flags=re.IGNORECASE)
     parts = [p for p in t.split() if p and p not in STOP_WORDS]
     parts = [p for p in parts if len(p) >= 3]
@@ -178,7 +199,7 @@ def _jaccard(a: List[str], b: List[str]) -> float:
 
 
 def _extract_question_segments(text: str) -> List[str]:
-    t = _normalize_text(text)
+    t = _normalize_text(text, remove_end=True)
     if not t:
         return []
 
@@ -212,15 +233,40 @@ def _extract_question_segments(text: str) -> List[str]:
     return uniq
 
 
+def _has_questions_in_reply(text_raw: str) -> bool:
+    """
+    True если в реплике рекрутера есть хотя бы один вопрос.
+    Используется как ЖЕСТКИЙ гейт для premature_end_after_questions:
+    если вопросов нет - premature_end_after_questions обязан быть False.
+    """
+    if not text_raw:
+        return False
+
+    segments = _extract_question_segments(text_raw)
+    if segments:
+        return True
+
+    t = _normalize_text(text_raw, remove_end=True)
+    if not t:
+        return False
+
+    return bool(re.search(
+        r"\b(подскажите|уточните|расскажите|могли бы|можете|какой|какая|какие|сколько|где|готовы ли|ориентируетесь)\b",
+        t,
+        re.I,
+    ))
+
+
 TOPIC_KEYWORDS = {
     "location": ["город", "локац", "где вы", "где сейчас", "находит", "прожив", "москва", "питер", "спб"],
     "salary": ["зарплат", "вилка", "оклад", "доход", "компенсац", "ожидан", "сумм", "руб", "тыс", "₽"],
     "relocation": ["переезд", "переехать", "готовы ли", "готовность", "релокац", "офис", "гибрид"],
+    "experience": ["опыт", "работал", "работали", "проект", "проекты", "задач", "фреймворк", "стек"],
 }
 
 
 def _keyword_topic_hits(text: str) -> Dict[str, int]:
-    t = _normalize_text(text).lower()
+    t = _normalize_text(text, remove_end=True).lower()
     hits: Dict[str, int] = {k: 0 for k in TOPIC_KEYWORDS}
     for topic, keys in TOPIC_KEYWORDS.items():
         for kw in keys:
@@ -256,15 +302,51 @@ def heuristic_repeated_questions(text: str) -> Tuple[bool, str, List[str]]:
 
 
 def heuristic_self_answer(text: str) -> Tuple[bool, str]:
-    t = _normalize_text(text)
+    """
+    Fallback-only эвристика.
+    Важно: НЕ считать self_answer, если рекрутер просто отвечает на вопрос кандидата.
+    Self_answer тут - когда рекрутер "притворяется кандидатом" (вставляет ответы кандидата).
+    """
+    t = _normalize_text(text, remove_end=False)
     low = t.lower()
+
     if "кандидат:" in low or "candidate:" in low:
         return True, "heuristic: role label candidate:"
+
+    # типичная ошибка: "250 000, Москва. Спасибо!..." внутри одного сообщения рекрутера
     if "?" in t:
         after_q = t.split("?", 1)[-1].strip()
-        if re.search(r"^(да|нет|ага|конечно|у меня)\b", after_q, re.I):
+        if re.search(r"^(250|230|240|260|москва|да|нет|ага|конечно|у меня)\b", after_q, re.I):
             return True, "heuristic: answer-like text after question"
+
     return False, "heuristic: no self-answer signal"
+
+
+def heuristic_premature_end_after_questions(text_raw: str, conversation_end_flag: bool) -> Tuple[bool, str]:
+    """
+    Fallback-only эвристика.
+    """
+    t_raw = _normalize_text(text_raw, remove_end=False)
+    if not t_raw:
+        return False, "heuristic: empty reply"
+
+    segments = _extract_question_segments(t_raw)
+    has_q = len(segments) >= 1
+
+    has_end_token = "END" in t_raw
+    has_finish_phrase = bool(FINISH_RE.search(t_raw))
+
+    if has_q and (conversation_end_flag or has_end_token or has_finish_phrase):
+        why = []
+        if conversation_end_flag:
+            why.append("conversation_end_flag")
+        if has_end_token:
+            why.append("END_token")
+        if has_finish_phrase:
+            why.append("finish_phrase")
+        return True, f"heuristic: questions + end signal ({', '.join(why)})"
+
+    return False, "heuristic: no questions+end in same message"
 
 
 # ---------------- candidate multi-turn generation ----------------
@@ -274,13 +356,47 @@ def _seed_pool() -> List[str]:
         "Добрый день\n230_000₽\nМосква",
         "Москва, 240 000 на руки. Готов ответить на вопросы по опыту.",
         "Город Москва. Ожидания 250 000. Давайте пройдемся по вопросам.",
-        "Москва. 220k net. Могу рассказать про последний проект.",
-        "Москва, 260_000₽. Готов обсудить стек и опыт.",
-        "Опыт около года в ML, до этого учился и делал пет-проекты.",
-        "Python использую ежедневно. SQL тоже часто: джойны и оконные функции.",
-        "По нагрузке: были сервисы 100 RPS и 2-3k RPS, использовали кэш, очереди, мониторинг.",
-        "Могу кратко описать последний проект: API, интеграции, очереди, мониторинг.",
-        "Если нужно, отвечу по пунктам и кратко.",
+
+        (
+            "В МТС работал больше с прикладом на готовом продукте и его сопровождением. "
+            "Все в кубере, доставляли через ArgoCD, сборка на GitLab. Мониторинг Grafana/Prometheus, "
+            "логирование OpenSearch/Kibana/Jaeger. Машинки нарезаны Terraform. Основной язык Go, фронт Node.js.\n"
+            "В Уралсибе команду собрали с нуля, платформа. Тачки Terraform, кубер раскатили Ansible. "
+            "Деплой GitLab/ArgoCD. В кластере хранилка Ceph + rook-operator. Сеть на CNI, без меша, до Istio не дошли. "
+            "Логи: Kafka буфер -> OpenSearch, борды в OpenSearch Dashboard + Graylog. "
+            "Мониторинг VictoriaMetrics стек до Alertmanager + Grafana. Трейсы: OTel Collector + ClickHouse + Grafana.\n"
+            "По мелочи поднимали Jenkins агентов, раннеры, SonarQube/sonar-scanner, "
+            "делали свою сборку в Docker, серты и всякая мелочь."
+        ),
+        (
+            "Если коротко: k8s, ArgoCD, GitLab CI, Terraform, Prometheus/Grafana, OpenSearch, трассировка через OTel. "
+            "В одном проекте Ceph+rook, в другом больше упор на наблюдаемость и пайплайны. "
+            "Могу по стеку и зонам ответственности расписать."
+        ),
+
+        "Да, мса - микросервисы же, да? UML опыт есть, но чаще BPMN. Подскажите, что за конмания?",
+        "Микросервисы - ок. Диаграммы делал, но больше BPMN. А компания какая? Есть ссылка на вакансию?",
+
+        "5 лет\nДа",
+        "3 года. Да.",
+        "Да.\nНет.\n5 лет.",
+        "Ок. Понял. Да.",
+
+        (
+            "Добрый день, Майя!\n\n"
+            "Я в Москве сейчас. По зарплате обычно отталкиваюсь от конкретной роли и обязанностей. "
+            "Хотелось бы узнать больше о позиции и компании прежде, чем называть цифры в воздух. "
+            "Я за то, чтобы сначала нормально пообщаться. Что скажете?"
+        ),
+        (
+            "По ожиданиям могу сказать после того, как уточним формат, стек и зону ответственности. "
+            "Можете прислать больше деталей по роли? Если проще - давайте короткий созвон."
+        ),
+
+        "Если вопросы по Python/SQL/нагрузке - могу отвечать по пунктам, только скажите в каком формате удобнее.",
+        "Сейчас больше бэкенд и интеграции. По базам - Postgres, немного ClickHouse. По нагрузкам - кэш, очереди, метрики.",
+        "По локации Москва, но интересна удаленка. По переезду нет. График стандарт, могу быть на связи в МСК.",
+        "Скиньте, пожалуйста, описание вакансии или ссылку. Я хочу понять контекст, а потом отвечу точнее.",
     ]
 
 
@@ -290,15 +406,32 @@ def _generation_prompt_multi_turn(conversations: int, turns_per_conversation: in
         f"Сгенерируй {conversations} независимых диалогов кандидата (multi-turn).",
         f"В каждом диалоге должно быть ровно {turns_per_conversation} сообщений кандидата.",
         "Каждый диалог это массив строк. Итоговый ответ это JSON массив диалогов.",
-        "Цель: кандидатскими ответами довести рекрутера до задавания вопросов по квалификации.",
+        "",
+        "Цель: кандидатскими сообщениями продвинуть диалог так, чтобы рекрутер начал задавать вопросы по квалификации.",
+        "",
+        "КРИТИЧНО: разнообразь стиль кандидата между диалогами. Не делай все диалоги одинаковыми.",
+        "Распредели паттерны по диалогам (примерно равномерно):",
+        "1) Длинный технарский монолог: Kubernetes/ArgoCD/GitLab CI/Terraform/observability (Grafana/Prometheus/OpenSearch/OTel и т.п.).",
+        "2) Короткие ответы: 'да/нет/5 лет' и подобное.",
+        "3) Кандидат уточняет термины/формат ('мса - микросервисы?') и задает вопрос 'что за компания?'",
+        "4) Вежливо уходит от цифр по зарплате, просит детали роли и предлагает созвон.",
+        "",
         "Ограничения:",
-        "- Не пиши про политику, национальности, оскорбления.",
+        "- Не пиши про политику, национальности, власть, страны и т.п.",
         "- Не обвиняй в спаме и не проси удалить контакт.",
-        "- Чаще указывай Москва и 200-280k.",
-        "Примеры фраз кандидата (используй как стиль, не копируй дословно):",
+        "- Не используй оскорбления и мат.",
+        "",
+        "Вариативность языка и формы:",
+        "- Можно использовать сленг и опечатки (например 'конмания', 'кубер', 'тачки нарезали'), но без перебора.",
+        "- Иногда пиши в 1-2 строках, иногда 1 очень длинным сообщением (в рамках одного кандидата).",
+        "",
+        "Примеры реплик кандидата (используй как стиль, не копируй дословно):",
     ]
     for i, s in enumerate(seed, start=1):
-        lines.append(f"{i}) {s}")
+        preview = s.replace("\n", " ").strip()
+        if len(preview) > 260:
+            preview = preview[:257] + "..."
+        lines.append(f"{i}) {preview}")
     lines.append('Верни только JSON формата: [["msg1","msg2",...],[...]] без пояснений и без markdown.')
     return "\n".join(lines)
 
@@ -389,12 +522,13 @@ def run_assistant_multi_turn(
         if result is None:
             raise AssistantError("assistant returned no result")
 
-        reply_text = _normalize_text(result.response or "")
+        reply_raw = str(result.response or "")
+
         turns_out.append(
             {
                 "turn_index": idx,
-                "candidate_message": _normalize_text(cand_msg),
-                "assistant_reply": reply_text,
+                "candidate_message": _normalize_text(cand_msg, remove_end=True),
+                "assistant_reply_raw": _normalize_text(reply_raw, remove_end=False),
                 "assistant_conversation_end": bool(getattr(result, "conversation_end", False)),
                 "usage": getattr(result, "usage", None),
             }
@@ -406,44 +540,52 @@ def run_assistant_multi_turn(
     return turns_out
 
 
-# ---------------- evaluation ----------------
+# ---------------- evaluation (LLM for A,B,C; heuristics only fallback) ----------------
+
+ALLOWED_TOPICS = {"location", "salary", "relocation", "experience", "other"}
+
 
 def _eval_instruction() -> str:
     return (
-        "Ты проверяешь одно сообщение ассистента (рекрутера) на два нарушения:\n"
+        "Ты проверяешь одно сообщение рекрутера на 3 нарушения. Верни строго JSON.\n"
         "\n"
-        "A) self_answer = true, если ассистент в своем сообщении пишет за кандидата или продолжает диалог за обе стороны.\n"
-        "Примеры:\n"
-        "- после вопросов вставляет ответ кандидата ('Да, был опыт...', 'Python использую ежедневно...')\n"
-        "- использует метки ролей ('Кандидат:', 'Candidate:')\n"
-        "- явно отвечает вместо кандидата на свой вопрос.\n"
+        "A) self_answer = true, если рекрутер пишет за кандидата (вставляет ответы кандидата в своем сообщении)\n"
+        "или ведет диалог за обе стороны.\n"
+        "Это НЕ self_answer, если рекрутер просто отвечает на вопрос кандидата (например: 'Да, речь о микросервисах').\n"
+        "Примеры self_answer:\n"
+        "- рекрутер: '...Подскажите зарплату? 250 000, Москва. Спасибо!'\n"
+        "- рекрутер вставляет 'Кандидат:' или 'Candidate:' и дальше ответы кандидата.\n"
         "\n"
-        "B) repeated_questions = true, если ассистент в одном сообщении повторяет по смыслу один и тот же вопрос.\n"
-        "Это не про 'много разных вопросов'. Это про повтор одного и того же:\n"
-        "- спрашивает про город/локацию несколько раз разными формулировками,\n"
-        "- спрашивает про зарплату несколько раз разными формулировками,\n"
-        "- спрашивает про переезд/готовность несколько раз,\n"
-        "- или повторяет один и тот же вопрос по опыту (например, прогноз спроса/рекомендации) 2-3 раза.\n"
+        "B) repeated_questions = true, если рекрутер в ОДНОМ сообщении повторяет по смыслу один и тот же вопрос.\n"
+        "Не путать с 2-3 разными вопросами. Это именно повтор одного и того же:\n"
+        "- дважды про город, дважды про зарплату, дважды про переезд, и т.п.\n"
         "\n"
-        "Важно:\n"
-        "- 2-3 РАЗНЫХ вопроса (город + зарплата + стек) это нормально.\n"
-        "- Нарушение только если есть повтор одного и того же вопроса по смыслу.\n"
+        "C) premature_end_after_questions = true, если рекрутер В ТОМ ЖЕ сообщении:\n"
+        "- задает хотя бы один вопрос, И\n"
+        "- одновременно закрывает диалог прямо сейчас (ожидается, что отвечать уже не нужно),\n"
+        "  например: ставит END, пишет 'Это вся информация, я передам...', или явно говорит что разговор завершен.\n"
+        "Важно: фразы про 'внутренний рекрутер свяжется' сами по себе НЕ означают конец диалога,\n"
+        "если рекрутер продолжает собирать данные и задает вопросы.\n"
+        "conversation_end_flag=true - это сильный сигнал завершения.\n"
+        "Если в сообщении нет вопросов - premature_end_after_questions всегда false.\n"
         "\n"
-        "Верни строго JSON объекта:\n"
-        '{'
-        '"self_answer": true|false, '
-        '"repeated_questions": true|false, '
-        '"repeated_topics": ["location"|"salary"|"relocation"|"experience"|"other"], '
-        '"comment": "кратко почему"'
-        '}'
+        "Верни JSON:\n"
+        "{"
+        "\"self_answer\": true|false, "
+        "\"repeated_questions\": true|false, "
+        "\"premature_end_after_questions\": true|false, "
+        "\"repeated_topics\": [\"location\"|\"salary\"|\"relocation\"|\"experience\"|\"other\"], "
+        "\"comment\": \"кратко почему\""
+        "}"
     )
 
 
-def _eval_payload(candidate_message: str, assistant_reply: str) -> str:
+def _eval_payload(candidate_message: str, assistant_reply_raw: str, conversation_end_flag: bool) -> str:
     payload = {
         "instruction": _eval_instruction(),
         "candidate_message": candidate_message,
-        "assistant_reply": assistant_reply,
+        "assistant_reply": assistant_reply_raw,
+        "conversation_end_flag": conversation_end_flag,
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -452,49 +594,94 @@ def _eval_payload(candidate_message: str, assistant_reply: str) -> str:
 class EvalResult:
     self_answer: bool
     repeated_questions: bool
+    premature_end_after_questions: bool
     repeated_topics: List[str]
     comment: str
     used_heuristics: bool
 
 
+def _sanitize_topics(topics: Any) -> List[str]:
+    if not isinstance(topics, list):
+        return []
+    out: List[str] = []
+    for x in topics[:10]:
+        s = str(x).strip()
+        if not s:
+            continue
+        if s not in ALLOWED_TOPICS:
+            s = "other"
+        out.append(s)
+    uniq: List[str] = []
+    seen = set()
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
+
+
 def evaluate_reply(
     client: OpenAI,
     candidate_message: str,
-    assistant_reply: str,
+    assistant_reply_raw: str,
+    conversation_end_flag: bool,
     usage_bucket: Dict[str, int],
 ) -> EvalResult:
-    payload = _eval_payload(candidate_message, assistant_reply)
-
+    payload = _eval_payload(candidate_message, assistant_reply_raw, conversation_end_flag)
     raw = ""
+
+    # Жесткий гейт: если в этой реплике нет вопроса - premature_end быть не может
+    has_q = _has_questions_in_reply(assistant_reply_raw)
+
     try:
         response = client.responses.create(model=EVAL_MODEL, input=payload)
         _accumulate_usage(usage_bucket, getattr(response, "usage", None))
-        raw = _normalize_text(getattr(response, "output_text", "") or "")
+        raw = _normalize_text(getattr(response, "output_text", "") or "", remove_end=False)
         data = _safe_json_loads(raw)
 
         self_answer = bool(data.get("self_answer"))
         repeated_questions = bool(data.get("repeated_questions"))
-        repeated_topics = data.get("repeated_topics") or []
-        if not isinstance(repeated_topics, list):
-            repeated_topics = []
-        repeated_topics = [str(x) for x in repeated_topics][:10]
+        premature_end = bool(data.get("premature_end_after_questions"))
+        repeated_topics = _sanitize_topics(data.get("repeated_topics"))
         comment = str(data.get("comment") or "").strip()
+
+        if not has_q:
+            # подавляем ложноположительные срабатывания, как в твоем кейсе
+            if premature_end:
+                note = "premature_end overridden to false: no questions in this recruiter message"
+                comment = f"{comment} | {note}" if comment else note
+            premature_end = False
 
         return EvalResult(
             self_answer=self_answer,
             repeated_questions=repeated_questions,
+            premature_end_after_questions=premature_end,
             repeated_topics=repeated_topics,
             comment=comment,
             used_heuristics=False,
         )
+
     except Exception:
-        sa, sa_reason = heuristic_self_answer(assistant_reply)
-        rq, rq_reason, topics = heuristic_repeated_questions(assistant_reply)
-        comment = f"Eval parse failed, heuristics used. self_answer={sa_reason}; repeated={rq_reason}; raw={raw[:120]}"
+        # fallback heuristics
+        sa, sa_reason = heuristic_self_answer(assistant_reply_raw)
+        rq, rq_reason, topics = heuristic_repeated_questions(assistant_reply_raw)
+        pe, pe_reason = heuristic_premature_end_after_questions(assistant_reply_raw, conversation_end_flag)
+
+        # тот же жесткий гейт на fallback
+        if not has_q:
+            pe = False
+            pe_reason = "forced false: no questions in recruiter message"
+
+        comment = (
+            "Eval parse failed, heuristics used. "
+            f"self_answer={sa_reason}; repeated={rq_reason}; premature_end={pe_reason}; raw={raw[:120]}"
+        )
+
         return EvalResult(
             self_answer=sa,
             repeated_questions=rq,
-            repeated_topics=topics or (["other"] if rq else []),
+            premature_end_after_questions=pe,
+            repeated_topics=_sanitize_topics(topics or (["other"] if rq else [])),
             comment=comment,
             used_heuristics=True,
         )
@@ -503,30 +690,34 @@ def evaluate_reply(
 # ---------------- reporting ----------------
 
 def _build_conversation_level_summary(full_report: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Summary на уровне ДИАЛОГОВ, как ты просил.
-    """
     conversations = full_report.get("conversations", [])
     total = len(conversations)
 
     conv_self = 0
     conv_rep = 0
+    conv_premature = 0
     conv_any = 0
 
     for conv in conversations:
         has_self = False
         has_rep = False
+        has_premature = False
         for t in conv.get("turns", []):
             flags = t.get("flags") or {}
             if flags.get("self_answer"):
                 has_self = True
             if flags.get("repeated_questions"):
                 has_rep = True
+            if flags.get("premature_end_after_questions"):
+                has_premature = True
+
         if has_self:
             conv_self += 1
         if has_rep:
             conv_rep += 1
-        if has_self or has_rep:
+        if has_premature:
+            conv_premature += 1
+        if has_self or has_rep or has_premature:
             conv_any += 1
 
     pct = (conv_any / total * 100.0) if total else 0.0
@@ -535,6 +726,7 @@ def _build_conversation_level_summary(full_report: Dict[str, Any]) -> Dict[str, 
         "conversations_total": total,
         "conversations_with_self_answer": conv_self,
         "conversations_with_repeated_questions": conv_rep,
+        "conversations_with_premature_end_after_questions": conv_premature,
         "conversations_with_any_violation": conv_any,
         "problem_conversations_pct": pct,
     }
@@ -546,19 +738,13 @@ def _make_console_summary(summary: Dict[str, Any]) -> str:
         f"conversations_total: {summary['conversations_total']}\n"
         f"conversations_with_self_answer: {summary['conversations_with_self_answer']}\n"
         f"conversations_with_repeated_questions: {summary['conversations_with_repeated_questions']}\n"
+        f"conversations_with_premature_end_after_questions: {summary['conversations_with_premature_end_after_questions']}\n"
         f"conversations_with_any_violation: {summary['conversations_with_any_violation']} "
         f"({summary['problem_conversations_pct']:.1f}%)"
     )
 
 
 def _make_compact_report(full_report: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Компактный отчет:
-    - summary только conversation-level метрики
-    - failed_turns (все нарушающие ходы)
-    - models/token_usage/vacancy_info_used (полезно)
-    Без примеров и без дополнительных списков.
-    """
     return {
         "run_id": full_report.get("run_id"),
         "started_at": full_report.get("started_at"),
@@ -614,13 +800,13 @@ def run_guardrail_suite_multi_turn(
 
     for cidx, candidate_turns in enumerate(dialogs, start=1):
         print(f"[run] conversation {cidx}/{len(dialogs)}")
+
         try:
             turns_out = run_assistant_multi_turn(assistant, candidate_turns)
         except AssistantError as exc:
             conversations_payload.append(
                 {
                     "conversation_index": cidx,
-                    "candidate_turns": candidate_turns,
                     "turns": [],
                     "error": f"{exc}",
                 }
@@ -629,9 +815,13 @@ def run_guardrail_suite_multi_turn(
                 {
                     "conversation_index": cidx,
                     "turn_index": None,
-                    "candidate_message": None,
-                    "assistant_reply": None,
-                    "flags": {"self_answer": False, "repeated_questions": False},
+                    "dialog": None,
+                    "flags": {
+                        "self_answer": False,
+                        "repeated_questions": False,
+                        "premature_end_after_questions": False,
+                    },
+                    "repeated_topics": [],
                     "comment": f"assistant error: {exc}",
                 }
             )
@@ -639,28 +829,33 @@ def run_guardrail_suite_multi_turn(
 
         turn_results: List[Dict[str, Any]] = []
         for t in turns_out:
+            turn_idx = int(t["turn_index"])
             cand_msg = t["candidate_message"]
-            reply = t["assistant_reply"]
+            reply_raw = t["assistant_reply_raw"]
+            conv_end = bool(t.get("assistant_conversation_end", False))
 
             _accumulate_usage(usage["screening_assistant"], t.get("usage"))
 
             ev = evaluate_reply(
                 client=client,
                 candidate_message=cand_msg,
-                assistant_reply=reply,
+                assistant_reply_raw=reply_raw,
+                conversation_end_flag=conv_end,
                 usage_bucket=usage["evaluator"],
             )
 
             flags = {
                 "self_answer": ev.self_answer,
                 "repeated_questions": ev.repeated_questions,
+                "premature_end_after_questions": ev.premature_end_after_questions,
             }
 
+            dialog_line = _make_dialog_line(cand_msg, reply_raw)
+
             tr = {
-                "turn_index": t["turn_index"],
-                "candidate_message": cand_msg,
-                "assistant_reply": reply,
-                "assistant_conversation_end": t.get("assistant_conversation_end", False),
+                "turn_index": turn_idx,
+                "dialog": dialog_line,
+                "assistant_conversation_end": conv_end,
                 "flags": flags,
                 "repeated_topics": ev.repeated_topics,
                 "comment": ev.comment,
@@ -668,13 +863,12 @@ def run_guardrail_suite_multi_turn(
             }
             turn_results.append(tr)
 
-            if ev.self_answer or ev.repeated_questions:
+            if ev.self_answer or ev.repeated_questions or ev.premature_end_after_questions:
                 failed_turns.append(
                     {
                         "conversation_index": cidx,
-                        "turn_index": t["turn_index"],
-                        "candidate_message": cand_msg,
-                        "assistant_reply": reply,
+                        "turn_index": turn_idx,
+                        "dialog": dialog_line,
                         "flags": flags,
                         "repeated_topics": ev.repeated_topics,
                         "comment": ev.comment,
@@ -684,7 +878,6 @@ def run_guardrail_suite_multi_turn(
         conversations_payload.append(
             {
                 "conversation_index": cidx,
-                "candidate_turns": candidate_turns,
                 "turns": turn_results,
             }
         )
@@ -735,7 +928,7 @@ def run_guardrail_suite_multi_turn(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Guardrails (multi-turn): detect self_answer and repeated_questions (same-question repeats in one message)."
+        description="Guardrails (multi-turn): detect self_answer, repeated_questions, premature_end_after_questions (LLM-based)."
     )
     parser.add_argument(
         "--conversations",
