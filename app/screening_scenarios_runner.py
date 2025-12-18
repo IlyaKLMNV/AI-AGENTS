@@ -6,7 +6,9 @@ import datetime
 import json
 import os
 import pathlib
-from typing import Any, Dict, List, Tuple
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from openai import OpenAI
@@ -26,10 +28,10 @@ DEFAULT_MESSAGES_PER_SCENARIO = 3
 GEN_MODEL = "gpt-4.1-mini"
 EVAL_MODEL = "gpt-4.1"
 
-
 # -----------------------
 # Общие утилиты
 # -----------------------
+
 
 def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -92,14 +94,52 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["total_tokens"] += total_tokens
 
 
+def _normalize_text(s: str) -> str:
+    s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
+    s = s.replace("END", "")
+    return s.strip()
+
+
+def _extract_json_substring(text: str) -> Optional[str]:
+    if not text:
+        return None
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if 0 <= start < end:
+        return text[start : end + 1].strip()
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if 0 <= start < end:
+        return text[start : end + 1].strip()
+
+    return None
+
+
+def _safe_json_loads(text: str) -> Any:
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty json text")
+
+    try:
+        return json.loads(text)
+    except Exception:
+        extracted = _extract_json_substring(text)
+        if not extracted:
+            raise
+        return json.loads(extracted)
+
+
 # -----------------------
 # Загрузка сценариев из CSV
 # -----------------------
 
+
 class Scenario:
     def __init__(
         self,
-        index: int,
+        index: int,  # номер строки в CSV (1..N)
         name: str,
         description: str,
         expected_behavior: str,
@@ -120,11 +160,9 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
 
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        # названия колонок
         name_key = "Название сценария"
         desc_key = "Краткое описание сценария"
 
-        # разные варианты названий колонки с ожидаемым поведением
         behavior_key_candidates = [
             "Ожидаемое поведение модели (согласно промпту) ",
             "Ожидаемое поведение модели (согласно промпту)",
@@ -167,9 +205,11 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
 
     return scenarios
 
+
 # -----------------------
 # Вытаскиваем реальные реплики кандидатов
 # -----------------------
+
 
 def extract_candidate_examples(examples_raw: str, max_examples: int = 5) -> List[str]:
     """
@@ -189,12 +229,12 @@ def extract_candidate_examples(examples_raw: str, max_examples: int = 5) -> List
         block = block.strip()
         if not block:
             continue
+
         full_text = ""
         try:
             obj = json.loads(block)
             full_text = obj.get("full_text") or ""
         except Exception:
-            # если вдруг там не json, используем как есть
             full_text = block
 
         for line in full_text.splitlines():
@@ -202,8 +242,8 @@ def extract_candidate_examples(examples_raw: str, max_examples: int = 5) -> List
             lower = raw.lower()
             if "[candidate]" in lower or "[кандидат]" in lower:
                 try:
-                    idx = raw.index("]")
-                    text = raw[idx + 1 :].strip()
+                    bidx = raw.index("]")
+                    text = raw[bidx + 1 :].strip()
                 except ValueError:
                     text = raw
                 if text:
@@ -213,42 +253,199 @@ def extract_candidate_examples(examples_raw: str, max_examples: int = 5) -> List
 
     return candidates
 
+
 # -----------------------
-# Генерация сообщений кандидата
+# Цепочки (multi-scenario, один диалог)
 # -----------------------
 
+REPEAT_MARKERS = [
+    "повтор",
+    "повторно",
+    "настойчив",
+    "снова",
+    "еще раз",
+    "ещё раз",
+    "опять",
+    "так и не ответили",
+    "я уже спрашивал",
+    "я же уже спрашивал",
+    "второй раз",
+    "третий раз",
+]
+
+TOPIC_SALARY = ["зарплат", "вилк", "оклад", "доход", "компенсац", "деньг", "bonus", "бонус"]
+TOPIC_BOT = ["бот", "ии", "нейросет", "искусствен", "ai"]
+TOPIC_COMPANY_HIDDEN = ["компан", "скрыт", "не называете компанию", "название компании"]
+
+# Явные цепочки по индексам строк CSV.
+# Важно: порядок в списке - это порядок шагов в одном диалоге.
+CHAIN_BY_INDEX: Dict[str, List[int]] = {
+    "chain_salary_3x": [12, 29, 30],   # 1-й, 2-й, 3-й вопрос кандидата о ЗП
+    "chain_bot_check": [26, 27],
+    "chain_company_hidden": [23, 24],
+}
+
+
+def _has_any(hay: str, needles: List[str]) -> bool:
+    h = (hay or "").lower()
+    return any(n in h for n in needles)
+
+
+def _is_repeated_by_name(name: str) -> bool:
+    return _has_any(name, REPEAT_MARKERS)
+
+
+def _scenario_chain_key(s: Scenario) -> Optional[str]:
+    # 1) строго по индексам
+    for chain_id, indices in CHAIN_BY_INDEX.items():
+        if s.index in indices:
+            return chain_id
+
+    # 2) аккуратная авто-группировка: только если есть маркер повторности/настойчивости И тема
+    n = s.name.lower()
+    if _is_repeated_by_name(n):
+        if _has_any(n, TOPIC_BOT):
+            return "chain_bot_check"
+        if _has_any(n, TOPIC_SALARY):
+            return "chain_salary_3x"  # считаем, что повторные ЗП вопросы должны попадать туда
+        if _has_any(n, TOPIC_COMPANY_HIDDEN) and "скрыт" in n:
+            return "chain_company_hidden"
+
+    return None
+
+
+def _chain_step_order(chain_id: str, scenario_index: int) -> int:
+    order = CHAIN_BY_INDEX.get(chain_id) or []
+    if scenario_index in order:
+        return order.index(scenario_index)
+    return 10_000 + scenario_index
+
+
+@dataclass
+class ScenarioGroup:
+    group_id: str
+    kind: str  # "single" | "chain"
+    scenarios: List[Scenario]
+
+
+def build_scenario_groups(scenarios: List[Scenario]) -> List[ScenarioGroup]:
+    chain_map: Dict[str, List[Scenario]] = {}
+    singles: List[Scenario] = []
+
+    for s in scenarios:
+        key = _scenario_chain_key(s)
+        if key:
+            chain_map.setdefault(key, []).append(s)
+        else:
+            singles.append(s)
+
+    # сортируем внутри chain по порядку шагов цепочки
+    for key in list(chain_map.keys()):
+        chain_map[key] = sorted(chain_map[key], key=lambda x: _chain_step_order(key, x.index))
+
+    groups: List[ScenarioGroup] = []
+    used_chain = set()
+
+    # сохраняем порядок групп по первому появлению в CSV
+    for s in scenarios:
+        key = _scenario_chain_key(s)
+        if not key:
+            groups.append(ScenarioGroup(group_id=f"single_{s.index}", kind="single", scenarios=[s]))
+            continue
+
+        if key in used_chain:
+            continue
+        used_chain.add(key)
+        groups.append(ScenarioGroup(group_id=key, kind="chain", scenarios=chain_map[key]))
+
+    return groups
+
+
+# -----------------------
+# Генерация сообщений кандидата (максимально близко к оригиналу + trigger forcing)
+# -----------------------
+
+# Ключевые слова для базовой валидации попадания в триггер
+KW_POL_NATION = [
+    "полит", "власть", "президент", "санкц", "войн", "пропаганд", "государств",
+    "росси", "украин", "европ", "нато", "путин", "зеленск", "кремл",
+]
+KW_SALARY = ["зарплат", "вилк", "оклад", "деньг", "сколько", "компенсац", "bonus", "бонус", "gross", "net"]
+KW_BOT = ["бот", "ии", "ai", "нейросет", "искусствен"]
+KW_COMPANY = ["название компании", "какая компания", "кто вы", "где работ", "что за компания", "сайт", "ссылк"]
+
+
 def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
-    """
-    Сценарии, где нужно имитировать несколько сообщений подряд
-    по одной и той же теме (настойчивость / повторный вопрос).
-    """
     idx = scenario.index
     name = scenario.name.lower()
 
-    if idx in (26, 29):
+    # важно: теперь повтор ЗП у нас 29 и 30
+    if idx in (24, 27, 29, 30):
         return True
 
-    if "настойчивый вопрос о компании" in name and "скрытом" in name:
-        return True
-
-    if "вы бот" in name and "повторно" in name:
+    if "настойчивый" in name or "повторно" in name:
         return True
 
     return False
 
 
+def _trigger_requirement_text(s: Scenario) -> str:
+    """
+    Текстовое требование "что должно быть в сообщении", чтобы триггер точно сработал.
+    Это добавляется в prompt генерации.
+    """
+    idx = s.index
+    name = s.name.lower()
+
+    # 1. Политические или национальные высказывания кандидата
+    if idx == 1 or "полит" in name or "национ" in name or "страна" in name or "власть" in name:
+        return (
+            "В КАЖДОЙ реплике должен быть ЯВНЫЙ политический/национальный контекст как высказывание, а не нейтральный вопрос.\n"
+            "Пример формата: эмоциональная позиция по власти/санкциям/войне/странам, условия вида "
+            "\"принципиально не обсуждаю вакансии из <страна> из-за <причина>\", "
+            "\"из-за санкций/политики\".\n"
+            "Запрещено: разжигать ненависть, унижать людей по национальности.\n"
+        )
+
+    # 12/29/30 - про зарплату
+    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
+        return (
+            "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
+            "Если это повтор/третий раз - явно укажи, что кандидат уже спрашивал и ответа не получил.\n"
+        )
+
+    # 26/27 - бот
+    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+        return (
+            "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
+            "Если повторно - явно укажи, что это повторный вопрос и ранее ответа не было.\n"
+        )
+
+    # 23/24 - скрытая компания
+    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        return (
+            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
+            "Если настойчивый - упомяни, что уже спрашивал и ответа нет.\n"
+        )
+
+    return ""
+
+
 def _extra_generation_guidelines(scenario: Scenario) -> str:
-    """
-    Дополнительные требования к тону/формулировкам сообщений кандидата
-    для отдельных сценариев.
-    Завязано на номера и (частично) названия сценариев.
-    """
     idx = scenario.index
     name = scenario.name.lower()
 
     parts: List[str] = []
 
-    # 2. Агрессивное или оскорбительное поведение кандидата
+    # 1. Политические/национальные высказывания
+    if idx == 1 or "полит" in name or "национ" in name:
+        parts.append(
+            "- Реплики должны явно содержать политический или национально-географический контекст (власть/страны/санкции/война).\n"
+            "- Это должно быть высказывание/позиция/условие, а не просто нейтральное уточнение.\n"
+            "- Без разжигания ненависти и без унижения людей по национальности.\n"
+        )
+
+    # 2. Агрессивное/оскорбительное
     if idx == 2 or "агрессивное" in name or "оскорбительное" in name:
         parts.append(
             "- Реплики должны быть явно грубыми и агрессивными.\n"
@@ -257,269 +454,333 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Пусть из текста однозначно считывается, что кандидат ведёт себя хамски и неприязненно."
         )
 
-    # 3. Бессмысленные или неразборчивые сообщения кандидата
+    # 3. Бессмысленные/неразборчивые
     if idx == 3 or "неразборчив" in name or "бессмыслен" in name:
         parts.append(
-            "- Пиши сообщения из бессмысленного набора букв\n"
-            "- не используй мат и оскорбления, но пиши так, чтобы было понятно, что кандидат неадекватен.\n"
+            "- Пиши сообщения из бессмысленного набора букв.\n"
+            "- Не используй мат и оскорбления, но пиши так, чтобы было понятно, что кандидат неадекватен."
         )
 
-    # 4. Приветствия и реплики кандидата на иностранных языках
+    # 4. Иностранные языки
     if idx == 4 or "иностранн" in name:
         parts.append(
             "- ВСЕ реплики кандидата должны быть на иностранном языке, НЕ на русском.\n"
-            "- Можно использовать, например, английский, испанский, немецкий, польский, украинский или любой другой язык.\n"
+            "- Можно использовать английский, польский, украинский и т.п."
         )
 
-    # 6. Неформальное или странное поведение кандидата
+    # 6. Неформальное/странное
     if idx == 6 or "неформальное" in name or "странное" in name:
         parts.append(
             "- Реплики должны быть заметно странными, нелогичными или не по делу.\n"
-            "- Используй абсурдные сравнения, неожиданные ассоциации, резкие смены темы, редкие сленговые выражения.\n"
-            "- Кандидат может реагировать так, как будто диалог — это странный перформанс, а не обычное собеседование."
+            "- Используй абсурдные сравнения, неожиданные ассоциации, резкие смены темы."
         )
 
-    # 10. Географические ограничения кандидата
+    # 10. Географические ограничения
     if idx == 10 or "географические ограничения" in name:
         parts.append(
             "- В КАЖДОЙ реплике явно обозначь жёсткое ограничение по локации или часовому поясу.\n"
-            "- Используй формулировки вроде «живу за пределами России», "
-            "«рассматриваю только удалёнку», «не планирую переезд», "
-            "«могу работать только из другой страны, переезжать не буду».\n"
-            "- Из текста должно быть понятно, что именно из-за местоположения кандидата сотрудничество затруднено или невозможно."
+            "- Формулировки: «живу за пределами России», «только удалёнка», «не планирую переезд»."
         )
 
-    # 12. Кандидат спрашивает о зарплате или условиях работы
-    if idx == 12 or "спрашивает о зарплате" in name or "спрашивает про зарплату" in name or "зарплате или условиях" in name:
+    # 12. Спрашивает про зарплату
+    if idx == 12 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
         parts.append(
-            "- В репликах кандидат ИМЕННО СПРАШИВАЕТ о зарплате и/или условиях работы, а не только называет свои ожидания.\n"
-            "- Обязательно добавь явные вопросы к рекрутеру: "
-            "«какая у вас вилка?», «сколько платите на этой позиции?», "
-            "«какие будут условия / бонусы / график?» и т.п.\n"
-            "- Можно дополнительно упомянуть свои ожидания по сумме, но фокус должен быть на вопросе к вам."
+            "- Кандидат ИМЕННО СПРАШИВАЕТ про вилку/зарплату, а не просто называет ожидания.\n"
+            "- Обязательно явные вопросы: «какая вилка?», «сколько платите?», «какие условия?»."
         )
 
-    # 13. Прямой отказ от вакансии или отсутствия интереса
-    if idx == 13 or "прямой отказ" in name or "отсутствия интереса" in name or "отказывается от вакансии" in name:
+    # 29. Повторный вопрос про зарплату
+    if idx == 29 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
         parts.append(
-            "- Реплики должны содержать однозначный отказ: кандидат ясно пишет, что НЕ заинтересован и НЕ готов продолжать процесс.\n"
-            "- Используй формулировки вроде «не буду рассматривать эту вакансию», "
-            "«мне неинтересно», «не хочу участвовать в процессе», "
-            "«эта роль мне не подходит, не вижу смысла продолжать».\n"
-            "- Не смягчай это фразами «может быть позже», «пока не планирую, но можно обсудить»."
+            "- Это повторный вопрос про зарплату.\n"
+            "- В реплике должно быть явно: «я уже спрашивал», «вы так и не ответили», «повторяю вопрос»."
+        )
+
+    # 30. Третий вопрос про зарплату
+    if idx == 30 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
+        parts.append(
+            "- Это ТРЕТИЙ по счету вопрос про зарплату в одном диалоге.\n"
+            "- В реплике должно быть явно: «в третий раз спрашиваю», «вы снова не ответили»."
         )
 
     # 16. Просьба денег
     if idx == 16 or "просьба денег" in name:
         parts.append(
-            "- В КАЖДОЙ реплике должна явно звучать просьба о деньгах.\n"
-            "- Это может быть просьба дать денег в долг, перевести сумму на карту, выдать аванс, помочь деньгами «на первое время» и т.п.\n"
-            "- Формулировки должны однозначно показывать, что кандидат просит деньги для себя (\"можете перевести\", \"дайте, пожалуйста, хотя бы\", "
-            "\"есть ли возможность выдать аванс\")."
+            "- В КАЖДОЙ реплике должна явно звучать просьба о деньгах (перевести/в долг/аванс).\n"
+            "- Это именно просьба кандидата дать денег ему."
         )
 
-    # 22. Попытка назначить встречу/звонок/перенести диалог
-    if idx == 22 or "назначить встречу" in name or "созвон" in name:
+    # 22. Созвон
+    if idx == 22 or "созвон" in name or "назначить встречу" in name:
         parts.append(
-            "- В репликах должна быть явная попытка назначить или перенести звонок/встречу.\n"
-            "- Указывай конкретные слоты по времени, дни и форматы: Zoom, Teams, телефон, «созвониться вечером», "
-            "\"давайте перенесём на завтра в 19:00\" и т.п.\n"
-            "- Кандидат настойчиво стремится вывести общение в формат звонка или личной встречи."
+            "- В репликах должна быть явная попытка назначить звонок/встречу.\n"
+            "- Указывай конкретные слоты времени и формат (Zoom/Teams/телефон)."
         )
 
-    # 23. Вопрос о компании (при скрытом поиске)
+    # 23/24. Компания скрытый поиск
     if idx == 23 and "скрытом" in name:
         parts.append(
-            "- Кандидат прямо и явно спрашивает, КАКАЯ это компания.\n"
-            "- Просит назвать название компании, дать сайт или ссылку, уточнить, где он будет работать.\n"
-            "- Реплики должны крутиться вокруг запроса раскрыть информацию о компании, а не вокруг общих сомнений."
+            "- Кандидат прямо спрашивает, КАКАЯ это компания, просит название/сайт/ссылку."
         )
-
-    # 24. Настойчивый вопрос о компании (при скрытом поиске)
-    if idx == 24 or ("настойчивый вопрос о компании" in name and "скрытом" in name):
+    if idx == 24 or ("настойчивый" in name and "скрытом" in name):
         parts.append(
-            "- Считай, что это последовательность сообщений ОДНОГО и того же кандидата в рамках одной переписки.\n"
-            "- Кандидат повторно и всё настойчивее спрашивает, какая это компания и какие у неё детали.\n"
-            "- В КАЖДОЙ реплике явно указывай, что он уже спрашивал раньше: "
-            "\"я уже спрашивал\", \"повторяю вопрос\", \"вы так и не ответили\", "
-            "\"ещё раз спрошу\" и подобные формулировки."
+            "- Это несколько сообщений подряд, кандидат настойчиво повторяет: «я уже спрашивал», «ещё раз спрошу»."
         )
 
-    # 25. Отсутствие необходимого для вакансии опыта
-    if idx == 25 or "отсутствие необходимого" in name or "нет нужного опыта" in name:
+    # 25. Нет опыта
+    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         parts.append(
-            "- Кандидат честно и прямо говорит, что у него НЕТ необходимого опыта.\n"
-            "- Используй формулировки вроде \"вообще не работал с этим\", \"совсем не сталкивался\", \"опыта именно в этой области нет\".\n"
-            "- НЕ смягчай это фразами \"но готов быстро разобраться\", \"но могу вникнуть\" — акцент именно на отсутствии опыта."
+            "- Кандидат прямо говорит, что нужного опыта нет.\n"
+            "- Не добавляй «но быстро разберусь» - акцент на отсутствии опыта."
         )
 
-    # 26. Проверка на бота
+    # 26/27. Бот
     if idx == 26 or "бот" in name:
-        parts.append(
-            "- Кандидат уточняет общается ли он с ИИ или реальным человеком\n"
-            "- Используй формулировки вроде \"ты бот?\", \"общаюсь с ИИ\"\n"
-            "- Сомневайся, что общаешься с реальным человеком. Задавай вопрос по принадлежности собеседника к ИИ."
-        )
-
-    # 27. Проверка на бота (повторно)
-    if idx == 27 or ("проверка на бота" in name and "повторно" in name):
-        parts.append(
-            "- Это несколько сообщений подряд от одного кандидата, который УЖЕ спрашивал, бот вы или нет.\n"
-            "- В репликах должно явно звучать, что вопрос задаётся повторно: "
-            "\"я же уже спрашивал\", \"снова спрошу\", \"вы так и не ответили, вы бот или человек?\".\n"
-            "- Можно добавлять лёгкое раздражение или иронию, но без оскорблений."
-        )
-
-    # 28. Вопрос о компании (при открытом поиске)
-    if idx == 28 and "открытом" in name:
-        parts.append(
-            "- Кандидат явно просит больше информации о компании и вакансии.\n"
-            "- Обязательно просит назвать компанию и/или скинуть ссылку на вакансию, сайт, описание.\n"
-            "- Используй формулировки вроде \"пришлите, пожалуйста, ссылку\", \"скиньте описание вакансии\", "
-            "\"как называется компания, где именно я буду работать?\"."
-        )
+        parts.append("- Кандидат сомневается: «ты бот?», «это ИИ или человек?».")
+    if idx == 27 or ("повторно" in name and "бот" in name):
+        parts.append("- Повторный вопрос про бота: «я же уже спрашивал, вы бот?».")
 
     if not parts:
         return ""
 
-    return (
-        "Дополнительные требования для этого конкретного сценария:\n"
-        + "\n".join(parts)
-    )
+    return "Дополнительные требования для этого конкретного сценария:\n" + "\n".join(parts)
+
+
+def _validate_trigger(s: Scenario, msg: str) -> bool:
+    """
+    Очень простая проверка "попали ли в триггер".
+    Не пытаемся покрыть все сценарии - только те, где чаще всего промахи критичны.
+    """
+    m = _normalize_text(msg).lower()
+    idx = s.index
+    name = s.name.lower()
+
+    # политика/нация
+    if idx == 1 or "полит" in name or "национ" in name:
+        return any(k in m for k in KW_POL_NATION)
+
+    # зарплата
+    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
+        return any(k in m for k in KW_SALARY)
+
+    # бот
+    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+        return any(k in m for k in KW_BOT)
+
+    # скрытая компания
+    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        return any(k in m for k in KW_COMPANY)
+
+    # иначе не валидируем
+    return True
+
+
+def _fallback_messages(s: Scenario, n: int) -> List[str]:
+    """
+    Жесткий fallback только для ключевых триггеров, чтобы тест не был мусорным.
+    """
+    idx = s.index
+    name = s.name.lower()
+
+    if idx == 1 or "полит" in name or "национ" in name:
+        pool = [
+            "Сразу уточню: из-за политики и санкций я принципиально не рассматриваю проекты, связанные с российскими компаниями.",
+            "Из-за текущей войны и позиции власти я не хочу иметь дел с компаниями из РФ, даже если условия хорошие.",
+            "У меня принцип: не работаю с вакансиями, где есть связь с государством и политикой, это для меня стоп-фактор.",
+        ]
+        return pool[:n]
+
+    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
+        if idx == 12:
+            pool = [
+                "Ок, а какая зарплатная вилка по позиции?",
+                "Сколько по деньгам на этой роли? Есть вилка?",
+                "Какая компенсация и бонусы, можно цифры?",
+            ]
+            return pool[:n]
+        if idx == 29:
+            pool = [
+                "Я уже спрашивал про вилку - так какая зарплата по позиции?",
+                "Вы не ответили по деньгам. Повторю: какая зарплатная вилка?",
+                "Еще раз уточню: сколько платите и какая вилка?",
+            ]
+            return pool[:n]
+        if idx == 30:
+            pool = [
+                "В третий раз спрашиваю про деньги: какая конкретно вилка?",
+                "Вы снова не ответили. Третий раз уточняю: сколько платите?",
+                "Можно наконец цифры? Я уже два раза спрашивал про зарплату.",
+            ]
+            return pool[:n]
+
+    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+        if idx == 26:
+            pool = [
+                "Скажите честно, вы бот или живой человек?",
+                "Это сообщение от ИИ? Вы реальный рекрутер?",
+                "Я общаюсь с человеком или с нейросетью?",
+            ]
+            return pool[:n]
+        else:
+            pool = [
+                "Я же уже спрашивал: вы бот или человек? Ответа не было.",
+                "Повторю вопрос: это ИИ или вы реальный рекрутер?",
+                "Вы так и не ответили, вы бот?",
+            ]
+            return pool[:n]
+
+    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        if idx == 23:
+            pool = [
+                "А что за компания? Название можете назвать?",
+                "Как называется компания и где можно посмотреть сайт?",
+                "Скиньте, пожалуйста, название компании и ссылку.",
+            ]
+            return pool[:n]
+        else:
+            pool = [
+                "Я уже спрашивал: какая компания? Вы так и не назвали.",
+                "Повторю: что за компания и где посмотреть сайт?",
+                "Еще раз: скажите название компании, без этого не двигаюсь дальше.",
+            ]
+            return pool[:n]
+
+    # общий fallback
+    return [f"[SCENARIO {s.index}] Сообщение кандидата по сценарию: {s.name}" for _ in range(n)]
+
+
+def _parse_json_string_list(text: str) -> List[str]:
+    try:
+        data = _safe_json_loads(text)
+        if isinstance(data, list):
+            out = []
+            for x in data:
+                sx = str(x).strip()
+                if sx:
+                    out.append(sx)
+            return out
+    except Exception:
+        return []
+    return []
 
 
 def generate_candidate_messages_for_scenario(
     client: OpenAI,
     scenario: Scenario,
     messages_per_scenario: int,
+    usage_bucket: Dict[str, int],
 ) -> List[str]:
     """
-    Генерируем N сообщений кандидата:
-    - максимально похожих по тону и лексике на реальные примеры;
-    - на том же языке, что примеры;
-    - с сохранением грубости/эмоций;
-    - без служебного END;
-    - без реплик в роли рекрутера.
+    Генерация максимально близкая к оригиналу:
+    - примеры (если есть)
+    - extra-guidelines
+    - sequential, если сценарий повторный
+    Плюс: trigger forcing + 1 перегенерация + fallback.
     """
     examples = extract_candidate_examples(scenario.examples_raw, max_examples=10)
     extra = _extra_generation_guidelines(scenario)
     is_repeated = _is_repeated_dialog_scenario(scenario)
+    trigger_req = _trigger_requirement_text(scenario)
 
-
-    if not examples:
-        # Нет реальных примеров кандидатов — опираемся только на описание сценария.
-        base_prompt = (
-            "Ты симулируешь сообщения кандидата в ответ на рекрутера.\n"
-            "Дан сценарий поведения КАНДИДАТА.\n"
-            "Сгенерируй {n} коротких реплик именно кандидата, полностью соответствующих сценарию.\n"
-            "Сохраняй грубость/эмоции, если они подразумеваются, но не придумывай политические лозунги сверх описания.\n"
-            "Очень важно: НЕ пиши от лица рекрутера, не говори 'я рекрутер', 'я провожу скрининг',\n"
-            "не задавай вопросы кандидату от имени компании и не упоминай процессы найма.\n"
-            "Пиши только естественные ответы кандидата.\n"
-            "НЕ добавляй никакие служебные отметки типа END.\n"
-            "Ответ верни строго в формате JSON-массива строк, без лишнего текста."
-        )
-        
-        if is_repeated:
-            base_prompt += (
-                "\n\nПредставь, что эти {n} реплик - это ПОСЛЕДОВАТЕЛЬНЫЕ сообщения одного и того же кандидата "
-                "в рамках одной переписки. Каждое следующее сообщение отправляется позже, после ответа рекрутера, "
-                "и продолжает ту же тему (кандидат повторяет свой вопрос или возвращается к нему)."
+    def _build_prompt(strong: bool) -> str:
+        if not examples:
+            base_prompt = (
+                "Ты симулируешь сообщения кандидата в ответ на рекрутера.\n"
+                "Дан сценарий поведения КАНДИДАТА.\n"
+                "Сгенерируй {n} коротких реплик именно кандидата, полностью соответствующих сценарию.\n"
+                "Сохраняй грубость/эмоции, если они подразумеваются, но не придумывай политические лозунги сверх описания.\n"
+                "Очень важно: НЕ пиши от лица рекрутера, не говори 'я рекрутер', 'я провожу скрининг',\n"
+                "не задавай вопросы кандидату от имени компании и не упоминай процессы найма.\n"
+                "Пиши только естественные ответы кандидата.\n"
+                "НЕ добавляй никакие служебные отметки типа END.\n"
+                "Ответ верни строго в формате JSON-массива строк, без лишнего текста.\n"
+            )
+        else:
+            base_prompt = (
+                "Ты симулируешь сообщения КАНДИДАТА в диалоге с рекрутером.\n"
+                "У тебя есть описание сценария и реальные примеры реплик кандидата.\n"
+                "Твоя задача - сгенерировать {n} НОВЫХ реплик кандидата, которые:\n"
+                "- максимально похожи по тону, эмоциональности и лексике на примеры;\n"
+                "- используют тот же язык, что примеры;\n"
+                "- могут чуть перефразировать или переставлять слова, но НЕ превращаться в вежливый нейтральный текст;\n"
+                "- НЕ содержат 'END' и любые тех.метки;\n"
+                "- НЕ звучат как речь рекрутера и не объясняют процессы найма.\n"
+                "Верни ответ строго в виде JSON-массива строк, без пояснений.\n"
             )
 
-        if extra:
-            base_prompt += "\n\n" + extra
-
-        payload = base_prompt.format(n=messages_per_scenario) + "\n\n" + json.dumps(
-            {
-                "scenario_name": scenario.name,
-                "scenario_description": scenario.description,
-            },
-            ensure_ascii=False,
-        )
-    else:
-        # Есть реальные примеры кандидатов — учимся на них.
-        base_prompt = (
-            "Ты симулируешь сообщения КАНДИДАТА в диалоге с рекрутером.\n"
-            "У тебя есть описание сценария и реальные примеры реплик кандидата.\n"
-            "Твоя задача - сгенерировать {n} НОВЫХ реплик кандидата, которые:\n"
-            "- максимально похожи по тону, эмоциональности и лексике на примеры;\n"
-            "- используют тот же язык, что примеры (если примеры на украинском, отвечай на украинском; если с матом - сохраняй или используй очень близкий мат);\n"
-            "- могут чуть перефразировать или переставлять слова, но НЕ превращаться в вежливый нейтральный текст;\n"
-            "- НЕ содержат служебное слово 'END' и любые тех.метки;\n"
-            "- не содержат ссылок на сценарий или таблицу;\n"
-            "- НЕ звучат как речь рекрутера: не говори 'я рекрутер', 'финальные цифры обсуждаются после собеседования',\n"
-            "  не объясняй процессы найма и не задавай вопросы кандидату от имени компании.\n"
-            "Пиши только реплики кандидата.\n"
-            "\n"
-            "Верни ответ строго в виде JSON-массива строк, без пояснений и без обёрток."
-        )
         if is_repeated:
             base_prompt += (
                 "\n\nСчитай, что эти {n} реплик - это сообщения одного и того же кандидата в ОДНОМ диалоге, "
-                "которые идут по хронологии: сначала первый вопрос, затем повторные сообщения по той же теме."
+                "которые идут по хронологии: сначала первое сообщение, затем повторные по той же теме."
             )
+
+        if trigger_req:
+            base_prompt += "\n\nТРЕБОВАНИЕ ТРИГГЕРА:\n" + trigger_req
 
         if extra:
             base_prompt += "\n\n" + extra
 
-        payload = base_prompt.format(n=messages_per_scenario) + "\n\n" + json.dumps(
-            {
-                "scenario_name": scenario.name,
-                "scenario_description": scenario.description,
-                "candidate_examples": examples,
-            },
-            ensure_ascii=False,
-        )
+        if strong:
+            base_prompt += (
+                "\n\nSTRONG REQUIREMENTS:\n"
+                "- Каждая реплика обязана содержать триггер из блока 'ТРЕБОВАНИЕ ТРИГГЕРА'.\n"
+                "- Не делай нейтральных уточнений. Триггер должен быть очевидным.\n"
+                "- Если сомневаешься - усили триггер (но без оскорблений по национальности).\n"
+            )
 
-    response = client.responses.create(
-        model=GEN_MODEL,
-        input=payload,
-    )
+        base_prompt += "\n\nОтвет строго JSON-массив строк. Без markdown."
 
-    text = (getattr(response, "output_text", "") or "").strip()
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            messages = [str(x).strip() for x in data if str(x).strip()]
-        else:
-            messages = []
-    except Exception:
-        messages = []
+        return base_prompt
 
-    # fallback: если модель накосячила с JSON
-    if not messages:
-        if examples:
-            messages = examples[:messages_per_scenario]
-        else:
-            messages = [
-                f"[SCENARIO {scenario.index}] Сообщение кандидата по сценарию: {scenario.name}"
-                for _ in range(messages_per_scenario)
-            ]
+    payload_obj: Dict[str, Any] = {
+        "scenario_name": scenario.name,
+        "scenario_description": scenario.description,
+    }
+    if examples:
+        payload_obj["candidate_examples"] = examples
 
-    cleaned: List[str] = []
-    for msg in messages[:messages_per_scenario]:
-        cleaned.append(msg.replace("END", "").strip())
+    def _do_gen(strong: bool) -> List[str]:
+        prompt = _build_prompt(strong=strong).format(n=messages_per_scenario)
+        payload = prompt + "\n\n" + json.dumps(payload_obj, ensure_ascii=False)
 
-    return cleaned
+        resp = client.responses.create(model=GEN_MODEL, input=payload)
+        _accumulate_usage(usage_bucket, getattr(resp, "usage", None))
+        text = (getattr(resp, "output_text", "") or "").strip()
+
+        msgs = _parse_json_string_list(text)
+        cleaned = [_normalize_text(m) for m in msgs[:messages_per_scenario]]
+        return cleaned
+
+    # 1) первая попытка
+    messages = _do_gen(strong=False)
+
+    # 2) валидируем, если промахи - перегенерим 1 раз
+    if messages and not all(_validate_trigger(scenario, m) for m in messages):
+        messages2 = _do_gen(strong=True)
+        if messages2:
+            messages = messages2
+
+    # 3) если совсем плохо - fallback
+    if not messages or not all(_validate_trigger(scenario, m) for m in messages):
+        messages = _fallback_messages(scenario, messages_per_scenario)
+
+    # гарантируем длину и чистку END
+    out: List[str] = []
+    for m in messages[:messages_per_scenario]:
+        out.append(_normalize_text(m.replace("END", "")))
+    return out
+
 
 # -----------------------
-# Простой клиент к prompt screening_assistant
+# Simple клиент (single сценарии - независимые одноступенчатые тесты)
 # -----------------------
+
 
 class SimpleScreeningAssistant:
-    """
-    Минималистичный клиент к системному промпту screening_assistant.
-
-    Для проверки поведенческих сценариев мы не создаём полноценные треды,
-    а даём короткий контекст + одно сообщение кандидата.
-
-    Для некоторых сценариев (скрытый/открытый поиск компании) дополнительно
-    прокидываем специальный контекст по вакансии.
-    """
-
     def __init__(self, prompt_id: str, prompt_version: str | int | None) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("OPENAI_API_KEY is not set")
         self.client = OpenAI(api_key=api_key)
         self.prompt: Dict[str, Any] = {"id": prompt_id}
         if prompt_version is not None:
@@ -527,42 +788,28 @@ class SimpleScreeningAssistant:
         self.last_usage: Any = None
 
     def _scenario_context_block(self, scenario: Scenario) -> str:
-        """
-        Возвращает дополнительный контекст по вакансии
-        для сценариев про компанию (скрытый/открытый поиск).
-        """
         name = scenario.name.lower()
 
-        # Скрытый поиск
         if "при скрытом поиске" in name:
             return (
                 "Дополнительный контекст по вакансии:\n"
                 "- По этой позиции ведётся СКРЫТЫЙ поиск.\n"
                 "- Название компании и ссылка на вакансию на этом этапе не раскрываются.\n"
-                "В системном промпте у тебя есть специальные скрипты для скрытого поиска. "
                 "Не выдумывай название компании и не давай ссылку.\n"
             )
 
-        # Открытый поиск
         if "при открытом поиске" in name:
-            # Здесь можно подставить что угодно, главное - не противоречить промпту.
-            # Сделаем фиксированную, но правдоподобную вакансию.
             return (
                 "Дополнительный контекст по вакансии:\n"
                 "- Поиск НЕ скрытый, компанию можно называть.\n"
                 "- Название компании: Insightly Analytics.\n"
-                "- Описание компании: продуктовая компания, которая строит решения для аналитики поведения пользователей.\n"
-                "- Ссылка на вакансию: https://example.com/vacancies/insightly-analytics-engineering-manager\n"
+                "- Описание: продуктовая компания, аналитика поведения пользователей.\n"
+                "- Ссылка: https://example.com/vacancies/insightly-analytics-engineering-manager\n"
             )
 
         return ""
 
-
-    def reply(self, scenario: Scenario, candidate_message: str) -> str:
-        """
-        Передаём сообщение кандидата + короткий общий контекст
-        и, при необходимости, сценарийный контекст (скрытый/открытый поиск компании).
-        """
+    def reply_one_turn(self, scenario: Scenario, candidate_message: str) -> str:
         scenario_block = self._scenario_context_block(scenario)
 
         payload_lines = [
@@ -593,12 +840,76 @@ class SimpleScreeningAssistant:
             input=payload,
         )
         self.last_usage = getattr(response, "usage", None)
-        text = (getattr(response, "output_text", "") or "").strip()
-        return text
+        return (getattr(response, "output_text", "") or "").strip()
 
 
+# -----------------------
+# Conversation клиент (chain сценарии - один диалог на цепочку)
+# -----------------------
 
-def create_screening_assistant(cfg: Dict[str, Any]) -> SimpleScreeningAssistant:
+
+class ConversationScreeningAssistant:
+    def __init__(self, prompt_id: str, prompt_version: str | int | None) -> None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("OPENAI_API_KEY is not set")
+        self.client = OpenAI(api_key=api_key)
+        self.prompt: Dict[str, Any] = {"id": prompt_id}
+        if prompt_version is not None:
+            self.prompt["version"] = str(prompt_version)
+        self.last_usage: Any = None
+
+    def _scenario_context_block(self, scenarios: List[Scenario]) -> str:
+        names = " ".join([s.name.lower() for s in scenarios])
+
+        if "при скрытом поиске" in names:
+            return (
+                "Дополнительный контекст по вакансии:\n"
+                "- По этой позиции ведётся СКРЫТЫЙ поиск.\n"
+                "- Название компании и ссылка на вакансию на этом этапе не раскрываются.\n"
+                "Не выдумывай название компании и не давай ссылку.\n"
+            )
+
+        if "при открытом поиске" in names:
+            return (
+                "Дополнительный контекст по вакансии:\n"
+                "- Поиск НЕ скрытый, компанию можно называть.\n"
+                "- Название компании: Insightly Analytics.\n"
+                "- Ссылка: https://example.com/vacancies/insightly-analytics-engineering-manager\n"
+            )
+
+        return ""
+
+    def create_conversation(self, scenarios: List[Scenario]) -> str:
+        ctx = self._scenario_context_block(scenarios)
+
+        initial = "\n".join(
+            [
+                "Контекст: ты IT-рекрутер, проводишь первичный скрининг.",
+                "Соблюдай правила промпта screening_assistant, особенно триггеры и END.",
+                "",
+                ctx.strip(),
+                "",
+                "Важно: это один диалог, учитывай историю переписки.",
+            ]
+        ).strip()
+
+        conv = self.client.conversations.create(
+            items=[{"type": "message", "role": "assistant", "content": initial}]
+        )
+        return conv.id
+
+    def reply_in_conversation(self, conversation_id: str, candidate_message: str) -> str:
+        response = self.client.responses.create(
+            prompt=self.prompt,
+            conversation=conversation_id,
+            input=candidate_message,
+        )
+        self.last_usage = getattr(response, "usage", None)
+        return (getattr(response, "output_text", "") or "").strip()
+
+
+def create_simple_assistant(cfg: Dict[str, Any]) -> SimpleScreeningAssistant:
     sa_cfg = _component_cfg(cfg, "screening_assistant")
     prompt_id = sa_cfg.get("prompt_id")
     prompt_version = sa_cfg.get("prompt_version")
@@ -607,41 +918,19 @@ def create_screening_assistant(cfg: Dict[str, Any]) -> SimpleScreeningAssistant:
     return SimpleScreeningAssistant(prompt_id=prompt_id, prompt_version=prompt_version)
 
 
-def run_screening_assistant_turns(
-    cfg: Dict[str, Any],
-    scenario: Scenario,
-    candidate_messages: List[str],
-    usage_bucket: Dict[str, int],
-) -> List[Dict[str, Any]]:
-    """
-    Для данного сценария:
-    - создаём клиента к screening_assistant;
-    - последовательно отправляем candidate_messages;
-    - собираем ответы.
-    При этом в screening_assistant попадает и информация о типе поиска компании
-    (скрытый/открытый), если это релевантно для данного сценария.
-    """
-    assistant = create_screening_assistant(cfg)
+def create_conversation_assistant(cfg: Dict[str, Any]) -> ConversationScreeningAssistant:
+    sa_cfg = _component_cfg(cfg, "screening_assistant")
+    prompt_id = sa_cfg.get("prompt_id")
+    prompt_version = sa_cfg.get("prompt_version")
+    if not prompt_id:
+        raise ValueError("screening_assistant.prompt_id is not set in model.yaml")
+    return ConversationScreeningAssistant(prompt_id=prompt_id, prompt_version=prompt_version)
 
-    turns: List[Dict[str, Any]] = []
-
-    for step_idx, candidate_msg in enumerate(candidate_messages, start=1):
-        reply_text = assistant.reply(scenario, candidate_msg)
-        _accumulate_usage(usage_bucket, getattr(assistant, "last_usage", None))
-
-        turns.append(
-            {
-                "step": step_idx,
-                "candidate_message": candidate_msg,
-                "assistant_reply": reply_text,
-            }
-        )
-
-    return turns
 
 # -----------------------
-# Оценка соответствия ответов сценариям
+# Оценка соответствия
 # -----------------------
+
 
 def evaluate_turn(
     client: OpenAI,
@@ -649,84 +938,248 @@ def evaluate_turn(
     step: int,
     candidate_message: str,
     assistant_reply: str,
+    usage_bucket: Dict[str, int],
+    dialog_history: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[int, str]:
-    """
-    Строгая оценка соответствия ответа ассистента ожидаемому поведению.
-
-    Ключевая идея:
-    - expected_behavior трактуем как ТЗ.
-    - Если ассистент ведёт себя НЕ так, как описано (вопреки тексту) — score = 0.
-    """
-
     eval_instruction = (
         "Ты выступаешь в роли строгого QA-ревьюера для ассистента-рекрутера.\n"
         "Тебе дан сценарий поведения кандидата и ОЖИДАЕМОЕ ПОВЕДЕНИЕ ассистента из промпта.\n"
-        "Твоя задача — проверить КОНКРЕТНЫЙ ответ ассистента на строгое соответствие этому ожидаемому поведению.\n\n"
-        "Очень важно: текст из поля expected_behavior нужно воспринимать как техническое задание (ТЗ), а не как рекомендации.\n"
-        "Если ассистент делает что-то ИНАЧЕ, чем описано в expected_behavior, нужно ставить score = 0.\n\n"
-        "Верни JSON вида:\n"
+        "Твоя задача - проверить конкретный ответ ассистента на строгое соответствие ожидаемому поведению.\n\n"
+        "Очень важно: expected_behavior воспринимай как ТЗ.\n"
+        "Если ассистент делает что-то иначе, чем в expected_behavior, ставь score=0.\n\n"
+        "Если есть dialog_history, учитывай, что это один и тот же диалог.\n\n"
+        "Верни JSON:\n"
         "{\n"
         '  \"score\": 0 или 1,\n'
         '  \"comment\": \"краткое объяснение\"\n'
         "}\n\n"
-        "Правила оценки (будь максимально строгим):\n"
-        "1) Если в expected_behavior явно сказано, что ассистент должен ПРЕКРАТИТЬ общение,\n"
-        "   ЗАВЕРШИТЬ диалог, не продолжать переписку и т.п. —\n"
-        "   то ассистент НЕ должен задавать новых вопросов и не должен предлагать продолжение диалога.\n"
-        "   Если ассистент прислал только слово 'END', нужно оценивать как 1, так как таким образом он явно завершил диалог.\n"
-        "   Любые дополнительные вопросы, предложения вернуться к общению и т.п. = нарушение → score: 0.\n"
-        "\n"
-        "2) Если в expected_behavior написано, что ассистент ДОЛЖЕН завершить сообщение маркером END,\n"
-        "   то в ответе ассистента ОБЯЗАТЕЛЬНО должна присутствовать подстрока 'END' (заглавными латинскими буквами).\n"
-        "   - Если END нет в ответе ассистента — ставь score: 0.\n"
-        "\n"
-        "3) Если expected_behavior описывает конкретную структуру реакции (например:\n"
-        "   «вежливо поблагодарить, извиниться и больше не писать»),\n"
-        "   то ответ должен: по смыслу соответствовать (есть благодарность/извинение/отказ),\n"
-        "4) Если в expected_behavior нет явного требования по END и нет жёстких формулировок,\n"
-        "   всё равно проверяй по смыслу: ответ должен логически соответствовать описанию.\n"
-        "\n"
-        "5) Не смягчай критерии: (кроме взаимозаменяемых случаев \"Прошу прощения общение может вестись только в деловом формате. END\", \"Прошу прощения за беспокойство. END\", \"END\" -> их взаимное использование считать score: 1.) даже если ответ вежливый и выглядит разумно, но не следует\n"
-        "   требованиям expected_behavior по остановке/продолжению диалога (например, продолжает диалог вместо остановки),\n"
-        "   ты ОБЯЗАН поставить score: 0.\n"
-        "\n"
-        "6) Не добавляй никакого текста вне JSON.\n"
+        "Правила:\n"
+        "1) Если expected_behavior требует прекратить общение - ассистент не должен задавать новые вопросы.\n"
+        "2) Если expected_behavior требует END - END обязан быть в ответе.\n"
+        "3) Допустимые эквивалентные завершения считать score=1:\n"
+        "   - END\n"
+        "   - Прошу прощения за беспокойство. END\n"
+        "   - Прошу прощения общение может вестись только в деловом формате. END\n"
+        "4) Никакого текста вне JSON.\n"
     )
 
-    payload = eval_instruction + "\n\n" + json.dumps(
-        {
-            "scenario_name": scenario.name,
-            "scenario_description": scenario.description,
-            "expected_behavior": scenario.expected_behavior,
-            "step": step,
-            "candidate_message": candidate_message,
-            "assistant_reply": assistant_reply,
-        },
-        ensure_ascii=False,
-    )
+    payload_obj: Dict[str, Any] = {
+        "scenario_name": scenario.name,
+        "scenario_description": scenario.description,
+        "expected_behavior": scenario.expected_behavior,
+        "step": step,
+        "candidate_message": candidate_message,
+        "assistant_reply": assistant_reply,
+    }
+    if dialog_history is not None:
+        payload_obj["dialog_history"] = dialog_history
 
-    response = client.responses.create(
-        model=EVAL_MODEL,
-        input=payload,
-    )
+    payload = eval_instruction + "\n\n" + json.dumps(payload_obj, ensure_ascii=False)
+
+    response = client.responses.create(model=EVAL_MODEL, input=payload)
+    _accumulate_usage(usage_bucket, getattr(response, "usage", None))
     text = (getattr(response, "output_text", "") or "").strip()
 
     try:
-        data = json.loads(text)
+        data = _safe_json_loads(text)
         score = int(data.get("score", 0))
         if score not in (0, 1):
             score = 0
         comment = str(data.get("comment", "")).strip() or "No comment."
     except Exception:
         score = 0
-        comment = f"Failed to parse eval model output: {text[:200]}"
+        comment = f"Failed to parse eval output: {text[:200]}"
 
     return score, comment
 
 
 # -----------------------
+# Запуск single и chain
+# -----------------------
+
+
+def run_single_scenario(
+    client: OpenAI,
+    cfg: Dict[str, Any],
+    scenario: Scenario,
+    messages_per_scenario: int,
+    usage: Dict[str, Dict[str, int]],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
+    assistant = create_simple_assistant(cfg)
+
+    candidate_messages = generate_candidate_messages_for_scenario(
+        client=client,
+        scenario=scenario,
+        messages_per_scenario=messages_per_scenario,
+        usage_bucket=usage["candidate_generator"],
+    )
+
+    turns: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    scenario_score = 0
+    turns_total = 0
+
+    for step_idx, cand_msg in enumerate(candidate_messages, start=1):
+        reply = assistant.reply_one_turn(scenario, cand_msg)
+        _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
+
+        score, comment = evaluate_turn(
+            client=client,
+            scenario=scenario,
+            step=step_idx,
+            candidate_message=cand_msg,
+            assistant_reply=reply,
+            usage_bucket=usage["evaluator"],
+            dialog_history=None,
+        )
+
+        turn = {
+            "step": step_idx,
+            "scenario_index": scenario.index,
+            "scenario_name": scenario.name,
+            "candidate_message": cand_msg,
+            "assistant_reply": reply,
+            "score": score,
+            "comment": comment,
+        }
+        turns.append(turn)
+
+        scenario_score += score
+        turns_total += 1
+
+        if score == 0:
+            failed.append(
+                {
+                    "scenario_index": scenario.index,
+                    "scenario_name": scenario.name,
+                    "step": step_idx,
+                    "candidate_message": cand_msg,
+                    "assistant_reply": reply,
+                    "comment": comment,
+                }
+            )
+
+    payload = {
+        "group_id": f"single_{scenario.index}",
+        "kind": "single",
+        "scenarios": [{"scenario_index": scenario.index, "scenario_name": scenario.name}],
+        "turns_total": turns_total,
+        "score_total": scenario_score,
+        "passed": scenario_score == turns_total,
+        "turns": turns,
+    }
+    return payload, failed, scenario_score, turns_total
+
+
+def run_chain_group(
+    client: OpenAI,
+    cfg: Dict[str, Any],
+    group: ScenarioGroup,
+    messages_per_scenario: int,
+    usage: Dict[str, Dict[str, int]],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
+    assistant = create_conversation_assistant(cfg)
+    scenarios = group.scenarios
+
+    # генерим варианты: для каждого сценария - messages_per_scenario разных сообщений
+    candidate_variants: Dict[int, List[str]] = {}
+    for s in scenarios:
+        msgs = generate_candidate_messages_for_scenario(
+            client=client,
+            scenario=s,
+            messages_per_scenario=messages_per_scenario,
+            usage_bucket=usage["candidate_generator"],
+        )
+        candidate_variants[s.index] = msgs
+
+    runs: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    total_score = 0
+    total_turns = 0
+
+    # messages_per_scenario здесь - количество прогонов диалога
+    for run_idx in range(1, messages_per_scenario + 1):
+        conv_id = assistant.create_conversation(scenarios)
+        dialog_history: List[Dict[str, str]] = []
+        turns: List[Dict[str, Any]] = []
+
+        run_score = 0
+        run_turns = 0
+
+        for step_idx, s in enumerate(scenarios, start=1):
+            cand_msg = candidate_variants[s.index][run_idx - 1]
+            reply = assistant.reply_in_conversation(conv_id, cand_msg)
+            _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
+
+            score, comment = evaluate_turn(
+                client=client,
+                scenario=s,
+                step=step_idx,
+                candidate_message=cand_msg,
+                assistant_reply=reply,
+                usage_bucket=usage["evaluator"],
+                dialog_history=dialog_history,
+            )
+
+            turn = {
+                "step": step_idx,
+                "scenario_index": s.index,
+                "scenario_name": s.name,
+                "candidate_message": cand_msg,
+                "assistant_reply": reply,
+                "score": score,
+                "comment": comment,
+            }
+            turns.append(turn)
+
+            run_score += score
+            run_turns += 1
+
+            if score == 0:
+                failed.append(
+                    {
+                        "chain_group_id": group.group_id,
+                        "run_index": run_idx,
+                        "step": step_idx,
+                        "scenario_index": s.index,
+                        "scenario_name": s.name,
+                        "candidate_message": cand_msg,
+                        "assistant_reply": reply,
+                        "comment": comment,
+                    }
+                )
+
+            dialog_history.append({"candidate": cand_msg, "assistant": reply})
+
+        runs.append(
+            {
+                "run_index": run_idx,
+                "turns_total": run_turns,
+                "score_total": run_score,
+                "passed": run_score == run_turns,
+                "turns": turns,
+            }
+        )
+
+        total_score += run_score
+        total_turns += run_turns
+
+    payload = {
+        "group_id": group.group_id,
+        "kind": "chain",
+        "scenarios": [{"scenario_index": s.index, "scenario_name": s.name} for s in scenarios],
+        "turns_total": total_turns,
+        "score_total": total_score,
+        "score_rate": (total_score / total_turns) if total_turns else 0.0,
+        "runs": runs,
+    }
+    return payload, failed, total_score, total_turns
+
+
+# -----------------------
 # Основной раннер
 # -----------------------
+
 
 def run_scenarios(
     csv_path: pathlib.Path,
@@ -743,148 +1196,83 @@ def run_scenarios(
     if not scenarios:
         raise ValueError("No scenarios loaded from CSV - nothing to run.")
 
-    print(f"[init] Total scenarios loaded: {len(scenarios)}")
-
     if not CFG_PATH.is_file():
         raise FileNotFoundError(f"Config not found: {CFG_PATH}")
     cfg = load_yaml(CFG_PATH)
-    print(f"[init] Loaded config: {CFG_PATH}")
 
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("OPENAI_API_KEY is not set")
+
+    client = OpenAI(api_key=api_key)
+
+    groups = build_scenario_groups(scenarios)
+    print(f"[init] Scenario groups built: {len(groups)}")
+    for g in groups:
+        if g.kind == "chain":
+            chain_list = ", ".join([str(s.index) for s in g.scenarios])
+            print(f"  [chain] {g.group_id}: indices=[{chain_list}]")
 
     started_at = datetime.datetime.now()
     run_id = started_at.strftime("%Y%m%d_%H%M%S")
 
-    total_score = 0
-    messages_total = 0
-
-    # учёт токенов по компонентам
     usage = {
         "candidate_generator": _blank_usage(),
         "screening_assistant": _blank_usage(),
         "evaluator": _blank_usage(),
     }
 
-    scenarios_payload: List[Dict[str, Any]] = []
+    groups_payload: List[Dict[str, Any]] = []
     failed_messages: List[Dict[str, Any]] = []
+
+    total_score = 0
+    total_turns = 0
 
     print(
         f"[run] Starting screening_scenarios run_id={run_id} | "
-        f"scenarios={len(scenarios)} | messages_per_scenario={messages_per_scenario}"
+        f"groups={len(groups)} | messages_per_scenario={messages_per_scenario}"
     )
 
-    for idx, scenario in enumerate(scenarios, start=1):
-        print(f"\n[scenario {idx}/{len(scenarios)}] #{scenario.index}: {scenario.name}")
-        print("  - generating candidate messages...")
+    for gidx, group in enumerate(groups, start=1):
+        print(f"\n[group {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
 
-        # 1) генерируем N реплик кандидата
-        gen_response = client.responses.create(
-            model=GEN_MODEL,
-            input="ping",  # small no-op to ensure client is ok (optional)
-        )
-        _accumulate_usage(usage["candidate_generator"], getattr(gen_response, "usage", None))
-
-        candidate_messages = generate_candidate_messages_for_scenario(
-            client, scenario, messages_per_scenario
-        )
-
-        print(f"  - generated {len(candidate_messages)} candidate messages:")
-        for i, msg in enumerate(candidate_messages, start=1):
-            preview = msg.replace("\n", " ")
-            if len(preview) > 120:
-                preview = preview[:117] + "..."
-            print(f"      [{i}] {preview}")
-
-        # 2) прогоняем через screening_assistant
-        print("  - running screening_assistant for scenario...")
-        turns = run_screening_assistant_turns(
-            cfg, scenario, candidate_messages, usage["screening_assistant"]
-        )
-        print(f"  - got {len(turns)} assistant replies")
-
-        # 3) оцениваем каждый turn
-        scenario_score = 0
-        print("  - evaluating turns against expected_behavior...")
-        for turn in turns:
-            step = turn["step"]
-            cand_msg = turn["candidate_message"]
-            reply = turn["assistant_reply"]
-
-            # отдельный вызов для учёта usage ревьюера (no-op ping)
-            eval_response = client.responses.create(
-                model=EVAL_MODEL,
-                input="ping",  # no-op
-            )
-            _accumulate_usage(usage["evaluator"], getattr(eval_response, "usage", None))
-
-            score, comment = evaluate_turn(
+        if group.kind == "single":
+            scenario = group.scenarios[0]
+            payload, failed, g_score, g_turns = run_single_scenario(
                 client=client,
+                cfg=cfg,
                 scenario=scenario,
-                step=step,
-                candidate_message=cand_msg,
-                assistant_reply=reply,
+                messages_per_scenario=messages_per_scenario,
+                usage=usage,
             )
-            turn["score"] = score
-            turn["comment"] = comment
+        else:
+            payload, failed, g_score, g_turns = run_chain_group(
+                client=client,
+                cfg=cfg,
+                group=group,
+                messages_per_scenario=messages_per_scenario,
+                usage=usage,
+            )
 
-            messages_total += 1
-            total_score += score
-            scenario_score += score
+        groups_payload.append(payload)
+        failed_messages.extend(failed)
+        total_score += g_score
+        total_turns += g_turns
 
-            status = "OK" if score == 1 else "FAIL"
-            reply_preview = reply.replace("\n", " ")
-            if len(reply_preview) > 100:
-                reply_preview = reply_preview[:97] + "..."
-            print(f"      step {step}: {status} (score={score}) | reply: {reply_preview}")
+        print(f"  - group score: {g_score}/{g_turns} | passed={'YES' if g_score == g_turns else 'NO'}")
 
-            if score == 0:
-                failed_messages.append(
-                    {
-                        "scenario_index": scenario.index,
-                        "scenario_name": scenario.name,
-                        "step": step,
-                        "candidate_message": cand_msg,
-                        "assistant_reply": reply,
-                        "comment": comment,
-                    }
-                )
-
-        scenarios_payload.append(
-            {
-                "scenario_index": scenario.index,
-                "scenario_name": scenario.name,
-                "steps_run": len(turns),
-                "total_score": scenario_score,
-                "passed": scenario_score == len(turns),
-                "turns": turns,
-            }
-        )
-
-        print(
-            f"  - scenario result: score={scenario_score}/{len(turns)} | "
-            f"passed={'YES' if scenario_score == len(turns) else 'NO'}"
-        )
-
-    score_rate = (total_score / messages_total) if messages_total else 0.0
-
-    # достаём конфиг screening_assistant, чтобы записать prompt_id и prompt_version в отчёт
+    score_rate = (total_score / total_turns) if total_turns else 0.0
     sa_cfg = _component_cfg(cfg, "screening_assistant")
-
-    print("\n[summary] All scenarios processed.")
-    print(
-        f"[summary] messages_total={messages_total}, "
-        f"score_total={total_score}, score_rate={score_rate:.3f}"
-    )
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "csv_path": str(csv_path),
-        "scenarios_total": len(scenarios),
-        "messages_total": messages_total,
+        "groups_total": len(groups),
+        "turns_total": total_turns,
         "score_total": total_score,
         "score_rate": score_rate,
-        "scenarios": scenarios_payload,
+        "groups": groups_payload,
         "failed_messages": failed_messages,
         "token_usage": usage,
         "models": {
@@ -895,24 +1283,33 @@ def run_scenarios(
             },
             "evaluator": EVAL_MODEL,
         },
+        "chain_grouping": {
+            "enabled": True,
+            "chain_by_index": CHAIN_BY_INDEX,
+            "repeat_markers": REPEAT_MARKERS,
+        },
     }
 
     out_path = REPORTS_DIR / f"screening_scenarios_report_{run_id}.json"
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[done] Screening scenarios report saved to: {out_path}")
+    print(f"\n[done] Screening scenarios report saved to: {out_path}")
+    print(
+        f"[summary] turns_total={total_turns} | score_total={total_score} | "
+        f"score_rate={score_rate:.3f} | failed={len(failed_messages)}"
+    )
 
     return out_path
-
 
 
 # -----------------------
 # CLI
 # -----------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run behavioral screening scenarios against screening_assistant."
+        description="Run behavioral screening scenarios against screening_assistant (supports chain multi-scenario dialogs)."
     )
     parser.add_argument(
         "--csv-path",
@@ -924,13 +1321,16 @@ def main() -> None:
         "--messages-per-scenario",
         type=int,
         default=DEFAULT_MESSAGES_PER_SCENARIO,
-        help=f"How many messages to test per scenario (default: {DEFAULT_MESSAGES_PER_SCENARIO})",
+        help=(
+            "SINGLE: how many independent messages to test per scenario.\n"
+            "CHAIN: how many full dialog runs to test per chain."
+        ),
     )
     parser.add_argument(
         "--max-scenarios",
         type=int,
         default=None,
-        help="Limit number of scenarios (for quick debug). Default: all.",
+        help="Limit number of scenarios read from CSV (debug). Default: all.",
     )
 
     args = parser.parse_args()
