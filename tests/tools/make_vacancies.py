@@ -204,17 +204,46 @@ SAMPLES = [
 ]
 
 
-def make_cdm(recruiter_name: str = "Варя", candidate_name: str = "Кандидат") -> dict:
+def _sample_candidate_contacts() -> list[dict]:
+    return [
+        {"type": "ln", "url": "https://linkedin.com/in/example"},
+        {"type": "github", "url": "https://github.com/example"},
+    ]
+
+
+def _sample_candidate_job_list(company_industry: str) -> list[dict]:
+    industry = company_industry or "Tech"
+    return [
+        {
+            "title": "Senior Engineer",
+            "company": "ExampleCorp",
+            "company_norm": {"categories": [{"title": industry}]},
+        }
+    ]
+
+
+def _sample_candidate_skills(vacancy_skills: list) -> list[dict]:
+    skills: list[dict] = []
+    for skill in (vacancy_skills or [])[:2]:
+        skills.append({"skill": skill, "quantile": 4.1})
+    skills.append({"skill": "Communication", "quantile": 2.0})
+    return skills
+
+
+def make_cdm(recruiter_name: str = "Варя", candidate_name: str = "Вадим") -> dict:
     sample = random.choice(SAMPLES).copy()
     template = sample.pop("first_message_template")
+    vacancy_skills = sample.get("vacancy_skills") or []
+    company_industry = sample.get("company_industry") or ""
     return {
         "vacancy": sample,
         "first_message_template": template,
         "candidate": {
             "recruiter_name": recruiter_name,
-            "candidate_contacts": [],
-            "candidate_job_list": [],
-            "candidate_skills": [],
+            "candidate_name": candidate_name,
+            "candidate_contacts": _sample_candidate_contacts(),
+            "candidate_job_list": _sample_candidate_job_list(company_industry),
+            "candidate_skills": _sample_candidate_skills(vacancy_skills),
         },
     }
 
