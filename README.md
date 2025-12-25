@@ -1,25 +1,40 @@
 # AI Agents Workspace
 
-Набор утилит и промптов для тестирования рекрутмент‑агентов. В репозитории есть полный пайплайн проверки нескольких модулей и отдельный скрипт для точечной проверки промпта `screening_assistant`.
+Набор утилит и промптов для тестирования рекрутмент-агентов. В репозитории есть полный пайплайн проверки нескольких модулей и отдельный скрипт для точечной проверки промпта `screening_assistant`.
 
 ## Структура
 - `app/runner.py` — основной тестовый пайплайн (генерация фикстур, интеграционный прогон всех модулей).
 - `app/screening_scenarios_runner.py` — проверка одного промпта `screening_assistant` на наборе поведенческих сценариев.
+- `app/screening_guardrails_runner.py` — guardrails-проверки ответов рекрутера (self_answer, repeated_questions, premature_end).
+- `app/message_classifier_runner.py` — тестирование `message_classifier` по классам.
+- `app/telegram_generator_runner.py` — тест первого касания `telegramMessageGenerator` по CDM.
 - `tests/tools/model.yaml` — конфигурация с `prompt_id`/`prompt_version` для всех промптов (message_classifier, screening_assistant, screening_autofill, verdict_classifier, candidate_simulator профили).
-- `tests/fixtures/cdm/` — CDM‑фикстуры с вакансиями (генерируются `gen-fixtures`).
+- `tests/fixtures/cdm/` — CDM-фикстуры с вакансиями (генерируются `gen-fixtures`).
 - `tests/fixtures/screening_scenarios.csv` — CSV со сценариями для точечной проверки `screening_assistant`.
 - `tests/reports/runs/` — отчёты основного пайплайна.
 - `tests/reports/screening_scenarios/` — отчёты по скрипту `screening_scenarios_runner.py`.
+- `tests/reports/screening_guardrails/` — отчёты `screening_guardrails_runner.py`.
+- `tests/reports/message_classifier/` — отчёты `message_classifier_runner.py`.
+- `tests/reports/telegram_generator/` — отчёты `telegram_generator_runner.py`.
 - `telegramMessageGenerator-main/` — опциональный генератор первого сообщения в Telegram (используется, если установлен и импортируется).
+
+## Раннеры
+- `app/runner.py` — основной тестовый пайплайн. Запуск: `python -m app.runner gen-fixtures`; `python -m app.runner unit --limit 5 --candidate-profiles difficult ideal`. Отчёты: `tests/reports/runs/`.
+- `app/screening_scenarios_runner.py` — проверка `screening_assistant` на сценариях. Запуск: `python -m app.screening_scenarios_runner --csv-path tests/fixtures/screening_scenarios.csv --messages-per-scenario 3 --max-scenarios 20`. Отчёты: `tests/reports/screening_scenarios/`.
+- `app/screening_guardrails_runner.py` — guardrails-проверка ответов рекрутера. Запуск: `python -m app.screening_guardrails_runner --conversations 20 --turns-per-conversation 4 --report-mode compact`. Отчёты: `tests/reports/screening_guardrails/`.
+- `app/message_classifier_runner.py` — тест message_classifier по классам. Запуск: `python -m app.message_classifier_runner --n-per-class 3 --seed 42`. Отчёты: `tests/reports/message_classifier/`.
+- `app/telegram_generator_runner.py` — тест первого касания `telegramMessageGenerator` по CDM. Запуск: `python -m app.telegram_generator_runner --limit 5 --require-question`. Отчёты: `tests/reports/telegram_generator/`. Нужен `OPENAI_API_KEY`; `FIRST_TOUCH_PROMPT_ID` берётся из env или `tests/tools/model.yaml:first_touch`.
 
 ## Подготовка окружения
 ```bash
-python -m venv .venv
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-# Linux / macOS / WSL
+# WSL (Ubuntu)
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.txt
 
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
@@ -28,20 +43,28 @@ python -m pip install -r requirements.txt
 OPENAI_API_KEY=sk-...
 ```
 
+Пример запуска в WSL:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+export OPENAI_API_KEY='sk-...'
+python -m app.telegram_generator_runner --limit 5 --require-question
+```
+
 Заполните `tests/tools/model.yaml`: задайте `prompt_id`/`prompt_version` для всех компонентов и профили в блоке `candidate_simulator` (ключи совпадают с именами профилей, которые передаются в `--candidate-profiles`).
 
 ## Основной тестовый пайплайн (`app/runner.py`)
 
 ### Что делает
-- Берёт CDM‑фикстуры из `tests/fixtures/cdm/` (каждая описывает вакансию и кандидата).
-- Для каждого профиля из `candidate_simulator` создаёт диалог: строит стартовое сообщение (через `telegramMessageGenerator`, шаблон из CDM или fallback), далее симулирует кандидата, прогоняет диалог через `screening_assistant`, классификатор сообщений, классификатор вердикта и `screening_autofill` для passed‑кейсов.
+- Берёт CDM-фикстуры из `tests/fixtures/cdm/` (каждая описывает вакансию и кандидата).
+- Для каждого профиля из `candidate_simulator` создаёт диалог: строит стартовое сообщение (через `telegramMessageGenerator`, шаблон из CDM или fallback), далее симулирует кандидата, прогоняет диалог через `screening_assistant`, классификатор сообщений, классификатор вердикта и `screening_autofill` для passed-кейсов.
 - Сохраняет помодульные метрики, usage по токенам и отчёты в `tests/reports/runs/<run_id>/`.
 
 ### Что нужно перед запуском
 - `tests/tools/model.yaml` должен содержать валидные prompt_id/prompt_version для всех компонентов и профилей.
-- В `tests/fixtures/cdm/` должны лежать CDM‑файлы (сгенерируйте через `gen-fixtures`, если пусто).
+- В `tests/fixtures/cdm/` должны лежать CDM-файлы (сгенерируйте через `gen-fixtures`, если пусто).
 - Переменная окружения `OPENAI_API_KEY` должна быть доступна процессу.
-- Если нужен генератор Telegram‑сообщений, убедитесь, что `telegramMessageGenerator-main` импортируется; иначе будет использован шаблон из CDM или встроенный fallback.
+- Если нужен генератор Telegram-сообщений, убедитесь, что `telegramMessageGenerator-main` импортируется; иначе будет использован шаблон из CDM или встроенный fallback.
 
 ### Запуск
 Генерация фикстур (10 CDM по умолчанию):
