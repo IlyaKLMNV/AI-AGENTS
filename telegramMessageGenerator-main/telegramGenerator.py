@@ -1,10 +1,13 @@
 import os
 import json
-import random
 from typing import List, Optional
 
-from langchain.prompts import FewShotChatMessagePromptTemplate, ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+import openai
+
+
+class AssistantError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
 class InputForm:
@@ -33,6 +36,8 @@ class InputForm:
             candidate_contacts = []
         if candidate_job_list is None:
             candidate_job_list = []
+        if vacancy_skills is None:
+            vacancy_skills = []
         self.recruiter_name = recruiter_name
 
         self.formality = 'formal' if formality else 'informal'
@@ -73,10 +78,10 @@ class InputForm:
 
         return reasons
 
-    def _get_salary(self, use_salary):
+    def _get_salary(self, use_salary: bool):
         if not use_salary:
             return ""
-            
+
         if self.salary_range_from and self.salary_range_to:
             return f"от {self.salary_range_from} до {self.salary_range_to} рублей"
         elif self.salary_range_from and not self.salary_range_to:
@@ -128,185 +133,48 @@ class InputForm:
 
 class TelegramMessageGenerator:
     def __init__(self, api_key):
-        with open('{0}/first_message_examples.json'.format(os.path.dirname(__file__)), 'r') as f:
-            self.examples = json.load(f)
+        openai.api_key = api_key or os.getenv('OPENAI_API_KEY')
 
-        self.chat_model = ChatOpenAI(model="gpt-4.1-nano", temperature=0.2, openai_api_key=api_key)
+        self.system_prompt = os.getenv('FIRST_TOUCH_PROMPT_ID')
+        if not self.system_prompt:
+            raise RuntimeError('Missing FIRST_TOUCH_PROMPT_ID')
 
     def generate_message(self, input_form: InputForm) -> str:
-        examples = self._get_random_examples(
-            input_form.formality,
-            input_form.salary,
-            input_form.candidate_name
-        )
-
-        few_shot_prompt = self._generate_few_shot_prompt(examples)
-
-        chain = few_shot_prompt | self.chat_model
-
-        candidate_source = ""
+        candidate_source = ''
         if len(input_form.candidate_contacts) > 0:
             candidate_source = input_form.candidate_contacts[0]
 
-        result = chain.invoke({
-            "input": {
-                "candidate_name": input_form.candidate_name,
-                "recruiter_name": input_form.recruiter_name,
-                "candidate_source": candidate_source,
-                "reason_of_communication": input_form.reasons,
-                "hiring_company_name": input_form.company_name,
-                "vacancy_name": input_form.vacancy_name,
-                "vacancy_responsibilities": input_form.vacancy_responsibilities,
-                "message_formality": input_form.formality,
-                "company_description": input_form.company_description,
-                "vacancy_stack": input_form.vacancy_stack,
-                "salary_range": input_form.salary,
-            }
-        })
+        payload = {
+            'candidate_name': input_form.candidate_name,
+            'recruiter_name': input_form.recruiter_name,
+            'candidate_source': candidate_source,
+            'reason_of_communication': input_form.reasons,
+            'hiring_company_name': input_form.company_name,
+            'vacancy_name': input_form.vacancy_name,
+            'vacancy_responsibilities': input_form.vacancy_responsibilities,
+            'message_formality': input_form.formality,
+            'company_description': input_form.company_description,
+            'vacancy_stack': input_form.vacancy_stack,
+            'salary_range': input_form.salary
+        }
 
-        output = self._ending_check(result.content, 'С уважением')
+        try:
+            response = openai.responses.create(
+                prompt={
+                    'id': self.system_prompt,
+                },
+                input=json.dumps(payload, ensure_ascii=False),
+                text={'format': {'type': 'text'}}
+            )
 
-        return output
+            if not response.output_text:
+                raise AssistantError('Ответ от ассистента пустой')
 
-    def _get_random_examples(self, formality: str, salary_range: str, candidate_name: str) -> list:
-        if formality != 'formal' and formality != 'informal':
-            raise RuntimeError('Unknown formality type')
+            output = self._ending_check(response.output_text, 'С уважением')
+            return output
 
-        if candidate_name is not None:
-            candidate_name = candidate_name.strip()
-
-        formal_examples = [
-            example for key, example in self.examples.items() if
-            example['form']['message_formality'] == formality and
-            bool(example['form']['salary_range']) == bool(salary_range) and
-            bool(example['form']['candidate_name']) == bool(candidate_name)
-        ]
-
-        result = []
-        result.extend(random.sample(formal_examples, 3))
-        return result
-
-    @staticmethod
-    def _generate_few_shot_prompt(examples: list):
-
-        example_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("human", "{form}"),
-                ("ai", "{message}"),
-            ]
-        )
-
-        few_shot_prompt = FewShotChatMessagePromptTemplate(
-            example_prompt=example_prompt,
-            examples=examples,
-        )
-
-        final_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """
-                    <role>
-                    Ты — опытный IT-рекрутер, женщина по имени {{recruiter_name}}. Твоя задача — написать короткое, персонализированное и профессиональное сообщение кандидату на русском языке от своего имени, по возможности используя безличные формулировки.
-                    </role>
-
-                    <goal>
-                    Заинтересовать кандидата {{candidate_name}} вакансией {{vacancy_name}} и мотивировать к диалогу.
-                    </goal>
-
-                    <guards>
-                    1) Имена и обращение:
-                      - Никогда не путай имена: не обращайся к кандидату именем рекрутера и наоборот.
-                      - Если {{candidate_name}} пуст — используй нейтральное приветствие без имени.
-                      - В одном сообщении имя кандидата пишется одинаково и не меняется.
-
-                    2) Язык/тон/формальность:
-                      - Всегда пиши по-русски.
-                      - Если `message_formality` == "formal" — обращайся только на «Вы».
-                      - Если `message_formality` == "informal" — можно «ты», НО:
-                          • если имя кандидата может относиться и к мужскому, и к женскому роду,  
-                          • или пол кандидата неочевиден,  
-                        — используй нейтральные формулировки и обращение на «Вы».
-                      - 2–6 коротких предложений, без восклицаний, эмодзи, сленга и пышных эпитетов.
-
-                    3) Род рекрутера:
-                      - Ты — женщина: при использовании 1-го лица — только женский род («нашла», «готова»).
-                      - Предпочитай безличные/пассивные конструкции, чтобы реже употреблять «я».
-
-                    4) Компания «СКРЫТО»:
-                      - Если `hiring_company_name` == "СКРЫТО":
-                          • Не используй слово «скрыто» и любые его синонимы в тексте сообщения.  
-                          • Не раскрывай название компании.  
-                          • Используй `company_description` (например: «продуктовая IT-компания»), если company_description пусто - используй нейтральное родовое описание без указания отрасли: «компания», «организация» или «команда»
-
-                    5) Фактура:
-                      - Не выдумывай факты (локации, офисы, условия), которых нет во входных данных.
-                      - Не добавляй подпись, контакты, ссылки — только тело сообщения.
-
-                    6) Компенсация:
-                      - Не упоминать зарплату, вилку или компенсацию в первом сообщении при любых условиях, даже если `salary_range` не пусто.
-                    </guards>
-
-                    <instructions>
-                    Ты должна сгенерировать только текст сообщения. Следуй этим шагам и правилам НЕУКОСНИТЕЛЬНО.
-            
-                    ### ШАГ 1: Определи название компании для сообщения
-                    - ЕСЛИ `company_name` == "СКРЫТО":
-                        - НИКОГДА не упоминай название компании.
-                        - Используй `company_description` для описания (например, "финтех-стартап").
-                        - ЕСЛИ `company_description` пусто, используй нейтральное родовое описание без указания отрасли: «компания», «организация» или «команда».
-                    - ИНАЧЕ:
-                        - Используй `company_name` как есть.
-            
-                    ### ШАГ 2: Составь сообщение по строгой структуре
-                    1.  **Приветствие:** Начни с "Здравствуйте, {{candidate_name}}!" или "Добрый день, {{candidate_name}}!".
-                    2.  **Представление:** "Меня зовут {{recruiter_name}}, я IT-рекрутер. Помогаю с подбором для [название компании из ШАГА 1]."
-                    3.  **Суть вакансии:**
-                        - Назови вакансию: "Сейчас в поиске {{vacancy_name}}."
-                        - **КРИТИЧЕСКИ ВАЖНО:** Перечисли ключевые задачи из `vacancy_responsibilities`.
-                        - *Если `vacancy_responsibilities` пусто, напиши:* "Основные задачи будут связаны с разработкой и поддержкой [название проекта или продукта, если есть] в рамках позиции {{vacancy_name}}."
-                    4.  **Персонализация:** Свяжи опыт кандидата с вакансией.
-                        - "Заметили ваш опыт с [упомяни 1-2 технологии из `vacancy_stack`]..."
-                        - "...или/и "Увидели ваш профиль на [{{candidate_source}}]."
-                    5.  **Призыв к действию (CTA):** Закончи вежливым вопросом. Например: "Было бы вам интересно обсудить детали?".
-            
-                    </instructions>
-            
-                    <rules>
-                    ### ПРАВИЛО 1: Язык и гендер (ОЧЕНЬ ВАЖНО)
-                    - **Твоя личность — женщина.** Всегда используй глаголы и формулировки, которые это подтверждают, ЕСЛИ используешь личные местоимения (что нежелательно).
-                    - **ЗАПРЕЩЕНО:** Использовать глаголы в мужском роде от первого лица ("я нашёл", "я увидел", "я заинтересовался").
-                    - **ПРЕДПОЧТИТЕЛЬНО:** Использовать безличные или пассивные конструкции, чтобы избежать местоимения "я".
-                        - **ПЛОХО:** "Я нашла ваш профиль..."
-                        - **ХОРОШО:** "Ваш профиль привлек внимание..."
-                        - **ХОРОШО:** "Нашла ваш профиль..." (без "я")
-            
-                    ### ПРАВИЛО 2: Стиль и тон
-                    - **Длина:** Строго до 400 слов.
-                    - **Формальность:** Соблюдай `message_formality`. Если "formal", используй "Вы". Если "informal", можно использовать "ты".
-                    - **Профессионализм:** Без восклицательных знаков, эмодзи, сленга, эпитетов ("уникальный проект", "команда мечты"). Только факты.
-            
-                    </rules>
-            
-                    <forbidden>
-                    ### ЗАПРЕЩЕНО КАТЕГОРИЧЕСКИ
-                    - **НЕ придумывай информацию**, которой нет во входных данных.
-                    - **НЕ раскрывай компанию**, если `company_name` == "СКРЫТО".
-                    - **НЕ игнорируй `vacancy_responsibilities`**. Это самая важная часть сообщения. Замена на общие фразы ("работа над продуктом") недопустима.
-                    - **НЕ добавляй в конце** свою подпись, имя, контакты или любые ссылки. Твоя генерация — это только текст сообщения.
-                    - **НЕ путай `{{candidate_name}}` и `{{recruiter_name}}`.** Обращайся только к `{{candidate_name}}`.
-                    - **НЕ упоминай зарплату, вилку или компенсацию в первом касании.**
-                    </forbidden>
-            
-                    Проанализируй few-shot примеры, чтобы понять правильный формат и тон. Теперь сгенерируй сообщение на основе `{{input}}`.
-                    """
-                ),
-                few_shot_prompt,
-                ("human", "{input}"),
-            ]
-        )
-
-        return final_prompt
+        except Exception as e:
+            raise AssistantError(f'Ошибка при получении ответа: {e}')
 
     @staticmethod
     def _ending_check(text: str, phrase: str) -> str:
