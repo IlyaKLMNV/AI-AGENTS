@@ -7,6 +7,20 @@ def _safe_list(value: List[Any] | None) -> List[Any]:
     return list(value or [])
 
 
+def _safe_str_list(value: Any | None) -> List[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
 def to_input_form(cdm: Dict[str, Any]) -> Dict[str, Any]:
     vacancy = cdm["vacancy"]
     candidate = cdm.get("candidate") or {}
@@ -20,7 +34,7 @@ def to_input_form(cdm: Dict[str, Any]) -> Dict[str, Any]:
         "vacancy_stack": vacancy.get("vacancy_stack") or "",
         "company_industry": vacancy.get("company_industry") or "",
         "vacancy_responsibilities": vacancy.get("responsibilities") or "",
-        "vacancy_skills": _safe_list(vacancy.get("vacancy_skills")),
+        "vacancy_skills": _safe_str_list(vacancy.get("vacancy_skills")),
         "salary_range_from": vacancy.get("salary_range_from"),
         "salary_range_to": vacancy.get("salary_range_to"),
         "use_salary": bool(vacancy.get("salary_range_from") or vacancy.get("salary_range_to")),
