@@ -15,7 +15,7 @@ screening_assistant:
 
 screening_autofill:
   prompt_id: pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902
-  prompt_version: 12
+  prompt_version: 16
   seed: 1234
 
 verdict_classifier:
