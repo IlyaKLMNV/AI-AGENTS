@@ -5,7 +5,7 @@ first_touch:
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
-  prompt_version: 5
+  prompt_version: 8
   seed: 1234
 
 screening_assistant:
