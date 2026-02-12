@@ -319,6 +319,12 @@ _WORKFORMAT_CONCRETE = re.compile(
     re.IGNORECASE,
 )
 
+# NEW: salary expectation detection
+_SALARY_RANGE_DASH = re.compile(r"\b(\d{2,3})\s*[-–—]\s*(\d{2,3})\b", re.UNICODE)  # e.g. 350-400 (usually thousands)
+_SALARY_RANGE_FULL = re.compile(r"\b(\d{5,7})\s*[-–—]\s*(\d{5,7})\b", re.UNICODE)  # e.g. 350000-400000
+_SALARY_FROM_TO = re.compile(r"\b(от|до|в районе|примерно|порядка|диапазон)\b", re.IGNORECASE)
+
+
 def _salary_topic(text: str) -> bool:
     t = text or ""
     if _SALARY_WORDS.search(t):
@@ -327,6 +333,45 @@ def _salary_topic(text: str) -> bool:
         return True
     if _THOUSAND_NUMBER_SUFFIX.search(t):
         return True
+    return False
+
+
+def _salary_expectation_provided(text: str) -> bool:
+    """
+    True only if candidate actually provided numeric expectations/range,
+    not just discussed salary as a topic.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+
+    # any explicit "N тыс/к/k" is an expectation (350к, 350 тыс)
+    if _THOUSAND_NUMBER_SUFFIX.search(t):
+        return True
+
+    # full money numbers with currency/context nearby
+    if re.search(r"\b\d{5,7}\b", t):
+        if _SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t) or _SALARY_FROM_TO.search(t):
+            return True
+        # sometimes candidate writes "350000" without 'руб' but with "от/до/диапазон"
+        if _SALARY_FROM_TO.search(t):
+            return True
+
+    # ranges like 350000-400000
+    if _SALARY_RANGE_FULL.search(t):
+        return True
+
+    # ranges like 350-400 with salary context (usually "к/тыс/руб/зарплата")
+    m = _SALARY_RANGE_DASH.search(t)
+    if m:
+        if _SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t) or _THOUSAND_NUMBER_SUFFIX.search(t) or _SALARY_FROM_TO.search(t):
+            return True
+
+    # "от 350" with context
+    if re.search(r"\bот\s+\d{2,7}\b", t, flags=re.IGNORECASE):
+        if _SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t) or _THOUSAND_NUMBER_SUFFIX.search(t):
+            return True
+
     return False
 
 
@@ -360,7 +405,8 @@ def _semantic_validate(dialogue: str, parsed: Any) -> List[str]:
 
     cand = _candidate_text(dialogue)
 
-    expects_salary = _salary_topic(cand)
+    # FIX: require salary only if expectation was actually provided
+    expects_salary = _salary_expectation_provided(cand)
     expects_location = _location_topic(cand)
     expects_workformat = bool(_WORKFORMAT_CONCRETE.search(cand))
 
@@ -483,6 +529,11 @@ class DialogueSynthesizer:
             "   - формат работы: удаленно/офис/гибрид\n"
             "5) Иногда кандидат может дать часть ответа сразу, а часть уточнить позже.\n"
             "6) Не используй Markdown. Не добавляй никаких служебных меток.\n"
+            "7) Иногда кандидат в ответ задает 1-3 уточняющих вопроса о роли/загрузке/подчинении/процессе.\n"
+            "   - Эти вопросы пишет Кандидат: в конце своей реплики.\n"
+            "   - Не задавай вопросы кандидата про зарплату/локацию/формат работы.\n"
+            "8) Если noise == high: кандидат ОБЯЗАТЕЛЬНО задает уточняющие вопросы хотя бы в одной своей реплике.\n"
+
         )
 
     def _payload(
@@ -507,6 +558,7 @@ class DialogueSynthesizer:
         gen_cases: List[Dict[str, Any]] = []
         for i in range(variants):
             nl = min(max(noise_level, 0), 2)
+            ask_prob = [0.10, 0.40, 1.00][nl]
             gen_cases.append(
                 {
                     "variant_index": i + 1,
@@ -518,6 +570,10 @@ class DialogueSynthesizer:
                     "include_link_or_nda": rnd.random() < (0.10 + 0.20 * nl),
                     "format_synonyms": True,
                     "salary_synonyms": True,
+                    "candidate_asks_questions": (rnd.random() < ask_prob),
+                    "candidate_questions_count": (1 if nl == 0 else (rnd.randint(1, 2) if nl == 1 else rnd.randint(1, 3))),
+                    "candidate_questions_topics": ["роль", "подчинение", "команда", "нагрузка", "процессы", "стек", "задачи"],
+
                 }
             )
 
@@ -735,7 +791,7 @@ def run_autofill_from_cdm(
         cdm = load_json(cdm_path)
         vacancy = cdm.get("vacancy") or {}
         v_title = vacancy.get("title")
-        v_company = vacancy.get("company_name")
+        v_company = vacancy.get("company_name") if "company_name" in vacancy else vacancy.get("company_name")
 
         _log(
             quiet,
@@ -847,12 +903,80 @@ def run_autofill_from_cdm(
     total = passed + failed
     pass_rate = round((passed / total * 100.0), 2) if total else 0.0
 
+    # ---- NEW report structure: cases / mismatches / errors (verdict-like) ----
+    cases: List[Dict[str, Any]] = []
+    mismatches: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    for r in results:
+        schema_errors = r.get("schema_errors") or []
+        semantic_errors = r.get("semantic_errors") or []
+        exc = r.get("error")
+        combined = _collect_errors(schema_errors, semantic_errors, exc)
+
+        match = len(combined) == 0
+
+        case = {
+            "match": match,
+            "cdm_file": r.get("cdm_file"),
+            "variant_index": r.get("variant_index"),
+            "vacancy_title": r.get("vacancy_title"),
+            "vacancy_company": r.get("vacancy_company"),
+            "dialogue": r.get("dialogue"),
+            "parsed_json": r.get("parsed_json"),
+            "schema_errors": schema_errors,
+            "semantic_errors": semantic_errors,
+            "error": exc,
+        }
+        cases.append(case)
+
+        if not match:
+            mismatches.append(
+                {
+                    "cdm_file": case["cdm_file"],
+                    "variant_index": case["variant_index"],
+                    "vacancy_title": case["vacancy_title"],
+                    "vacancy_company": case["vacancy_company"],
+                    "errors": combined,
+                    "dialogue": case["dialogue"],
+                    "parsed_json": case["parsed_json"],
+                }
+            )
+
+        # "errors" bucket: exceptions or synthesis failures (procedural errors)
+        if exc is not None:
+            errors.append(
+                {
+                    "cdm_file": case["cdm_file"],
+                    "variant_index": case["variant_index"],
+                    "vacancy_title": case["vacancy_title"],
+                    "vacancy_company": case["vacancy_company"],
+                    "error": exc,
+                }
+            )
+        elif "dialogue_synthesis_failed" in schema_errors or "dialogue_synthesis_failed" in semantic_errors:
+            errors.append(
+                {
+                    "cdm_file": case["cdm_file"],
+                    "variant_index": case["variant_index"],
+                    "vacancy_title": case["vacancy_title"],
+                    "vacancy_company": case["vacancy_company"],
+                    "error": "dialogue_synthesis_failed",
+                }
+            )
+
     summary = {
+        # legacy-compatible
         "results_total": len(results),
         "passed": passed,
         "failed": failed,
         "pass_rate": pass_rate,
         "errors_by_dialogue": errors_by_dialogue,
+        # verdict-like
+        "total_cases": len(cases),
+        "mismatches_count": len(mismatches),
+        "errors_count": len(errors),
+        "error_counts": dict(all_error_counts),
     }
 
     report: Dict[str, Any] = {
@@ -869,6 +993,13 @@ def run_autofill_from_cdm(
         "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES,
         "token_usage_total": token_usage_total,
         "summary": summary,
+
+        # NEW: verdict-like top-level lists
+        "cases": cases,
+        "mismatches": mismatches,
+        "errors": errors,
+
+        # OLD: keep for backward compatibility
         "results": results,
     }
 
@@ -882,6 +1013,8 @@ def run_autofill_from_cdm(
         f"passed={passed} "
         f"failed={failed} "
         f"pass_rate={pass_rate:.2f} "
+        f"mismatches={len(mismatches)} "
+        f"errors={len(errors)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
     )
     _log(quiet, "[done] report saved: " + str(out_path))
