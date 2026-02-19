@@ -80,20 +80,24 @@ python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
 ### `app/screening_scenarios_runner.py` — сценарии для `screening_assistant`
 Как работает:
 - Читает CSV со сценариями, группирует одиночные и цепочные сценарии.
+- Загружает вакансии из `tests/fixtures/cdm/*.json` и передает в prompt контекст вакансии (имя рекрутера/кандидата, роль, компания, обязанности, формат, описание, ссылка, salary, вопросы).
 - CSV ожидает колонки: `Название сценария`, `Краткое описание сценария`, поле с ожидаемым поведением и поле с примерами диалогов.
 - Генерирует реплики кандидата и получает ответы `screening_assistant`.
+- Для сценариев `23/24` (скрытый поиск) принудительно подставляет `Компания: СКРЫТО` в передаваемый контекст.
 - Оценивает соответствие ожидаемому поведению через LLM-судью.
 
 Запуск:
 ```bash
 python -m app.screening_scenarios_runner \
   --csv-path tests/fixtures/screening_scenarios.csv \
+  --cdm-dir tests/fixtures/cdm \
   --messages-per-scenario 3 \
   --max-scenarios 20
 ```
 
 Параметры:
 - `--csv-path` — путь к CSV со сценариями.
+- `--cdm-dir` — директория с CDM-фикстурами вакансий.
 - `--messages-per-scenario` — SINGLE: сообщений на сценарий; CHAIN: прогонов диалога на цепочку.
 - `--max-scenarios` — лимит сценариев для быстрого прогона.
 

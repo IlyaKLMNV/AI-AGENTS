@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from openai import OpenAI
+from adapters.adapters import names_from_cdm, to_vacancy_info
 
 # -----------------------
 # Константы и пути
@@ -23,6 +24,7 @@ CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 REPORTS_DIR = ROOT / "tests" / "reports" / "screening_scenarios"
 
 DEFAULT_CSV_PATH = ROOT / "tests" / "fixtures" / "screening_scenarios.csv"
+DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
 DEFAULT_MESSAGES_PER_SCENARIO = 3
 
 GEN_MODEL = "gpt-4.1-mini"
@@ -328,6 +330,13 @@ class ScenarioGroup:
     scenarios: List[Scenario]
 
 
+@dataclass
+class CdmFixture:
+    file_name: str
+    vacancy_info: Dict[str, Any]
+    names: Dict[str, str]
+
+
 def build_scenario_groups(scenarios: List[Scenario]) -> List[ScenarioGroup]:
     chain_map: Dict[str, List[Scenario]] = {}
     singles: List[Scenario] = []
@@ -366,6 +375,120 @@ def build_scenario_groups(scenarios: List[Scenario]) -> List[ScenarioGroup]:
 # -----------------------
 
 # Ключевые слова для базовой валидации попадания в триггер
+def load_cdm_fixtures(cdm_dir: pathlib.Path) -> List[CdmFixture]:
+    files = sorted(cdm_dir.glob("*.json"))
+    if not files:
+        raise FileNotFoundError(f"No CDM fixtures found in: {cdm_dir}")
+
+    fixtures: List[CdmFixture] = []
+    for path in files:
+        try:
+            cdm = json.loads(path.read_text(encoding="utf-8"))
+            vacancy_info = to_vacancy_info(cdm)
+            names = names_from_cdm(cdm)
+
+            vacancy = cdm.get("vacancy") or {}
+            raw_url = str(vacancy.get("vacancy_url") or "").strip()
+            if raw_url:
+                company_info = dict(vacancy_info.get("company_info") or {})
+                company_info["vacancy_url"] = raw_url
+                vacancy_info["company_info"] = company_info
+
+            fixtures.append(
+                CdmFixture(
+                    file_name=path.name,
+                    vacancy_info=vacancy_info,
+                    names=names,
+                )
+            )
+        except Exception as exc:
+            print(f"[warn] Failed to load CDM fixture {path.name}: {type(exc).__name__}: {exc}")
+
+    if not fixtures:
+        raise ValueError(f"No valid CDM fixtures loaded from: {cdm_dir}")
+
+    return fixtures
+
+
+def _salary_range_text(vacancy_info: Dict[str, Any]) -> str:
+    min_salary = str(vacancy_info.get("min_salary") or "").strip()
+    max_salary = str(vacancy_info.get("max_salary") or "").strip()
+
+    if min_salary and max_salary:
+        return f"от {min_salary} до {max_salary} рублей"
+    if min_salary:
+        return f"от {min_salary} рублей"
+    if max_salary:
+        return f"до {max_salary} рублей"
+    return ""
+
+
+def _is_hidden_company_scenario(s: Scenario) -> bool:
+    name = s.name.lower()
+    return s.index in (23, 24) or ("при скрытом поиске" in name and "компан" in name)
+
+
+def _group_requires_hidden_company(group: ScenarioGroup) -> bool:
+    return any(_is_hidden_company_scenario(s) for s in group.scenarios)
+
+
+def build_dialog_context(
+    fixture: CdmFixture,
+    hide_company: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    vacancy_info = fixture.vacancy_info
+    names = fixture.names
+
+    recruiter_name = str(names.get("recruiter_name") or "Рекрутер").strip()
+    candidate_name = str(names.get("candidate_name") or "Кандидат").strip()
+    title = str(vacancy_info.get("title") or "").strip()
+    original_company_name = str(vacancy_info.get("company_name") or "").strip()
+    company_name = "СКРЫТО" if hide_company else original_company_name
+    responsibilities = str(vacancy_info.get("responsibilities") or "").strip()
+    work_format = str(vacancy_info.get("work_format") or "").strip()
+    company_info = vacancy_info.get("company_info") or {}
+    firm_description = str(company_info.get("firm_description") or "").strip()
+    vacancy_url = str(company_info.get("vacancy_url") or "").strip()
+    salary = _salary_range_text(vacancy_info)
+    questions = str(vacancy_info.get("questions") or "").strip() or "-"
+
+    lines = [
+        "### Контекст для диалога (будет предоставлен перед началом)",
+        f"Ваше имя: {recruiter_name}",
+        f"Имя кандидата: {candidate_name}",
+        f"Должность: {title}",
+        f"Компания: {company_name}",
+        f"Обязанности: {responsibilities}",
+        f"Формат работы: {work_format}",
+        f"Описание компании: {firm_description}",
+        f"Ссылка: {vacancy_url}",
+        f"Зарплатная вилка: {salary} (НЕ РАСКРЫВАТЬ!)",
+        "Приоритетные вопросы:",
+        "1. Зарплатные ожидания",
+        "2. Локация/город",
+        "Дополнительные вопросы:",
+        questions,
+    ]
+    context_text = "\n".join(lines).strip()
+
+    context_meta = {
+        "cdm_file": fixture.file_name,
+        "company_hidden": hide_company,
+        "recruiter_name": recruiter_name,
+        "candidate_name": candidate_name,
+        "title": title,
+        "company_name": company_name,
+        "original_company_name": original_company_name,
+        "responsibilities": responsibilities,
+        "work_format": work_format,
+        "firm_description": firm_description,
+        "vacancy_url": vacancy_url,
+        "salary": salary,
+        "questions": questions,
+    }
+    return context_text, context_meta
+
+
 KW_POL_NATION = [
     "полит", "власть", "президент", "санкц", "войн", "пропаганд", "государств",
     "росси", "украин", "европ", "нато", "путин", "зеленск", "кремл",
@@ -777,7 +900,12 @@ def generate_candidate_messages_for_scenario(
 
 
 class SimpleScreeningAssistant:
-    def __init__(self, prompt_id: str, prompt_version: str | int | None) -> None:
+    def __init__(
+        self,
+        prompt_id: str,
+        prompt_version: str | int | None,
+        dialog_context: str,
+    ) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY is not set")
@@ -785,9 +913,11 @@ class SimpleScreeningAssistant:
         self.prompt: Dict[str, Any] = {"id": prompt_id}
         if prompt_version is not None:
             self.prompt["version"] = str(prompt_version)
+        self.dialog_context = (dialog_context or "").strip()
         self.last_usage: Any = None
 
     def _scenario_context_block(self, scenario: Scenario) -> str:
+        return self.dialog_context
         name = scenario.name.lower()
 
         if "при скрытом поиске" in name:
@@ -809,8 +939,8 @@ class SimpleScreeningAssistant:
 
         return ""
 
-    def reply_one_turn(self, scenario: Scenario, candidate_message: str) -> str:
-        scenario_block = self._scenario_context_block(scenario)
+    def reply_one_turn(self, candidate_message: str) -> str:
+        scenario_block = self.dialog_context
 
         payload_lines = [
             "Контекст: ты выступаешь как IT-рекрутер в первичном скрининге кандидата.",
@@ -849,7 +979,12 @@ class SimpleScreeningAssistant:
 
 
 class ConversationScreeningAssistant:
-    def __init__(self, prompt_id: str, prompt_version: str | int | None) -> None:
+    def __init__(
+        self,
+        prompt_id: str,
+        prompt_version: str | int | None,
+        dialog_context: str,
+    ) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY is not set")
@@ -857,9 +992,11 @@ class ConversationScreeningAssistant:
         self.prompt: Dict[str, Any] = {"id": prompt_id}
         if prompt_version is not None:
             self.prompt["version"] = str(prompt_version)
+        self.dialog_context = (dialog_context or "").strip()
         self.last_usage: Any = None
 
     def _scenario_context_block(self, scenarios: List[Scenario]) -> str:
+        return self.dialog_context
         names = " ".join([s.name.lower() for s in scenarios])
 
         if "при скрытом поиске" in names:
@@ -880,8 +1017,8 @@ class ConversationScreeningAssistant:
 
         return ""
 
-    def create_conversation(self, scenarios: List[Scenario]) -> str:
-        ctx = self._scenario_context_block(scenarios)
+    def create_conversation(self) -> str:
+        ctx = self.dialog_context
 
         initial = "\n".join(
             [
@@ -909,22 +1046,36 @@ class ConversationScreeningAssistant:
         return (getattr(response, "output_text", "") or "").strip()
 
 
-def create_simple_assistant(cfg: Dict[str, Any]) -> SimpleScreeningAssistant:
+def create_simple_assistant(
+    cfg: Dict[str, Any],
+    dialog_context: str,
+) -> SimpleScreeningAssistant:
     sa_cfg = _component_cfg(cfg, "screening_assistant")
     prompt_id = sa_cfg.get("prompt_id")
     prompt_version = sa_cfg.get("prompt_version")
     if not prompt_id:
         raise ValueError("screening_assistant.prompt_id is not set in model.yaml")
-    return SimpleScreeningAssistant(prompt_id=prompt_id, prompt_version=prompt_version)
+    return SimpleScreeningAssistant(
+        prompt_id=prompt_id,
+        prompt_version=prompt_version,
+        dialog_context=dialog_context,
+    )
 
 
-def create_conversation_assistant(cfg: Dict[str, Any]) -> ConversationScreeningAssistant:
+def create_conversation_assistant(
+    cfg: Dict[str, Any],
+    dialog_context: str,
+) -> ConversationScreeningAssistant:
     sa_cfg = _component_cfg(cfg, "screening_assistant")
     prompt_id = sa_cfg.get("prompt_id")
     prompt_version = sa_cfg.get("prompt_version")
     if not prompt_id:
         raise ValueError("screening_assistant.prompt_id is not set in model.yaml")
-    return ConversationScreeningAssistant(prompt_id=prompt_id, prompt_version=prompt_version)
+    return ConversationScreeningAssistant(
+        prompt_id=prompt_id,
+        prompt_version=prompt_version,
+        dialog_context=dialog_context,
+    )
 
 
 # -----------------------
@@ -1004,8 +1155,10 @@ def run_single_scenario(
     scenario: Scenario,
     messages_per_scenario: int,
     usage: Dict[str, Dict[str, int]],
+    dialog_context: str,
+    dialog_context_meta: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
-    assistant = create_simple_assistant(cfg)
+    assistant = create_simple_assistant(cfg, dialog_context=dialog_context)
 
     candidate_messages = generate_candidate_messages_for_scenario(
         client=client,
@@ -1020,7 +1173,7 @@ def run_single_scenario(
     turns_total = 0
 
     for step_idx, cand_msg in enumerate(candidate_messages, start=1):
-        reply = assistant.reply_one_turn(scenario, cand_msg)
+        reply = assistant.reply_one_turn(cand_msg)
         _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
 
         score, comment = evaluate_turn(
@@ -1063,6 +1216,7 @@ def run_single_scenario(
         "group_id": f"single_{scenario.index}",
         "kind": "single",
         "scenarios": [{"scenario_index": scenario.index, "scenario_name": scenario.name}],
+        "dialog_context": dialog_context_meta,
         "turns_total": turns_total,
         "score_total": scenario_score,
         "passed": scenario_score == turns_total,
@@ -1077,8 +1231,10 @@ def run_chain_group(
     group: ScenarioGroup,
     messages_per_scenario: int,
     usage: Dict[str, Dict[str, int]],
+    dialog_context: str,
+    dialog_context_meta: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
-    assistant = create_conversation_assistant(cfg)
+    assistant = create_conversation_assistant(cfg, dialog_context=dialog_context)
     scenarios = group.scenarios
 
     # генерим варианты: для каждого сценария - messages_per_scenario разных сообщений
@@ -1099,7 +1255,7 @@ def run_chain_group(
 
     # messages_per_scenario здесь - количество прогонов диалога
     for run_idx in range(1, messages_per_scenario + 1):
-        conv_id = assistant.create_conversation(scenarios)
+        conv_id = assistant.create_conversation()
         dialog_history: List[Dict[str, str]] = []
         turns: List[Dict[str, Any]] = []
 
@@ -1168,6 +1324,7 @@ def run_chain_group(
         "group_id": group.group_id,
         "kind": "chain",
         "scenarios": [{"scenario_index": s.index, "scenario_name": s.name} for s in scenarios],
+        "dialog_context": dialog_context_meta,
         "turns_total": total_turns,
         "score_total": total_score,
         "score_rate": (total_score / total_turns) if total_turns else 0.0,
@@ -1185,6 +1342,7 @@ def run_scenarios(
     csv_path: pathlib.Path,
     messages_per_scenario: int,
     max_scenarios: int | None = None,
+    cdm_dir: pathlib.Path = DEFAULT_CDM_DIR,
 ) -> pathlib.Path:
     ensure_dirs()
 
@@ -1195,6 +1353,9 @@ def run_scenarios(
 
     if not scenarios:
         raise ValueError("No scenarios loaded from CSV - nothing to run.")
+
+    cdm_fixtures = load_cdm_fixtures(cdm_dir)
+    print(f"[init] CDM fixtures loaded: {len(cdm_fixtures)} from {cdm_dir}")
 
     if not CFG_PATH.is_file():
         raise FileNotFoundError(f"Config not found: {CFG_PATH}")
@@ -1235,6 +1396,16 @@ def run_scenarios(
 
     for gidx, group in enumerate(groups, start=1):
         print(f"\n[group {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
+        fixture = cdm_fixtures[(gidx - 1) % len(cdm_fixtures)]
+        hide_company = _group_requires_hidden_company(group)
+        dialog_context, dialog_context_meta = build_dialog_context(
+            fixture=fixture,
+            hide_company=hide_company,
+        )
+        print(
+            f"  - cdm={fixture.file_name} | "
+            f"company_hidden={'YES' if hide_company else 'NO'}"
+        )
 
         if group.kind == "single":
             scenario = group.scenarios[0]
@@ -1244,6 +1415,8 @@ def run_scenarios(
                 scenario=scenario,
                 messages_per_scenario=messages_per_scenario,
                 usage=usage,
+                dialog_context=dialog_context,
+                dialog_context_meta=dialog_context_meta,
             )
         else:
             payload, failed, g_score, g_turns = run_chain_group(
@@ -1252,6 +1425,8 @@ def run_scenarios(
                 group=group,
                 messages_per_scenario=messages_per_scenario,
                 usage=usage,
+                dialog_context=dialog_context,
+                dialog_context_meta=dialog_context_meta,
             )
 
         groups_payload.append(payload)
@@ -1287,6 +1462,12 @@ def run_scenarios(
             "enabled": True,
             "chain_by_index": CHAIN_BY_INDEX,
             "repeat_markers": REPEAT_MARKERS,
+        },
+        "cdm_context": {
+            "cdm_dir": str(cdm_dir),
+            "fixtures_total": len(cdm_fixtures),
+            "selection_mode": "round_robin_by_group",
+            "force_hidden_company_for_scenarios": [23, 24],
         },
     }
 
@@ -1332,6 +1513,12 @@ def main() -> None:
         default=None,
         help="Limit number of scenarios read from CSV (debug). Default: all.",
     )
+    parser.add_argument(
+        "--cdm-dir",
+        type=str,
+        default=str(DEFAULT_CDM_DIR),
+        help=f"Path to CDM fixtures directory (default: {DEFAULT_CDM_DIR})",
+    )
 
     args = parser.parse_args()
 
@@ -1340,6 +1527,7 @@ def main() -> None:
         csv_path=csv_path,
         messages_per_scenario=args.messages_per_scenario,
         max_scenarios=args.max_scenarios,
+        cdm_dir=pathlib.Path(args.cdm_dir),
     )
     print("Screening scenarios report ->", report_path)
 
