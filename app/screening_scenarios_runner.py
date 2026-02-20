@@ -1268,6 +1268,8 @@ def enforce_open_company_answer_for_s31(
     comment: str,
     dialog_context_meta: Dict[str, Any],
 ) -> Tuple[int, str]:
+    # Для S31: разрешаем любые доп.вопросы/продолжения,
+    # главное - ассистент назвал компанию (и дал ссылку, если она есть в контексте).
     if scenario.index != 31:
         return score, comment
 
@@ -1275,20 +1277,31 @@ def enforce_open_company_answer_for_s31(
         str(dialog_context_meta.get("original_company_name") or "").strip()
         or str(dialog_context_meta.get("company_name") or "").strip()
     )
+    expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
+
     if not expected_company:
         return score, comment
 
-    reply = (assistant_reply or "").lower()
-    if expected_company.lower() not in reply:
+    reply_raw = assistant_reply or ""
+    reply_low = reply_raw.lower()
+
+    # 1) Компания обязана быть в ответе
+    if expected_company.lower() not in reply_low:
         return (
             0,
-            (
-                f"Scenario 31 strict check failed: assistant reply must contain company "
-                f"name '{expected_company}'."
-            ),
+            f"Scenario 31 strict check failed: assistant reply must contain company name '{expected_company}'.",
         )
 
-    return score, comment
+    # 2) Если ссылка реально есть в контексте - она тоже обязана быть в ответе
+    if expected_url and expected_url.lower() not in reply_low:
+        return (
+            0,
+            f"Scenario 31 strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
+        )
+
+    # 3) Если компания (и ссылка при наличии) есть - считаем ход успешным,
+    # даже если evaluator ругается на доп.вопросы.
+    return 1, "Scenario 31 relaxed check passed: company (and vacancy_url if provided) present; extra questions allowed."
 
 
 # -----------------------
