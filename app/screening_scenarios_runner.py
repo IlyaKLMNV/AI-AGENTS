@@ -469,8 +469,7 @@ def _salary_range_text(vacancy_info: Dict[str, Any]) -> str:
 
 
 def _is_hidden_company_scenario(s: Scenario) -> bool:
-    name = s.name.lower()
-    return s.index in (23, 24) or ("при скрытом поиске" in name and "компан" in name)
+    return s.index in (23, 24)
 
 
 def _group_requires_hidden_company(group: ScenarioGroup) -> bool:
@@ -493,7 +492,7 @@ def build_dialog_context(
     work_format = str(vacancy_info.get("work_format") or "").strip()
     company_info = vacancy_info.get("company_info") or {}
     firm_description = str(company_info.get("firm_description") or "").strip()
-    vacancy_url = str(company_info.get("vacancy_url") or "").strip()
+    vacancy_url = "" if hide_company else str(company_info.get("vacancy_url") or "").strip()
     salary = _salary_range_text(vacancy_info)
     questions = str(vacancy_info.get("questions") or "").strip() or "-"
 
@@ -532,6 +531,70 @@ def build_dialog_context(
         "questions": questions,
     }
     return context_text, context_meta
+
+
+def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
+    company = str(dialog_context_meta.get("company_name") or "").strip()
+    if not company:
+        company = str(dialog_context_meta.get("original_company_name") or "").strip()
+
+    return {
+        "title": str(dialog_context_meta.get("title") or "").strip(),
+        "company": company,
+        "vacancy_url": str(dialog_context_meta.get("vacancy_url") or "").strip(),
+    }
+
+
+def _short_reason(comment: str, limit: int = 140) -> str:
+    normalized = re.sub(r"\s+", " ", str(comment or "")).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit]
+
+
+def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
+    failures: List[Dict[str, Any]] = []
+    case_type = case.get("type")
+
+    if case_type == "single":
+        scenario_index = int(case.get("scenario_index") or 0)
+        for turn in case.get("turns") or []:
+            if int(turn.get("score", 0)) == 0:
+                failures.append(
+                    {
+                        "run_index": None,
+                        "step": int(turn.get("step") or 0),
+                        "scenario_index": scenario_index,
+                        "reason": _short_reason(str(turn.get("comment") or "")),
+                    }
+                )
+        return failures
+
+    if case_type == "chain":
+        for run in case.get("runs") or []:
+            run_index = int(run.get("run_index") or 0)
+            for turn in run.get("turns") or []:
+                if int(turn.get("score", 0)) == 0:
+                    failures.append(
+                        {
+                            "run_index": run_index,
+                            "step": int(turn.get("step") or 0),
+                            "scenario_index": int(turn.get("scenario_index") or 0),
+                            "reason": _short_reason(str(turn.get("comment") or "")),
+                        }
+                    )
+        return failures
+
+    return failures
+
+
+def _token_usage_total(usage: Dict[str, Dict[str, int]]) -> Dict[str, int]:
+    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    for bucket in usage.values():
+        total["input_tokens"] += int(bucket.get("input_tokens", 0))
+        total["output_tokens"] += int(bucket.get("output_tokens", 0))
+        total["total_tokens"] += int(bucket.get("total_tokens", 0))
+    return total
 
 
 KW_POL_NATION = [
@@ -596,6 +659,14 @@ def _trigger_requirement_text(s: Scenario) -> str:
         return (
             "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
             "Если это повтор/третий раз - явно укажи, что кандидат уже спрашивал и ответа не получил.\n"
+        )
+
+    # 31 - компания при открытом поиске
+    if idx == 31:
+        return (
+            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания/как называется компания,"
+            " можно ли дать сайт/ссылку на вакансию.\n"
+            "Это открытый поиск: кандидат ожидает раскрытия названия компании.\n"
         )
 
     # 23/24 - скрытая компания (проверяем раньше BOT, чтобы не было сюрпризов по приоритетам)
@@ -710,6 +781,15 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "«я уже спрашивал, какая компания», «еще раз: назовите компанию или дайте ссылку»."
         )
 
+    # 31. Компания открытый поиск
+    if idx == 31:
+        parts.append(
+            "- Кандидат прямо спрашивает название компании: «какая компания?», «как называется компания?»."
+        )
+        parts.append(
+            "- Можно просить сайт или ссылку на вакансию."
+        )
+
     # 25. Нет опыта
     if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         parts.append(
@@ -747,6 +827,10 @@ def _validate_trigger(s: Scenario, msg: str) -> bool:
 
     # скрытая компания (до bot)
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        return any(k in m for k in KW_COMPANY)
+
+    # 31 - открытый поиск по компании
+    if idx == 31:
         return any(k in m for k in KW_COMPANY)
 
     # бот (KW_BOT через safe matcher)
@@ -810,6 +894,15 @@ def _fallback_messages(s: Scenario, n: int) -> List[str]:
                 "Еще раз: скажите название компании или дайте ссылку, без этого не двигаюсь дальше.",
             ]
             return pool[:n]
+
+    if idx == 31:
+        pool = [
+            "Подскажите, как называется компания?",
+            "Какая компания и где можно посмотреть сайт?",
+            "Можете дать ссылку на вакансию?",
+            "Как называется компания, чтобы я посмотрел информацию?",
+        ]
+        return pool[:n]
 
     if idx in (26, 27) or _has_any(name, TOPIC_BOT):
         if idx == 26:
@@ -1168,6 +1261,36 @@ def evaluate_turn(
     return score, comment
 
 
+def enforce_open_company_answer_for_s31(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index != 31:
+        return score, comment
+
+    expected_company = (
+        str(dialog_context_meta.get("original_company_name") or "").strip()
+        or str(dialog_context_meta.get("company_name") or "").strip()
+    )
+    if not expected_company:
+        return score, comment
+
+    reply = (assistant_reply or "").lower()
+    if expected_company.lower() not in reply:
+        return (
+            0,
+            (
+                f"Scenario 31 strict check failed: assistant reply must contain company "
+                f"name '{expected_company}'."
+            ),
+        )
+
+    return score, comment
+
+
 # -----------------------
 # Запуск single и chain
 # -----------------------
@@ -1181,7 +1304,7 @@ def run_single_scenario(
     usage: Dict[str, Dict[str, int]],
     dialog_context: str,
     dialog_context_meta: Dict[str, Any],
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
+) -> Dict[str, Any]:
     assistant = create_simple_assistant(cfg, dialog_context=dialog_context)
 
     candidate_messages = generate_candidate_messages_for_scenario(
@@ -1192,7 +1315,6 @@ def run_single_scenario(
     )
 
     turns: List[Dict[str, Any]] = []
-    failed: List[Dict[str, Any]] = []
     scenario_score = 0
     turns_total = 0
 
@@ -1209,11 +1331,16 @@ def run_single_scenario(
             usage_bucket=usage["evaluator"],
             dialog_history=None,
         )
+        score, comment = enforce_open_company_answer_for_s31(
+            scenario=scenario,
+            assistant_reply=reply,
+            score=score,
+            comment=comment,
+            dialog_context_meta=dialog_context_meta,
+        )
 
         turn = {
             "step": step_idx,
-            "scenario_index": scenario.index,
-            "scenario_name": scenario.name,
             "candidate_message": cand_msg,
             "assistant_reply": reply,
             "score": score,
@@ -1224,29 +1351,20 @@ def run_single_scenario(
         scenario_score += score
         turns_total += 1
 
-        if score == 0:
-            failed.append(
-                {
-                    "scenario_index": scenario.index,
-                    "scenario_name": scenario.name,
-                    "step": step_idx,
-                    "candidate_message": cand_msg,
-                    "assistant_reply": reply,
-                    "comment": comment,
-                }
-            )
-
-    payload = {
-        "group_id": f"single_{scenario.index}",
-        "kind": "single",
-        "scenarios": [{"scenario_index": scenario.index, "scenario_name": scenario.name}],
-        "dialog_context": dialog_context_meta,
+    case = {
+        "case_id": f"S{scenario.index}",
+        "type": "single",
+        "scenario_index": scenario.index,
+        "scenario_name": scenario.name,
+        "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
+        "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
+        "vacancy_ref": build_vacancy_ref(dialog_context_meta),
         "turns_total": turns_total,
         "score_total": scenario_score,
         "passed": scenario_score == turns_total,
         "turns": turns,
     }
-    return payload, failed, scenario_score, turns_total
+    return case
 
 
 def run_chain_group(
@@ -1257,7 +1375,7 @@ def run_chain_group(
     usage: Dict[str, Dict[str, int]],
     dialog_context: str,
     dialog_context_meta: Dict[str, Any],
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
+) -> Dict[str, Any]:
     assistant = create_conversation_assistant(cfg, dialog_context=dialog_context)
     scenarios = group.scenarios
 
@@ -1273,7 +1391,6 @@ def run_chain_group(
         candidate_variants[s.index] = msgs
 
     runs: List[Dict[str, Any]] = []
-    failed: List[Dict[str, Any]] = []
     total_score = 0
     total_turns = 0
 
@@ -1300,6 +1417,13 @@ def run_chain_group(
                 usage_bucket=usage["evaluator"],
                 dialog_history=dialog_history,
             )
+            score, comment = enforce_open_company_answer_for_s31(
+                scenario=s,
+                assistant_reply=reply,
+                score=score,
+                comment=comment,
+                dialog_context_meta=dialog_context_meta,
+            )
 
             turn = {
                 "step": step_idx,
@@ -1314,20 +1438,6 @@ def run_chain_group(
 
             run_score += score
             run_turns += 1
-
-            if score == 0:
-                failed.append(
-                    {
-                        "chain_group_id": group.group_id,
-                        "run_index": run_idx,
-                        "step": step_idx,
-                        "scenario_index": s.index,
-                        "scenario_name": s.name,
-                        "candidate_message": cand_msg,
-                        "assistant_reply": reply,
-                        "comment": comment,
-                    }
-                )
 
             dialog_history.append({"candidate": cand_msg, "assistant": reply})
 
@@ -1344,17 +1454,22 @@ def run_chain_group(
         total_score += run_score
         total_turns += run_turns
 
-    payload = {
-        "group_id": group.group_id,
-        "kind": "chain",
-        "scenarios": [{"scenario_index": s.index, "scenario_name": s.name} for s in scenarios],
-        "dialog_context": dialog_context_meta,
+    case = {
+        "case_id": f"C_{group.group_id}",
+        "type": "chain",
+        "scenario_indices": [s.index for s in scenarios],
+        "scenario_names": [s.name for s in scenarios],
+        "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
+        "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
+        "vacancy_ref": build_vacancy_ref(dialog_context_meta),
+        "runs_total": len(runs),
         "turns_total": total_turns,
         "score_total": total_score,
         "score_rate": (total_score / total_turns) if total_turns else 0.0,
+        "passed": all(bool(run.get("passed")) for run in runs),
         "runs": runs,
     }
-    return payload, failed, total_score, total_turns
+    return case
 
 
 # -----------------------
@@ -1432,19 +1547,15 @@ def run_scenarios(
         "evaluator": _blank_usage(),
     }
 
-    groups_payload: List[Dict[str, Any]] = []
-    failed_messages: List[Dict[str, Any]] = []
-
-    total_score = 0
-    total_turns = 0
+    cases: List[Dict[str, Any]] = []
 
     print(
         f"[run] Starting screening_scenarios run_id={run_id} | "
-        f"groups={len(groups)} | messages_per_scenario={messages_per_scenario}"
+        f"cases={len(groups)} | messages_per_scenario={messages_per_scenario}"
     )
 
     for gidx, group in enumerate(groups, start=1):
-        print(f"\n[group {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
+        print(f"\n[case {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
         fixture = cdm_fixtures[(gidx - 1) % len(cdm_fixtures)]
         hide_company = _group_requires_hidden_company(group)
         dialog_context, dialog_context_meta = build_dialog_context(
@@ -1458,7 +1569,7 @@ def run_scenarios(
 
         if group.kind == "single":
             scenario = group.scenarios[0]
-            payload, failed, g_score, g_turns = run_single_scenario(
+            case = run_single_scenario(
                 client=client,
                 cfg=cfg,
                 scenario=scenario,
@@ -1468,7 +1579,7 @@ def run_scenarios(
                 dialog_context_meta=dialog_context_meta,
             )
         else:
-            payload, failed, g_score, g_turns = run_chain_group(
+            case = run_chain_group(
                 client=client,
                 cfg=cfg,
                 group=group,
@@ -1478,29 +1589,52 @@ def run_scenarios(
                 dialog_context_meta=dialog_context_meta,
             )
 
-        groups_payload.append(payload)
-        failed_messages.extend(failed)
-        total_score += g_score
-        total_turns += g_turns
+        g_score = int(case.get("score_total") or 0)
+        g_turns = int(case.get("turns_total") or 0)
+        cases.append(case)
 
-        print(f"  - group score: {g_score}/{g_turns} | passed={'YES' if g_score == g_turns else 'NO'}")
+        print(
+            f"  - case score: {g_score}/{g_turns} | "
+            f"passed={'YES' if bool(case.get('passed')) else 'NO'}"
+        )
 
-    score_rate = (total_score / total_turns) if total_turns else 0.0
+    cases_total = len(cases)
+    turns_total = sum(int(case.get("turns_total", 0)) for case in cases)
+    score_total = sum(int(case.get("score_total", 0)) for case in cases)
+    score_rate = (score_total / turns_total) if turns_total else 0.0
+    passed_cases = sum(1 for case in cases if bool(case.get("passed")))
+    failed_cases = cases_total - passed_cases
+    pass_rate = (passed_cases / cases_total * 100.0) if cases_total else 0.0
+
+    errors_by_case: List[Dict[str, Any]] = []
+    for case in cases:
+        if bool(case.get("passed")):
+            continue
+        errors_by_case.append(
+            {
+                "case_id": str(case.get("case_id") or ""),
+                "type": str(case.get("type") or ""),
+                "cdm_file": str(case.get("cdm_file") or ""),
+                "company_hidden": bool(case.get("company_hidden", False)),
+                "failures": _case_failures(case),
+            }
+        )
+
+    token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "csv_path": str(csv_path),
+        "cdm_dir": str(cdm_dir),
+        "cdm_fixture": {
+            "mode": "round_robin_by_case",
+            "fixtures_total": len(cdm_fixtures),
+        },
+        "messages_per_scenario": messages_per_scenario,
         "scenario_indices": scenario_indices or [],
         "max_scenarios": max_scenarios,
-        "groups_total": len(groups),
-        "turns_total": total_turns,
-        "score_total": total_score,
-        "score_rate": score_rate,
-        "groups": groups_payload,
-        "failed_messages": failed_messages,
-        "token_usage": usage,
         "models": {
             "candidate_generator": GEN_MODEL,
             "screening_assistant": {
@@ -1509,26 +1643,30 @@ def run_scenarios(
             },
             "evaluator": EVAL_MODEL,
         },
-        "chain_grouping": {
-            "enabled": True,
-            "chain_by_index": CHAIN_BY_INDEX,
-            "repeat_markers": REPEAT_MARKERS,
+        "token_usage_total": token_usage_total,
+        "token_usage": usage,
+        "summary": {
+            "cases_total": cases_total,
+            "turns_total": turns_total,
+            "passed_cases": passed_cases,
+            "failed_cases": failed_cases,
+            "pass_rate": pass_rate,
+            "score_total": score_total,
+            "score_rate": score_rate,
+            "errors_by_case": errors_by_case,
         },
-        "cdm_context": {
-            "cdm_dir": str(cdm_dir),
-            "fixtures_total": len(cdm_fixtures),
-            "selection_mode": "round_robin_by_group",
-            "force_hidden_company_for_scenarios": [23, 24],
-        },
+        "cases": cases,
     }
 
     out_path = REPORTS_DIR / f"screening_scenarios_report_{run_id}.json"
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n[done] Screening scenarios report saved to: {out_path}")
+    failed_turns = sum(len(item.get("failures") or []) for item in errors_by_case)
     print(
-        f"[summary] turns_total={total_turns} | score_total={total_score} | "
-        f"score_rate={score_rate:.3f} | failed={len(failed_messages)}"
+        f"[summary] cases_total={cases_total} | turns_total={turns_total} | "
+        f"score_total={score_total} | score_rate={score_rate:.3f} | "
+        f"failed_cases={failed_cases} | failed_turns={failed_turns}"
     )
 
     return out_path
