@@ -341,6 +341,24 @@ def _is_repeated_by_name(name: str) -> bool:
     return _has_any(name, REPEAT_MARKERS)
 
 
+def _contains_repeat_marker(text: str) -> bool:
+    hay = (text or "").lower()
+    extra_markers = [
+        "\u0443\u0436\u0435 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b",
+        "\u044f \u0436\u0435 \u0443\u0436\u0435 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b",
+        "\u043f\u043e\u0432\u0442\u043e\u0440\u044e",
+        "\u043f\u043e\u0432\u0442\u043e\u0440\u044f\u044e",
+        "\u0435\u0449\u0435 \u0440\u0430\u0437",
+        "\u0435\u0449\u0451 \u0440\u0430\u0437",
+        "\u0441\u043d\u043e\u0432\u0430",
+        "\u0432\u0442\u043e\u0440\u043e\u0439 \u0440\u0430\u0437",
+        "\u0442\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437",
+        "\u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0435 \u0431\u044b\u043b\u043e",
+        "\u0432\u044b \u0442\u0430\u043a \u0438 \u043d\u0435",
+    ]
+    return _has_any(hay, REPEAT_MARKERS + extra_markers)
+
+
 def _scenario_chain_key(s: Scenario) -> Optional[str]:
     # 1) строго по индексам
     for chain_id, indices in CHAIN_BY_INDEX.items():
@@ -588,6 +606,93 @@ def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
     return failures
 
 
+def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    mismatches: List[Dict[str, Any]] = []
+
+    for case in cases:
+        case_type = str(case.get("type") or "")
+        passed = bool(case.get("passed"))
+        score_total = int(case.get("score_total", 0) or 0)
+        turns_total = int(case.get("turns_total", 0) or 0)
+        case_failed = (not passed) or (score_total < turns_total)
+        if not case_failed:
+            continue
+
+        if case_type == "single":
+            errors: List[str] = []
+            failed_turns: List[Dict[str, Any]] = []
+            for turn in case.get("turns") or []:
+                if int(turn.get("score", 0)) != 0:
+                    continue
+                reason = _short_reason(str(turn.get("comment") or ""))
+                errors.append(reason)
+                failed_turns.append(
+                    {
+                        "step": int(turn.get("step") or 0),
+                        "comment": reason,
+                    }
+                )
+
+            mismatch: Dict[str, Any] = {
+                "case_id": str(case.get("case_id") or ""),
+                "scenario_index": int(case.get("scenario_index") or 0),
+                "scenario_name": str(case.get("scenario_name") or ""),
+                "cdm_file": str(case.get("cdm_file") or ""),
+                "company_hidden": bool(case.get("company_hidden", False)),
+                "errors": errors,
+            }
+            if failed_turns:
+                mismatch["failed_turns"] = failed_turns
+            mismatches.append(mismatch)
+            continue
+
+        if case_type == "chain":
+            errors = []
+            failed_runs: List[Dict[str, Any]] = []
+            for run in case.get("runs") or []:
+                run_passed = bool(run.get("passed"))
+                run_score_total = int(run.get("score_total", 0) or 0)
+                run_turns_total = int(run.get("turns_total", 0) or 0)
+                run_failed = (not run_passed) or (run_score_total < run_turns_total)
+                if not run_failed:
+                    continue
+
+                bad_turns: List[Dict[str, Any]] = []
+                for turn in run.get("turns") or []:
+                    if int(turn.get("score", 0)) != 0:
+                        continue
+                    reason = _short_reason(str(turn.get("comment") or ""))
+                    errors.append(reason)
+                    bad_turns.append(
+                        {
+                            "step": int(turn.get("step") or 0),
+                            "scenario_index": int(turn.get("scenario_index") or 0),
+                            "comment": reason,
+                        }
+                    )
+
+                failed_runs.append(
+                    {
+                        "run_index": int(run.get("run_index") or 0),
+                        "turns": bad_turns,
+                    }
+                )
+
+            mismatches.append(
+                {
+                    "case_id": str(case.get("case_id") or ""),
+                    "scenario_indices": list(case.get("scenario_indices") or []),
+                    "scenario_names": list(case.get("scenario_names") or []),
+                    "cdm_file": str(case.get("cdm_file") or ""),
+                    "company_hidden": bool(case.get("company_hidden", False)),
+                    "runs": failed_runs,
+                    "errors": errors,
+                }
+            )
+
+    return mismatches
+
+
 def _token_usage_total(usage: Dict[str, Dict[str, int]]) -> Dict[str, int]:
     total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     for bucket in usage.values():
@@ -636,6 +741,16 @@ def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
     return False
 
 
+def _messages_match_repeat_policy(scenario: Scenario, messages: List[str]) -> bool:
+    if not messages:
+        return False
+    if scenario.index == 23:
+        return all(not _contains_repeat_marker(msg) for msg in messages)
+    if scenario.index == 24:
+        return all(_contains_repeat_marker(msg) for msg in messages)
+    return True
+
+
 def _trigger_requirement_text(s: Scenario) -> str:
     """
     Текстовое требование "что должно быть в сообщении", чтобы триггер точно сработал.
@@ -669,7 +784,21 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Это открытый поиск: кандидат ожидает раскрытия названия компании.\n"
         )
 
-    # 23/24 - скрытая компания (проверяем раньше BOT, чтобы не было сюрпризов по приоритетам)
+    # 23 - первый запрос о компании в скрытом поиске (без повторности)
+    if idx == 23:
+        return (
+            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
+            "Это ПЕРВЫЙ запрос: запрещены маркеры повторности ('уже спрашивал', 'повторю', 'еще раз', 'снова', 'второй раз', 'третий раз').\n"
+        )
+
+    # 24 - повторный запрос о компании в скрытом поиске (с повторностью)
+    if idx == 24:
+        return (
+            "В КАЖДОЙ реплике кандидат должен повторно спрашивать про компанию и явно указывать на повторность.\n"
+            "Обязательно добавляй маркеры повторности: 'уже спрашивал', 'повторю', 'еще раз', 'вы так и не ответили', 'ответа не было'.\n"
+        )
+
+    # fallback для нестандартных названий сценариев
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
         return (
             "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
@@ -773,13 +902,15 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
 
     # 23/24. Компания скрытый поиск
-    if idx == 23 and "скрытом" in name:
+    if idx == 23:
         parts.append("- Кандидат прямо спрашивает, КАКАЯ это компания, просит название/сайт/ссылку.")
-    if idx == 24 or ("настойчивый" in name and "скрытом" in name):
+        parts.append("- Это первый запрос: без повторности и без фраз 'уже спрашивал/повторю/еще раз/снова'.")
+    if idx == 24:
         parts.append(
             "- Это несколько сообщений подряд, кандидат настойчиво повторяет вопрос именно про компанию: "
             "«я уже спрашивал, какая компания», «еще раз: назовите компанию или дайте ссылку»."
         )
+        parts.append("- Это повторный запрос: обязательно упоминай, что уже спрашивал и ответа не было.")
 
     # 31. Компания открытый поиск
     if idx == 31:
@@ -1026,18 +1157,59 @@ def generate_candidate_messages_for_scenario(
         cleaned = [_normalize_text(m) for m in msgs[:messages_per_scenario]]
         return cleaned
 
+    def _first_hidden_company_fallback() -> List[str]:
+        pool = [
+            "Подскажите, как называется компания?",
+            "Какая компания и где можно посмотреть сайт?",
+            "Можете дать ссылку на вакансию?",
+            "Как называется компания, чтобы я посмотрел информацию?",
+        ]
+        out = pool[:messages_per_scenario]
+        while len(out) < messages_per_scenario:
+            out.append(pool[len(out) % len(pool)])
+        return out
+
+    def _repeat_hidden_company_fallback() -> List[str]:
+        pool = [
+            "Я уже спрашивал: какая компания? Вы так и не назвали.",
+            "Повторю вопрос: как называется компания и где посмотреть сайт?",
+            "Еще раз прошу: дайте название компании или ссылку на вакансию.",
+            "Ответа не было, поэтому уточню снова: какая компания?",
+        ]
+        out = pool[:messages_per_scenario]
+        while len(out) < messages_per_scenario:
+            out.append(pool[len(out) % len(pool)])
+        return out
+
+    def _messages_valid(msgs: List[str]) -> bool:
+        if not msgs:
+            return False
+        if not all(_validate_trigger(scenario, m) for m in msgs):
+            return False
+        return _messages_match_repeat_policy(scenario, msgs)
+
     # 1) первая попытка
     messages = _do_gen(strong=False)
 
     # 2) валидируем, если промахи - перегенерим 1 раз
-    if messages and not all(_validate_trigger(scenario, m) for m in messages):
+    if not _messages_valid(messages):
         messages2 = _do_gen(strong=True)
         if messages2:
             messages = messages2
 
     # 3) если совсем плохо - fallback
-    if not messages or not all(_validate_trigger(scenario, m) for m in messages):
+    if not _messages_valid(messages):
         messages = _fallback_messages(scenario, messages_per_scenario)
+
+    # 4) жесткая гарантия repeat policy для сценариев 23/24
+    if scenario.index == 23 and (
+        not messages or any(_contains_repeat_marker(m) for m in messages)
+    ):
+        messages = _first_hidden_company_fallback()
+    if scenario.index == 24 and (
+        not messages or any(not _contains_repeat_marker(m) for m in messages)
+    ):
+        messages = _repeat_hidden_company_fallback()
 
     # гарантируем длину и чистку END
     out: List[str] = []
@@ -1633,6 +1805,7 @@ def run_scenarios(
             }
         )
 
+    mismatches = build_mismatches(cases)
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
 
@@ -1669,6 +1842,7 @@ def run_scenarios(
             "errors_by_case": errors_by_case,
         },
         "cases": cases,
+        "mismatches": mismatches,
     }
 
     out_path = REPORTS_DIR / f"screening_scenarios_report_{run_id}.json"
