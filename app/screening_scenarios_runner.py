@@ -208,6 +208,26 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
     return scenarios
 
 
+def parse_scenario_indices(raw: str) -> List[int]:
+    tokens = [t.strip() for t in re.split(r"[,\s]+", raw or "") if t.strip()]
+    if not tokens:
+        return []
+
+    values: List[int] = []
+    for token in tokens:
+        if not token.isdigit():
+            raise ValueError(
+                f"Invalid scenario index '{token}' in --scenario-indices. "
+                "Use comma-separated positive integers, e.g. 23,24"
+            )
+        idx = int(token)
+        if idx <= 0:
+            raise ValueError(f"Scenario index must be >= 1, got: {idx}")
+        values.append(idx)
+
+    return sorted(set(values))
+
+
 # -----------------------
 # Вытаскиваем реальные реплики кандидатов
 # -----------------------
@@ -240,14 +260,14 @@ def extract_candidate_examples(examples_raw: str, max_examples: int = 5) -> List
             full_text = block
 
         for line in full_text.splitlines():
-            raw = line.strip()
-            lower = raw.lower()
+            raw_line = line.strip()
+            lower = raw_line.lower()
             if "[candidate]" in lower or "[кандидат]" in lower:
                 try:
-                    bidx = raw.index("]")
-                    text = raw[bidx + 1 :].strip()
+                    bidx = raw_line.index("]")
+                    text = raw_line[bidx + 1 :].strip()
                 except ValueError:
-                    text = raw
+                    text = raw_line
                 if text:
                     candidates.append(text)
                     if len(candidates) >= max_examples:
@@ -276,21 +296,45 @@ REPEAT_MARKERS = [
 ]
 
 TOPIC_SALARY = ["зарплат", "вилк", "оклад", "доход", "компенсац", "деньг", "bonus", "бонус"]
-TOPIC_BOT = ["бот", "ии", "нейросет", "искусствен", "ai"]
+
+# Важно: "ии" и "ai" нельзя матчить подстрокой, иначе "компании" содержит "ии".
+# Для коротких токенов используем матчи по границам слова.
+TOPIC_BOT = ["бот", "нейросет", "искусствен", "ai", "ии"]
+
 TOPIC_COMPANY_HIDDEN = ["компан", "скрыт", "не называете компанию", "название компании"]
 
 # Явные цепочки по индексам строк CSV.
 # Важно: порядок в списке - это порядок шагов в одном диалоге.
 CHAIN_BY_INDEX: Dict[str, List[int]] = {
-    "chain_salary_3x": [12, 29, 30],   # 1-й, 2-й, 3-й вопрос кандидата о ЗП
+    "chain_salary_3x": [12, 29, 30],  # 1-й, 2-й, 3-й вопрос кандидата о ЗП
     "chain_bot_check": [26, 27],
     "chain_company_hidden": [23, 24],
 }
 
 
 def _has_any(hay: str, needles: List[str]) -> bool:
+    """
+    Безопасный матч:
+    - длинные подстроки ищем через "in"
+    - короткие токены ("ии", "ai") ищем как отдельные слова/токены
+    """
     h = (hay or "").lower()
-    return any(n in h for n in needles)
+
+    for n in needles:
+        nn = (n or "").lower().strip()
+        if not nn:
+            continue
+
+        # Короткие токены - только как отдельное слово/токен
+        if nn in ("ии", "ai"):
+            if re.search(rf"(?<!\w){re.escape(nn)}(?!\w)", h, flags=re.UNICODE):
+                return True
+            continue
+
+        if nn in h:
+            return True
+
+    return False
 
 
 def _is_repeated_by_name(name: str) -> bool:
@@ -306,12 +350,13 @@ def _scenario_chain_key(s: Scenario) -> Optional[str]:
     # 2) аккуратная авто-группировка: только если есть маркер повторности/настойчивости И тема
     n = s.name.lower()
     if _is_repeated_by_name(n):
-        if _has_any(n, TOPIC_BOT):
-            return "chain_bot_check"
-        if _has_any(n, TOPIC_SALARY):
-            return "chain_salary_3x"  # считаем, что повторные ЗП вопросы должны попадать туда
+        # Важно: сначала более "узкие" темы. И в любом случае bot-тема теперь безопасна.
         if _has_any(n, TOPIC_COMPANY_HIDDEN) and "скрыт" in n:
             return "chain_company_hidden"
+        if _has_any(n, TOPIC_SALARY):
+            return "chain_salary_3x"
+        if _has_any(n, TOPIC_BOT):
+            return "chain_bot_check"
 
     return None
 
@@ -374,7 +419,7 @@ def build_scenario_groups(scenarios: List[Scenario]) -> List[ScenarioGroup]:
 # Генерация сообщений кандидата (максимально близко к оригиналу + trigger forcing)
 # -----------------------
 
-# Ключевые слова для базовой валидации попадания в триггер
+
 def load_cdm_fixtures(cdm_dir: pathlib.Path) -> List[CdmFixture]:
     files = sorted(cdm_dir.glob("*.json"))
     if not files:
@@ -490,11 +535,27 @@ def build_dialog_context(
 
 
 KW_POL_NATION = [
-    "полит", "власть", "президент", "санкц", "войн", "пропаганд", "государств",
-    "росси", "украин", "европ", "нато", "путин", "зеленск", "кремл",
+    "полит",
+    "власть",
+    "президент",
+    "санкц",
+    "войн",
+    "пропаганд",
+    "государств",
+    "росси",
+    "украин",
+    "европ",
+    "нато",
+    "путин",
+    "зеленск",
+    "кремл",
 ]
+
 KW_SALARY = ["зарплат", "вилк", "оклад", "деньг", "сколько", "компенсац", "bonus", "бонус", "gross", "net"]
+
+# Здесь тоже "ии"/"ai" матчим безопасно.
 KW_BOT = ["бот", "ии", "ai", "нейросет", "искусствен"]
+
 KW_COMPANY = ["название компании", "какая компания", "кто вы", "где работ", "что за компания", "сайт", "ссылк"]
 
 
@@ -537,18 +598,18 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Если это повтор/третий раз - явно укажи, что кандидат уже спрашивал и ответа не получил.\n"
         )
 
+    # 23/24 - скрытая компания (проверяем раньше BOT, чтобы не было сюрпризов по приоритетам)
+    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        return (
+            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
+            "Если настойчивый - упомяни, что уже спрашивал и ответа нет.\n"
+        )
+
     # 26/27 - бот
     if idx in (26, 27) or _has_any(name, TOPIC_BOT):
         return (
             "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
             "Если повторно - явно укажи, что это повторный вопрос и ранее ответа не было.\n"
-        )
-
-    # 23/24 - скрытая компания
-    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
-        return (
-            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
-            "Если настойчивый - упомяни, что уже спрашивал и ответа нет.\n"
         )
 
     return ""
@@ -642,12 +703,11 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
 
     # 23/24. Компания скрытый поиск
     if idx == 23 and "скрытом" in name:
-        parts.append(
-            "- Кандидат прямо спрашивает, КАКАЯ это компания, просит название/сайт/ссылку."
-        )
+        parts.append("- Кандидат прямо спрашивает, КАКАЯ это компания, просит название/сайт/ссылку.")
     if idx == 24 or ("настойчивый" in name and "скрытом" in name):
         parts.append(
-            "- Это несколько сообщений подряд, кандидат настойчиво повторяет: «я уже спрашивал», «ещё раз спрошу»."
+            "- Это несколько сообщений подряд, кандидат настойчиво повторяет вопрос именно про компанию: "
+            "«я уже спрашивал, какая компания», «еще раз: назовите компанию или дайте ссылку»."
         )
 
     # 25. Нет опыта
@@ -662,7 +722,6 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         parts.append("- Кандидат сомневается: «ты бот?», «это ИИ или человек?».")
     if idx == 27 or ("повторно" in name and "бот" in name):
         parts.append("- Повторный вопрос про бота: «я же уже спрашивал, вы бот?».")
-
     if not parts:
         return ""
 
@@ -686,13 +745,13 @@ def _validate_trigger(s: Scenario, msg: str) -> bool:
     if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
         return any(k in m for k in KW_SALARY)
 
-    # бот
-    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
-        return any(k in m for k in KW_BOT)
-
-    # скрытая компания
+    # скрытая компания (до bot)
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
         return any(k in m for k in KW_COMPANY)
+
+    # бот (KW_BOT через safe matcher)
+    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+        return _has_any(m, KW_BOT)
 
     # иначе не валидируем
     return True
@@ -736,6 +795,22 @@ def _fallback_messages(s: Scenario, n: int) -> List[str]:
             ]
             return pool[:n]
 
+    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
+        if idx == 23:
+            pool = [
+                "А что за компания? Название можете назвать?",
+                "Как называется компания и где можно посмотреть сайт?",
+                "Скиньте, пожалуйста, название компании и ссылку.",
+            ]
+            return pool[:n]
+        else:
+            pool = [
+                "Я уже спрашивал: какая компания? Вы так и не назвали.",
+                "Повторю: что за компания и где посмотреть сайт?",
+                "Еще раз: скажите название компании или дайте ссылку, без этого не двигаюсь дальше.",
+            ]
+            return pool[:n]
+
     if idx in (26, 27) or _has_any(name, TOPIC_BOT):
         if idx == 26:
             pool = [
@@ -749,22 +824,6 @@ def _fallback_messages(s: Scenario, n: int) -> List[str]:
                 "Я же уже спрашивал: вы бот или человек? Ответа не было.",
                 "Повторю вопрос: это ИИ или вы реальный рекрутер?",
                 "Вы так и не ответили, вы бот?",
-            ]
-            return pool[:n]
-
-    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
-        if idx == 23:
-            pool = [
-                "А что за компания? Название можете назвать?",
-                "Как называется компания и где можно посмотреть сайт?",
-                "Скиньте, пожалуйста, название компании и ссылку.",
-            ]
-            return pool[:n]
-        else:
-            pool = [
-                "Я уже спрашивал: какая компания? Вы так и не назвали.",
-                "Повторю: что за компания и где посмотреть сайт?",
-                "Еще раз: скажите название компании, без этого не двигаюсь дальше.",
             ]
             return pool[:n]
 
@@ -917,29 +976,13 @@ class SimpleScreeningAssistant:
         self.last_usage: Any = None
 
     def _scenario_context_block(self, scenario: Scenario) -> str:
+        # Раньше тут был ранний return, из-за чего остальной код был мертвым.
+        # Сейчас оставляем единственный источник контекста - dialog_context.
+        # Если захочешь добавить отдельные условия, делай их ДО return.
         return self.dialog_context
-        name = scenario.name.lower()
-
-        if "при скрытом поиске" in name:
-            return (
-                "Дополнительный контекст по вакансии:\n"
-                "- По этой позиции ведётся СКРЫТЫЙ поиск.\n"
-                "- Название компании и ссылка на вакансию на этом этапе не раскрываются.\n"
-                "Не выдумывай название компании и не давай ссылку.\n"
-            )
-
-        if "при открытом поиске" in name:
-            return (
-                "Дополнительный контекст по вакансии:\n"
-                "- Поиск НЕ скрытый, компанию можно называть.\n"
-                "- Название компании: Insightly Analytics.\n"
-                "- Описание: продуктовая компания, аналитика поведения пользователей.\n"
-                "- Ссылка: https://example.com/vacancies/insightly-analytics-engineering-manager\n"
-            )
-
-        return ""
 
     def reply_one_turn(self, candidate_message: str) -> str:
+        scenario_block = self._scenario_context_block(Scenario(0, "", "", "", ""))  # не используем, но оставим структуру
         scenario_block = self.dialog_context
 
         payload_lines = [
@@ -997,25 +1040,6 @@ class ConversationScreeningAssistant:
 
     def _scenario_context_block(self, scenarios: List[Scenario]) -> str:
         return self.dialog_context
-        names = " ".join([s.name.lower() for s in scenarios])
-
-        if "при скрытом поиске" in names:
-            return (
-                "Дополнительный контекст по вакансии:\n"
-                "- По этой позиции ведётся СКРЫТЫЙ поиск.\n"
-                "- Название компании и ссылка на вакансию на этом этапе не раскрываются.\n"
-                "Не выдумывай название компании и не давай ссылку.\n"
-            )
-
-        if "при открытом поиске" in names:
-            return (
-                "Дополнительный контекст по вакансии:\n"
-                "- Поиск НЕ скрытый, компанию можно называть.\n"
-                "- Название компании: Insightly Analytics.\n"
-                "- Ссылка: https://example.com/vacancies/insightly-analytics-engineering-manager\n"
-            )
-
-        return ""
 
     def create_conversation(self) -> str:
         ctx = self.dialog_context
@@ -1101,8 +1125,8 @@ def evaluate_turn(
         "Если есть dialog_history, учитывай, что это один и тот же диалог.\n\n"
         "Верни JSON:\n"
         "{\n"
-        '  \"score\": 0 или 1,\n'
-        '  \"comment\": \"краткое объяснение\"\n'
+        '  "score": 0 или 1,\n'
+        '  "comment": "краткое объяснение"\n'
         "}\n\n"
         "Правила:\n"
         "1) Если expected_behavior требует прекратить общение - ассистент не должен задавать новые вопросы.\n"
@@ -1343,16 +1367,41 @@ def run_scenarios(
     messages_per_scenario: int,
     max_scenarios: int | None = None,
     cdm_dir: pathlib.Path = DEFAULT_CDM_DIR,
+    scenario_indices: Optional[List[int]] = None,
 ) -> pathlib.Path:
     ensure_dirs()
 
     print(f"[init] Loading scenarios from CSV: {csv_path}")
     scenarios = load_scenarios(csv_path)
-    if max_scenarios is not None:
-        scenarios = scenarios[:max_scenarios]
+
+    # ВАЖНО: если пользователь передал --scenario-indices, но он распарсился в пустоту,
+    # не запускаем все молча, а падаем с понятной ошибкой.
+    if scenario_indices is not None and len(scenario_indices) == 0:
+        raise ValueError(
+            "--scenario-indices was provided but parsed as an empty list. "
+            "Pass comma-separated indices like: --scenario-indices 23,24"
+        )
+
+    if scenario_indices:
+        selected = set(scenario_indices)
+        scenarios = [s for s in scenarios if s.index in selected]
+        print(
+            f"[init] Scenario index filter applied: "
+            f"indices={sorted(selected)} -> loaded={len(scenarios)}"
+        )
 
     if not scenarios:
+        if scenario_indices:
+            raise ValueError(
+                "No scenarios matched --scenario-indices. "
+                f"Requested: {scenario_indices}. Check CSV row indices."
+            )
         raise ValueError("No scenarios loaded from CSV - nothing to run.")
+
+    if max_scenarios is not None:
+        scenarios = scenarios[:max_scenarios]
+        if not scenarios:
+            raise ValueError("No scenarios left after applying --max-scenarios.")
 
     cdm_fixtures = load_cdm_fixtures(cdm_dir)
     print(f"[init] CDM fixtures loaded: {len(cdm_fixtures)} from {cdm_dir}")
@@ -1443,6 +1492,8 @@ def run_scenarios(
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "csv_path": str(csv_path),
+        "scenario_indices": scenario_indices or [],
+        "max_scenarios": max_scenarios,
         "groups_total": len(groups),
         "turns_total": total_turns,
         "score_total": total_score,
@@ -1514,6 +1565,12 @@ def main() -> None:
         help="Limit number of scenarios read from CSV (debug). Default: all.",
     )
     parser.add_argument(
+        "--scenario-indices",
+        type=str,
+        default=None,
+        help="Comma-separated CSV row indices to run, e.g. 23,24. Default: all.",
+    )
+    parser.add_argument(
         "--cdm-dir",
         type=str,
         default=str(DEFAULT_CDM_DIR),
@@ -1523,11 +1580,21 @@ def main() -> None:
     args = parser.parse_args()
 
     csv_path = pathlib.Path(args.csv_path)
+
+    scenario_indices: Optional[List[int]] = None
+    if args.scenario_indices is not None:
+        scenario_indices = parse_scenario_indices(args.scenario_indices)
+        if len(scenario_indices) == 0:
+            raise ValueError(
+                "--scenario-indices was provided but empty. Example: --scenario-indices 23,24"
+            )
+
     report_path = run_scenarios(
         csv_path=csv_path,
         messages_per_scenario=args.messages_per_scenario,
         max_scenarios=args.max_scenarios,
         cdm_dir=pathlib.Path(args.cdm_dir),
+        scenario_indices=scenario_indices,
     )
     print("Screening scenarios report ->", report_path)
 

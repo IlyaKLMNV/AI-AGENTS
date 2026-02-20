@@ -91,6 +91,7 @@ python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
 python -m app.screening_scenarios_runner \
   --csv-path tests/fixtures/screening_scenarios.csv \
   --cdm-dir tests/fixtures/cdm \
+  --scenario-indices 23,24 \
   --messages-per-scenario 3 \
   --max-scenarios 20
 ```
@@ -98,6 +99,7 @@ python -m app.screening_scenarios_runner \
 Параметры:
 - `--csv-path` — путь к CSV со сценариями.
 - `--cdm-dir` — директория с CDM-фикстурами вакансий.
+- `--scenario-indices` — список индексов строк CSV через запятую (например `23,24`) для точечного прогона.
 - `--messages-per-scenario` — SINGLE: сообщений на сценарий; CHAIN: прогонов диалога на цепочку.
 - `--max-scenarios` — лимит сценариев для быстрого прогона.
 
