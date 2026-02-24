@@ -35,5 +35,5 @@ candidate_simulator:
     
 extractor_agent:
   prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
-  prompt_version: 16
+  prompt_version: 17
   seed: 1234
