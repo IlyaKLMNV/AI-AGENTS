@@ -10,7 +10,7 @@ message_classifier:
 
 screening_assistant:
   prompt_id: pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf
-  prompt_version: 31
+  prompt_version: 34
   seed: 1234
 
 screening_autofill:
@@ -32,3 +32,8 @@ candidate_simulator:
     display_name: "Мария"
     prompt_id: pmpt_6915e984ed688195b3cadd0240baea95049b4ba49bfd5df4
     prompt_version: 2
+    
+extractor_agent:
+  prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
+  prompt_version: 17
+  seed: 1234
