@@ -13,18 +13,32 @@ Key mappings:
   step1.companies   -> step3.firms
   step1.keywords    -> step3.keys
   step1.level       -> step3.seniorityLevels
-  step1.locations   -> step3.geos (optionally sanitize "office/hybrid/remote" words)
+  step1.locations   -> step3.geos
+  step1.languages   -> step3.onlyRussian / step3.onlyEnglish (both true allowed)
+  step1.experience  -> step3.experience ["from","to"] (strings; null -> "")
+  step1.age         -> step3.ages ["from","to"] (strings; null -> "")
+  step1.management_experience -> step3.managementExperience ["from","to"] (strings; null -> "")
+  step1.higher_education -> step3.onlyWithHigherEducation
 
-Backend expects groups:
+Backend expects groups for boolean fields:
   field: [ ["all"|"or"|"not", [values...]], ... ]
 
-Report:
-  - no noisy fields like fingerprint/raw_len
-  - includes expanded extractor_json and step3_payload per case
-  - backend 400 "Positions or skills or keys must be set" is "insufficient_search_terms", not an error
+Important:
+  - Anything that requires dictionaries / ID mapping (firmCategories IDs, contacts codes like "lnlink",
+    additionalSkills split, etc.) is NOT implemented here.
+  - Suite cases are built-in sanity/regression prompts that ALWAYS include at least one anchor:
+    positions OR skills OR keywords.
+
+Defaults (so you don't have to pass them every run):
+  - --base-url defaults to env AI_SEARCH_BASE_URL
+  - --token defaults to env AI_SEARCH_AUTH_TOKEN
+  - --step3-path defaults to /site/searchBool
+  - --report-mode defaults to compact
+  - --report-json-indent defaults to 2
 
 Env:
   OPENAI_API_KEY required for step1
+  AI_SEARCH_BASE_URL, AI_SEARCH_AUTH_TOKEN recommended for step3
   Optional: OPENAI_BASE_URL (defaults to https://api.openai.com/v1)
 
 This runner is intentionally strict about the step1 contract to catch prompt drift.
@@ -51,11 +65,46 @@ except Exception:
 
 
 # ----------------------------
+# Built-in suite (regression) cases
+# MUST include at least one anchor: positions OR skills OR keywords
+# ----------------------------
+
+SUITE_CASES: List[Dict[str, str]] = [
+    # basic anchors
+    {"name": "suite_0001", "input": "Python разработчик"},
+    {"name": "suite_0002", "input": "React developer"},
+    {"name": "suite_0003", "input": "ключевые слова: Иван Петров"},
+    # operators and separators
+    {"name": "suite_0004", "input": "React + TypeScript + Next.js"},
+    {"name": "suite_0005", "input": "Django или Flask"},
+    {"name": "suite_0006", "input": "Python developer, но не Django"},
+    {"name": "suite_0007", "input": "SRE / DevOps"},
+    # plus tokens should not break
+    {"name": "suite_0008", "input": "C++ developer"},
+    {"name": "suite_0009", "input": "опыт с g++ и clang"},
+    # languages nuance (still anchored by a skill)
+    {"name": "suite_0010", "input": "React, русский обязателен, английский желателен"},
+    {"name": "suite_0011", "input": "React, английский B2, русский не нужен"},
+    # geo sanitize (anchored by position)
+    {"name": "suite_0012", "input": "Backend разработчик Москва офис"},
+    # experience formats (anchored by position)
+    {"name": "suite_0013", "input": "Python разработчик опыт от 5 лет"},
+    {"name": "suite_0014", "input": "DevOps инженер опыт 3-5 лет"},
+    # keywords (email/phone) - explicit keyword anchor
+    {"name": "suite_0015", "input": "контакт: ivan.petrov@gmail.com, +7 999 123-45-67"},
+    {"name": "suite_0016", "input": "Платов Анатолий backend"},
+    # business sphere mention (still anchored by position; sphere will be ignored without dictionary)
+    {"name": "suite_0017", "input": "DevOps из финтеха"},
+    # company mention (anchored by position; firms-only may be insufficient in backend)
+    {"name": "suite_0018", "input": "SRE, последнее место работы: Яндекс"},
+]
+
+
+# ----------------------------
 # Helpers: time, json, io
 # ----------------------------
 
 def utc_now_iso() -> str:
-    # timezone-aware UTC (no DeprecationWarning)
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 def make_run_id() -> str:
@@ -232,16 +281,6 @@ def _cases_from_data(data: Any, stem: str) -> List[Case]:
     return out
 
 def load_cases_from_dir(cases_dir: Path) -> List[Case]:
-    """
-    Supports:
-      - .json/.yml/.yaml:
-        - {"input": "..."} / {"query": "..."} / {"text": "..."} / {"user_phrase": "..."}
-        - {"cases": [...]}
-        - [{"name":"...","input":"..."}, ...]
-        - ["raw text case", ...]
-        - plain string
-      - .txt: whole file is input
-    """
     cases: List[Case] = []
     if not cases_dir.exists():
         raise FileNotFoundError(f"cases_dir not found: {cases_dir}")
@@ -268,17 +307,26 @@ def load_cases_from_dir(cases_dir: Path) -> List[Case]:
             name = stem
             cases.append(Case(name=name, input=str(raw_input), source=guess_source(name)))
 
-    # de-dupe by name (last wins)
     uniq: Dict[str, Case] = {}
     for c in cases:
         uniq[c.name] = c
     return list(uniq.values())
 
+def build_suite_cases(limit: int, seed: int) -> List[Case]:
+    # deterministic shuffle so suite doesn't become "first N always"
+    rnd = random.Random(seed)
+    items = [dict(x) for x in SUITE_CASES]
+    rnd.shuffle(items)
+    if limit > 0:
+        items = items[:limit]
+    out: List[Case] = []
+    for it in items:
+        name = it["name"]
+        inp = it["input"]
+        out.append(Case(name=name, input=inp, source="suite"))
+    return out
+
 def build_synthetic_cases(base_cases: List[Case], n: int, seed: int) -> List[Case]:
-    """
-    Synthetic generator: intentionally degrades queries to mimic user typos / truncation.
-    Important: it does NOT add new meaning, only removes/perturbs existing tokens.
-    """
     rnd = random.Random(seed)
     if not base_cases or n <= 0:
         return []
@@ -313,11 +361,8 @@ def build_synthetic_cases(base_cases: List[Case], n: int, seed: int) -> List[Cas
     return out
 
 def parse_mix_ratios(s: str) -> Dict[str, int]:
-    """
-    Format: real=1,suite=1,syn=1
-    """
     ratios: Dict[str, int] = {"real": 1, "suite": 0, "syn": 0}
-    s = s.strip()
+    s = (s or "").strip()
     if not s:
         return ratios
     parts = [p.strip() for p in s.split(",") if p.strip()]
@@ -357,14 +402,6 @@ def mix_cases(
     seed: int,
     total_limit: Optional[int],
 ) -> Tuple[List[Case], Dict[str, int]]:
-    """
-    Semantics:
-      want(group) = per_unit_count * ratios[group]
-    Example:
-      per_unit_count=20, ratios real=1,suite=1,syn=1 -> want 20/20/20.
-    Important:
-      counts returned are FACTUAL counts picked, not "wanted".
-    """
     rnd = random.Random(seed)
 
     want_real = per_unit_count * int(ratios.get("real", 0))
@@ -529,10 +566,6 @@ def op_to_group(op: str) -> str:
     return "all"
 
 def entities_to_groups(entities: Optional[List[Dict[str, Any]]]) -> List[List[Any]]:
-    """
-    Convert [{"raw_text":"Python","operator":"AND"}, ...]
-    into [["all",["Python",...]], ["or",[...]], ["not",[...]]]
-    """
     if not entities:
         return []
     by_group: Dict[str, List[str]] = {"all": [], "or": [], "not": []}
@@ -585,6 +618,30 @@ def map_level_to_seniority(levels: Any) -> Optional[List[str]]:
     mapped = dedupe_keep_order(mapped)
     return mapped or None
 
+def range_obj_to_str_pair(obj: Any) -> Optional[List[str]]:
+    if not isinstance(obj, dict):
+        return None
+    f = obj.get("from")
+    t = obj.get("to")
+    if f is None and t is None:
+        return None
+    if not (f is None or isinstance(f, int)):
+        return None
+    if not (t is None or isinstance(t, int)):
+        return None
+    return [str(f) if isinstance(f, int) else "", str(t) if isinstance(t, int) else ""]
+
+def apply_languages_to_flags(payload: Dict[str, Any], extractor_json: Dict[str, Any]) -> None:
+    lang = extractor_json.get("languages")
+    if not isinstance(lang, dict):
+        return
+    ru = lang.get("russian")
+    en = lang.get("english")
+    if isinstance(ru, bool):
+        payload["onlyRussian"] = ru
+    if isinstance(en, bool):
+        payload["onlyEnglish"] = en
+
 def build_step3_payload(
     extractor_json: Dict[str, Any],
     user_phrase: str,
@@ -596,11 +653,15 @@ def build_step3_payload(
 
     pos = extractor_json.get("positions")
     if isinstance(pos, list):
-        payload["positions"] = entities_to_groups([x for x in pos if isinstance(x, dict)])
+        groups = entities_to_groups([x for x in pos if isinstance(x, dict)])
+        if groups:
+            payload["positions"] = groups
 
     skills = extractor_json.get("skills")
     if isinstance(skills, list):
-        payload["skills"] = entities_to_groups([x for x in skills if isinstance(x, dict)])
+        groups = entities_to_groups([x for x in skills if isinstance(x, dict)])
+        if groups:
+            payload["skills"] = groups
 
     loc = extractor_json.get("locations")
     if isinstance(loc, list):
@@ -635,6 +696,20 @@ def build_step3_payload(
 
     if extractor_json.get("higher_education") is True:
         payload["onlyWithHigherEducation"] = True
+
+    apply_languages_to_flags(payload, extractor_json)
+
+    exp_pair = range_obj_to_str_pair(extractor_json.get("experience"))
+    if exp_pair is not None:
+        payload["experience"] = exp_pair
+
+    mgmt_pair = range_obj_to_str_pair(extractor_json.get("management_experience"))
+    if mgmt_pair is not None:
+        payload["managementExperience"] = mgmt_pair
+
+    age_pair = range_obj_to_str_pair(extractor_json.get("age"))
+    if age_pair is not None:
+        payload["ages"] = age_pair
 
     return payload
 
@@ -671,10 +746,6 @@ def call_openai_step1(
     user_input: str,
     timeout_s: int,
 ) -> Tuple[Optional[str], Dict[str, int], Optional[str]]:
-    """
-    Returns:
-      (text, usage, error)
-    """
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     url = f"{base_url}/responses"
     headers = {
@@ -682,15 +753,16 @@ def call_openai_step1(
         "Content-Type": "application/json",
     }
 
-    # Prompt MUST be present for step1 to be meaningful.
-    if not prompt_cfg.prompt_id or not prompt_cfg.prompt_version:
-        return None, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "step1_prompt_id_or_version_missing"
+    if not prompt_cfg.prompt_id:
+        return None, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "step1_prompt_id_missing"
 
     payload: Dict[str, Any] = {
         "model": prompt_cfg.model,
         "input": user_input,
-        "prompt": {"id": prompt_cfg.prompt_id, "version": str(prompt_cfg.prompt_version)},
+        "prompt": {"id": prompt_cfg.prompt_id},
     }
+    if prompt_cfg.prompt_version:
+        payload["prompt"]["version"] = str(prompt_cfg.prompt_version)
 
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=timeout_s)
@@ -734,16 +806,6 @@ def call_backend_search_bool(
     token: str,
     payload: Dict[str, Any],
 ) -> Tuple[str, int, int, Optional[int], Optional[str], Optional[Dict[str, Any]]]:
-    """
-    Returns:
-      (kind, status, attempts, count, error_message, response_json)
-    kind:
-      - success
-      - insufficient_search_terms
-      - http_error
-      - bad_json
-      - missing_count
-    """
     url = backend.base_url.rstrip("/") + backend.step3_path
     attempts = 0
     last_err: Optional[str] = None
@@ -821,7 +883,7 @@ def compute_pass_rate(ok_count: int, total: int) -> float:
 # ----------------------------
 
 def parse_steps(s: str) -> List[int]:
-    s = s.strip()
+    s = (s or "").strip()
     if not s:
         return [1, 2, 3]
     out: List[int] = []
@@ -837,6 +899,7 @@ def parse_steps(s: str) -> List[int]:
             pass
     return out or [1, 2, 3]
 
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run extractor-agent step1/2/3 tests and produce a compact report.")
     ap.add_argument("--cases-dir", required=True, help="Path to fixtures directory (tests/fixtures/extractor_agent)")
@@ -845,6 +908,10 @@ def main() -> int:
     ap.add_argument("--mix-seed", type=int, default=42, help="Seed for mixing/shuffling")
     ap.add_argument("--mix-total-limit", type=int, default=0, help="If >0, cap total mixed cases to this number")
 
+    ap.add_argument("--include-suite", action="store_true", default=True, help="Include built-in suite cases (default: on)")
+    ap.add_argument("--no-include-suite", action="store_true", default=False, help="Disable built-in suite cases")
+    ap.add_argument("--suite-count", type=int, default=20, help="How many built-in suite cases to use (default: 20)")
+
     ap.add_argument("--synthetic-count", type=int, default=0, help="How many synthetic cases to generate (syn_*)")
     ap.add_argument("--synthetic-seed", type=int, default=1234)
 
@@ -852,17 +919,19 @@ def main() -> int:
 
     ap.add_argument("--cfg", type=str, default="tests/tools/model.yaml", help="Path to model/prompt yaml config")
     ap.add_argument("--prompt-id", type=str, default="", help="Override prompt_id")
-    ap.add_argument("--prompt-version", type=str, default="", help="Override prompt_version")
+    ap.add_argument("--prompt-version", type=str, default="", help="Override prompt_version (optional)")
     ap.add_argument("--model", type=str, default="", help="Override model name")
 
-    ap.add_argument("--base-url", type=str, required=True, help="Backend base url, e.g. https://testsecond.hlebusheck.ru")
-    ap.add_argument("--step3-path", type=str, default="/site/searchBool", help="Backend step3 path")
-    ap.add_argument("--token", type=str, required=True, help="Backend auth token")
+    # Defaults from env so you don't type them each run:
+    ap.add_argument("--base-url", type=str, default=os.getenv("AI_SEARCH_BASE_URL", "").strip(),
+                    help='Backend base url (default: env AI_SEARCH_BASE_URL)')
+    ap.add_argument("--step3-path", type=str, default="/site/searchBool", help='Backend step3 path (default: /site/searchBool)')
+    ap.add_argument("--token", type=str, default=os.getenv("AI_SEARCH_AUTH_TOKEN", "").strip(),
+                    help='Backend auth token (default: env AI_SEARCH_AUTH_TOKEN)')
 
     ap.add_argument("--timeout-s", type=int, default=30)
     ap.add_argument("--step3-retries", type=int, default=2)
 
-    # Correct mutually exclusive token placement:
     ap.add_argument("--token-in-body", dest="token_in_body", action="store_true", default=True)
     ap.add_argument("--token-in-header", dest="token_in_body", action="store_false")
 
@@ -875,7 +944,6 @@ def main() -> int:
     ap.add_argument("--require-count", action="store_true", default=True)
     ap.add_argument("--no-require-count", action="store_true", default=False)
 
-    # base payload flags (like frontend)
     ap.add_argument("--only-russian", action="store_true", default=False)
     ap.add_argument("--only-english", action="store_true", default=False)
     ap.add_argument("--only-with-contacts", action="store_true", default=True)
@@ -893,6 +961,13 @@ def main() -> int:
 
     args = ap.parse_args()
 
+    # validate required runtime params (step3 defaults from env, but still must exist if step3 runs)
+    if 3 in parse_steps(args.steps):
+        if not args.base_url:
+            raise SystemExit("Step3 enabled but base_url is missing. Set AI_SEARCH_BASE_URL or pass --base-url.")
+        if not args.token:
+            raise SystemExit("Step3 enabled but token is missing. Set AI_SEARCH_AUTH_TOKEN or pass --token.")
+
     steps = parse_steps(args.steps)
     ratios = parse_mix_ratios(args.mix_ratios)
     total_limit = args.mix_total_limit if args.mix_total_limit and args.mix_total_limit > 0 else None
@@ -901,15 +976,9 @@ def main() -> int:
     require_search_terms = args.require_search_terms and (not args.no_require_search_terms)
     require_count = args.require_count and (not args.no_require_count)
 
-    # load cfg
     cfg_path = Path(args.cfg)
     cfg = load_yaml(cfg_path) if cfg_path.exists() else {}
 
-    # prompt resolution like the old runner:
-    # - prefer CLI flags
-    # - then cfg.extractor_agent / cfg.extractor
-    # - then top-level / cfg.prompt
-    # - then env EXTRACTOR_AGENT_PROMPT_ID / EXTRACTOR_AGENT_PROMPT_VERSION
     def _resolve_prompt_from_cfg(cfg_obj: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
         block = {}
         if isinstance(cfg_obj.get("extractor_agent"), dict):
@@ -940,17 +1009,19 @@ def main() -> int:
 
     model = args.model or deep_get(cfg, ["model"]) or deep_get(cfg, ["openai", "model"]) or "gpt-4.1"
 
-    # Hard fail if step1 is enabled but prompt_id is missing (version can be empty)
-    if 1 in steps and not prompt_id:
-        raise SystemExit(
-            "Step1 enabled but prompt_id missing. Provide --prompt-id or set it in tests/tools/model.yaml "
-            "(extractor_agent.prompt_id) or via EXTRACTOR_AGENT_PROMPT_ID."
-        )
+    if 1 in steps:
+        if not os.getenv("OPENAI_API_KEY", "").strip():
+            raise SystemExit("Step1 enabled but OPENAI_API_KEY is missing in env.")
+        if not prompt_id:
+            raise SystemExit(
+                "Step1 enabled but prompt_id missing. Provide --prompt-id or set it in tests/tools/model.yaml "
+                "(extractor_agent.prompt_id) or via EXTRACTOR_AGENT_PROMPT_ID."
+            )
 
     prompt_cfg = PromptCfg(
         prompt_id=prompt_id,
         prompt_version=str(prompt_version) if prompt_version else None,
-        model=model,
+        model=str(model),
     )
 
     backend_cfg = BackendCfg(
@@ -964,26 +1035,18 @@ def main() -> int:
         require_count=require_count,
     )
 
-    # Hard guardrails (like your "old working code")
-    if 1 in steps:
-        if not os.getenv("OPENAI_API_KEY", "").strip():
-            raise SystemExit("Step1 enabled but OPENAI_API_KEY is missing in env.")
-        if not prompt_cfg.prompt_id or not prompt_cfg.prompt_version:
-            raise SystemExit(
-                "Step1 enabled but prompt_id/prompt_version missing. "
-                "Provide --prompt-id/--prompt-version or set them in tests/tools/model.yaml."
-            )
-
     run_id = make_run_id()
 
     print(f"[init] loaded cfg: {cfg_path.resolve() if cfg_path.exists() else str(cfg_path)}")
 
-    # load fixtures
     all_cases = load_cases_from_dir(Path(args.cases_dir))
     real_cases = [c for c in all_cases if c.source == "real"]
-    suite_cases = [c for c in all_cases if c.source == "suite"]
 
-    syn_cases = build_synthetic_cases(real_cases + suite_cases, args.synthetic_count, args.synthetic_seed)
+    use_suite = bool(args.include_suite) and (not bool(args.no_include_suite))
+    suite_cases = build_suite_cases(limit=int(args.suite_count), seed=int(args.mix_seed)) if use_suite else []
+
+    syn_base = real_cases + suite_cases
+    syn_cases = build_synthetic_cases(syn_base, args.synthetic_count, args.synthetic_seed)
 
     mixed, counts = mix_cases(
         real_cases=real_cases,
@@ -1015,10 +1078,10 @@ def main() -> int:
         f"prompt_id={prompt_cfg.prompt_id} prompt_version={prompt_cfg.prompt_version} model={prompt_cfg.model} "
         f"base_url={backend_cfg.base_url} step3_url={step3_url} "
         f"token_in_body={backend_cfg.token_in_body} timeout_s={backend_cfg.timeout_s} retries={backend_cfg.retries} "
-        f"sanitize_office_geo={backend_cfg.sanitize_office_geo} require_search_terms={backend_cfg.require_search_terms} require_count={backend_cfg.require_count}"
+        f"sanitize_office_geo={backend_cfg.sanitize_office_geo} require_search_terms={backend_cfg.require_search_terms} require_count={backend_cfg.require_count} "
+        f"suite_enabled={use_suite} suite_count={len(suite_cases)}"
     )
 
-    # base payload like frontend
     base_payload = {
         "onlyRussian": bool(args.only_russian),
         "onlyEnglish": bool(args.only_english),
@@ -1056,9 +1119,6 @@ def main() -> int:
         step1_info: Dict[str, Any] = {"ok": True}
         step3_info: Dict[str, Any] = {"kind": "skipped"}
 
-        # ----------------
-        # Step1
-        # ----------------
         step1_ok = True
         step1_errors: List[str] = []
         step1_warnings: List[str] = []
@@ -1103,13 +1163,12 @@ def main() -> int:
         if not step1_ok:
             step1_errors_total += len(step1_errors)
 
-        # If step1 failed, we stop here to avoid "polluted" insufficient_search_terms from empty payloads
         if (1 in steps) and (not step1_ok):
             status = "failed_step1"
             ok = False
             failed_step1 += 1
 
-            cr = CaseResult(
+            results.append(CaseResult(
                 name=case.name,
                 input=case.input,
                 source=case.source,
@@ -1119,10 +1178,9 @@ def main() -> int:
                 step3={"kind": "skipped_due_to_failed_step1"},
                 extractor_json=extractor_json,
                 step3_payload=step3_payload,
-            )
-            results.append(cr)
+            ))
 
-            mm = {
+            mismatches.append({
                 "name": case.name,
                 "input": case.input,
                 "status": status,
@@ -1130,13 +1188,9 @@ def main() -> int:
                 "step1": step1_info,
                 "step3": {"kind": "skipped_due_to_failed_step1"},
                 "extractor_json": extractor_json,
-            }
-            mismatches.append(mm)
+            })
             continue
 
-        # ----------------
-        # Step2
-        # ----------------
         if 2 in steps:
             if extractor_json is None:
                 extractor_json = {}
@@ -1147,9 +1201,6 @@ def main() -> int:
                 sanitize_office_geo=sanitize_office_geo,
             )
 
-        # ----------------
-        # Step3
-        # ----------------
         if 3 in steps:
             if step3_payload is None:
                 step3_payload = dict(base_payload)
@@ -1173,7 +1224,6 @@ def main() -> int:
                 if err_msg:
                     step3_info["error_message"] = err_msg
 
-        # finalize status
         if step3_info.get("kind") == "insufficient_search_terms":
             status = "insufficient_search_terms"
             ok = True
@@ -1186,7 +1236,7 @@ def main() -> int:
             ok = False
             failed_step3_or_step2 += 1
 
-        cr = CaseResult(
+        results.append(CaseResult(
             name=case.name,
             input=case.input,
             source=case.source,
@@ -1196,10 +1246,9 @@ def main() -> int:
             step3=step3_info,
             extractor_json=extractor_json,
             step3_payload=step3_payload,
-        )
-        results.append(cr)
+        ))
 
-        if status in ("failed_step3_or_step2",):
+        if status == "failed_step3_or_step2":
             mm = {
                 "name": case.name,
                 "input": case.input,
@@ -1214,7 +1263,7 @@ def main() -> int:
             mismatches.append(mm)
 
     total = len(results)
-    ok_total = passed + insufficient_count  # now meaningful (step1 failures never inflate insufficient)
+    ok_total = passed + insufficient_count
     pass_rate = compute_pass_rate(ok_total, total)
 
     report: Dict[str, Any] = {
@@ -1244,6 +1293,10 @@ def main() -> int:
                 "require_search_terms": runner_cfg.backend.require_search_terms,
                 "require_count": runner_cfg.backend.require_count,
             },
+            "suite": {
+                "enabled": use_suite,
+                "suite_count": len(suite_cases),
+            },
         },
         "token_usage_total": usage_total,
         "summary": {
@@ -1253,6 +1306,7 @@ def main() -> int:
             "failed_step1": failed_step1,
             "failed_step3_or_step2": failed_step3_or_step2,
             "pass_rate": pass_rate,
+            "pass_rate_strict": round((passed / total) * 100.0, 2) if total else 0.0,
             "step1_errors_total": step1_errors_total,
             "step3_http_errors": step3_http_errors,
             "zero_results": zero_results,
@@ -1264,7 +1318,7 @@ def main() -> int:
     }
 
     for r in results:
-        item: Dict[str, Any] = {
+        report["cases"].append({
             "name": r.name,
             "source": r.source,
             "input": r.input,
@@ -1274,8 +1328,7 @@ def main() -> int:
             "step3": r.step3,
             "extractor_json": r.extractor_json or {},
             "step3_payload": r.step3_payload or {},
-        }
-        report["cases"].append(item)
+        })
 
     report_dir = Path(args.report_dir)
     ensure_dir(report_dir)
@@ -1285,8 +1338,8 @@ def main() -> int:
     print(
         f"[summary] total={total} passed={passed} insufficient={insufficient_count} "
         f"failed_step1={failed_step1} failed_step3_or_step2={failed_step3_or_step2} "
-        f"pass_rate={pass_rate:.2f} step1_errors_total={step1_errors_total} "
-        f"step3_http_errors={step3_http_errors} zero_results={zero_results}"
+        f"pass_rate={pass_rate:.2f} pass_rate_strict={report['summary']['pass_rate_strict']:.2f} "
+        f"step1_errors_total={step1_errors_total} step3_http_errors={step3_http_errors} zero_results={zero_results}"
     )
     print(f"[done] report saved: {out_path}")
 
