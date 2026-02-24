@@ -1,6 +1,6 @@
 ﻿# AI Agents Workspace
 
-Набор раннеров для тестирования рекрутмент-промптов. Включает полный интеграционный прогон и отдельные проверки для `screening_assistant`, `message_classifier`, `screening_autofill`, `verdict_classifier` и генератора первого касания (Telegram).
+Набор раннеров для тестирования рекрутмент-промптов. Включает полный интеграционный прогон и отдельные проверки для `screening_assistant`, `message_classifier`, `screening_autofill`, `verdict_classifier`, `extractor_agent` и генератора первого касания (Telegram).
 
 ## Структура проекта
 - `app/` — CLI-раннеры.
@@ -13,7 +13,7 @@
 - `telegramMessageGenerator-main/` — опциональный генератор первого сообщения в Telegram.
 - `tests/fixtures/` — фикстуры (CDM и сценарии).
 - `tests/tools/` — `model.yaml` и скрипты генерации фикстур.
-- `tests/reports/` — отчеты раннеров (`runs`, `screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `screening_autofill`, `verdict_classifier`).
+- `tests/reports/` — отчеты раннеров (`runs`, `screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`).
 
 ## Подготовка окружения
 ```bash
@@ -42,16 +42,19 @@ OPENAI_API_KEY=sk-...
 - `screening_assistant`
 - `screening_autofill`
 - `verdict_classifier`
+- `extractor_agent`
 - `candidate_simulator` (профили кандидатов для `app/runner.py`)
 
 Переменные окружения для переопределения:
 - `FIRST_TOUCH_PROMPT_ID` — для `app/telegram_generator_runner.py` и генератора первого касания в `app/runner.py`.
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
 - `VERDICT_CLASSIFIER_PROMPT_ID`, `VERDICT_CLASSIFIER_PROMPT_VERSION` — для `app/verdict_classifier_runner.py`.
+- `EXTRACTOR_AGENT_PROMPT_ID`, `EXTRACTOR_AGENT_PROMPT_VERSION` — для `app/extractor_agent_runner.py`.
 
 ## Фикстуры и данные
 - `tests/fixtures/cdm/` — CDM-фикстуры вакансий (генерируются `python -m app.runner gen-fixtures`).
 - `tests/fixtures/screening_scenarios.csv` — сценарии для проверки `screening_assistant`.
+- `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py`.
 - `cdm/schema.json` — схема CDM.
 
 ## Раннеры (`app/`)
@@ -105,6 +108,55 @@ python -m app.screening_scenarios_runner \
 
 Отчеты:
 - `tests/reports/screening_scenarios/screening_scenarios_report_<timestamp>.json`
+
+### `app/extractor_agent_runner.py` — тест пайплайна AI Search (`step1/2/3`)
+Как работает:
+- Step1: прогоняет запрос рекрутера через LLM-парсер и получает `extractor_json` строго по контракту (валидация ловит drift: лишние поля, неверные форматы, неверные значения).
+- Step2: делает только маппинг `extractor_json -> payload` для backend `/site/searchBool` (без «добавления смысла» и без словарей/ID-маппингов).
+- Step3: отправляет `payload` в backend `/site/searchBool` и читает `count`.
+- Ответ backend `400 Positions or skills or keys must be set` классифицируется как `insufficient_search_terms` (не считается падением Step3).
+
+Источники кейсов:
+- `real`: кейсы из `tests/fixtures/extractor_agent` (обычно `amp_*`).
+- `suite`: встроенные регрессионные кейсы (в коде), гарантируют наличие якоря (`positions/skills/keywords`).
+- `syn`: синтетические деградированные запросы (генерируются из `real+suite` без добавления смысла).
+
+Конфигурация:
+- Prompt берется из `tests/tools/model.yaml` (поддерживается блок `extractor_agent.prompt_id/prompt_version`, а также fallback к `top-level/prompt.*`).
+- Можно переопределить через `--prompt-id/--prompt-version` или env `EXTRACTOR_AGENT_PROMPT_ID/EXTRACTOR_AGENT_PROMPT_VERSION`.
+- Для Step3 по умолчанию используются env: `AI_SEARCH_BASE_URL`, `AI_SEARCH_AUTH_TOKEN`.
+
+Запуск (полный `1:1:1` прогон):
+```bash
+export OPENAI_API_KEY=sk-...
+export AI_SEARCH_AUTH_TOKEN=...
+export AI_SEARCH_BASE_URL=https://...
+
+python app/extractor_agent_runner.py \
+  --cases-dir tests/fixtures/extractor_agent \
+  --cases-count 20 \
+  --suite-count 20 \
+  --synthetic-count 20 \
+  --mix-ratios real=1,suite=1,syn=1 \
+  --mix-seed 42 \
+  --steps 1,2,3
+```
+
+Только Step1 (проверка промпта):
+```bash
+python app/extractor_agent_runner.py \
+  --cases-dir tests/fixtures/extractor_agent \
+  --cases-count 20 \
+  --suite-count 20 \
+  --synthetic-count 20 \
+  --mix-ratios real=1,suite=1,syn=1 \
+  --mix-seed 42 \
+  --steps 1
+```
+
+Отчеты:
+- `tests/reports/extractor_agent_full/extractor_agent_full_report_<run_id>.json`
+- В каждом кейсе сохраняются `extractor_json` и `step3_payload` (распашенно) для дебага маппинга.
 
 ### `app/screening_guardrails_runner.py` — guardrails-проверки
 Как работает:
