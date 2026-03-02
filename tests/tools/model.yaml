@@ -23,6 +23,16 @@ verdict_classifier:
   prompt_version: 7
   seed: 1234
 
+extractor_agent:
+  prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
+  prompt_version: 27
+  seed: 1234
+
+responsibilities_parser:
+  prompt_id: pmpt_68e66be91c9c8193873259d4e8e6366504610f09662d6bed
+  prompt_version: 3
+  seed: 1234
+
 candidate_simulator:
   difficult:
     display_name: "Вадим"
@@ -33,7 +43,3 @@ candidate_simulator:
     prompt_id: pmpt_6915e984ed688195b3cadd0240baea95049b4ba49bfd5df4
     prompt_version: 2
     
-extractor_agent:
-  prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
-  prompt_version: 17
-  seed: 1234
