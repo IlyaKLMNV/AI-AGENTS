@@ -29,7 +29,7 @@ extractor_agent:
   seed: 1234
 
 responsibilities_parser:
-  prompt_id: pmpt_68e66be91c9c8193873259d4e8e6366504610f09662d6bed
+  prompt_id: pmpt_68e66b5d57c08194959b45d5b2acc0810ab2792039e4f59b
   prompt_version: 3
   seed: 1234
 
