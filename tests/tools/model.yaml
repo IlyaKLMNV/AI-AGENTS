@@ -33,6 +33,11 @@ responsibilities_parser:
   prompt_version: 3
   seed: 1234
 
+sourcing_assistant:
+  prompt_id: pmpt_68e66be91c9c8193873259d4e8e6366504610f09662d6bed
+  prompt_version: 4
+  seed: 1234
+
 candidate_simulator:
   difficult:
     display_name: "Вадим"
