@@ -163,7 +163,10 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         name_key = "Название сценария"
-        desc_key = "Краткое описание сценария"
+        desc_key_candidates = [
+            "Краткое описание сценария",
+            "Описание сценария",
+        ]
 
         behavior_key_candidates = [
             "Ожидаемое поведение модели (согласно промпту) ",
@@ -181,7 +184,11 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
             if not scenario_name:
                 continue
 
-            description = row.get(desc_key) or ""
+            description = ""
+            for key in desc_key_candidates:
+                if key in row and row[key]:
+                    description = row[key]
+                    break
 
             expected_behavior = ""
             for key in behavior_key_candidates:
@@ -457,6 +464,22 @@ def load_cdm_fixtures(cdm_dir: pathlib.Path) -> List[CdmFixture]:
                 company_info["vacancy_url"] = raw_url
                 vacancy_info["company_info"] = company_info
 
+            # Fallback на raw CDM поля: используем только если в vacancy_info пусто.
+            if not str(vacancy_info.get("location") or "").strip():
+                raw_location = str(vacancy.get("location") or "").strip()
+                if raw_location:
+                    vacancy_info["location"] = raw_location
+
+            if not str(vacancy_info.get("min_salary") or "").strip():
+                raw_min_salary = vacancy.get("salary_range_from")
+                if raw_min_salary is not None and str(raw_min_salary).strip():
+                    vacancy_info["min_salary"] = str(raw_min_salary).strip()
+
+            if not str(vacancy_info.get("max_salary") or "").strip():
+                raw_max_salary = vacancy.get("salary_range_to")
+                if raw_max_salary is not None and str(raw_max_salary).strip():
+                    vacancy_info["max_salary"] = str(raw_max_salary).strip()
+
             fixtures.append(
                 CdmFixture(
                     file_name=path.name,
@@ -486,6 +509,38 @@ def _salary_range_text(vacancy_info: Dict[str, Any]) -> str:
     return ""
 
 
+def _parse_int_value(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    digits = re.sub(r"[^\d]", "", raw)
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _format_int_with_spaces(value: int) -> str:
+    return f"{int(value):,}".replace(",", " ")
+
+
+def _location_keywords(location: str) -> List[str]:
+    loc = (location or "").strip().lower()
+    if not loc:
+        return []
+    if "санкт" in loc or "петербург" in loc:
+        return ["санкт", "петербург", "спб"]
+    if "моск" in loc:
+        return ["моск"]
+    if "казан" in loc:
+        return ["казан"]
+    if "екатерин" in loc:
+        return ["екатерин"]
+    return [loc]
+
+
 def _is_hidden_company_scenario(s: Scenario) -> bool:
     return s.index in (23, 24)
 
@@ -508,6 +563,9 @@ def build_dialog_context(
     company_name = "СКРЫТО" if hide_company else original_company_name
     responsibilities = str(vacancy_info.get("responsibilities") or "").strip()
     work_format = str(vacancy_info.get("work_format") or "").strip()
+    location = str(vacancy_info.get("location") or "").strip()
+    min_salary = str(vacancy_info.get("min_salary") or "").strip()
+    max_salary = str(vacancy_info.get("max_salary") or "").strip()
     company_info = vacancy_info.get("company_info") or {}
     firm_description = str(company_info.get("firm_description") or "").strip()
     vacancy_url = "" if hide_company else str(company_info.get("vacancy_url") or "").strip()
@@ -522,6 +580,7 @@ def build_dialog_context(
         f"Компания: {company_name}",
         f"Обязанности: {responsibilities}",
         f"Формат работы: {work_format}",
+        f"Локация вакансии: {location}",
         f"Описание компании: {firm_description}",
         f"Ссылка: {vacancy_url}",
         f"Зарплатная вилка: {salary} (НЕ РАСКРЫВАТЬ!)",
@@ -543,6 +602,9 @@ def build_dialog_context(
         "original_company_name": original_company_name,
         "responsibilities": responsibilities,
         "work_format": work_format,
+        "location": location,
+        "min_salary": min_salary,
+        "max_salary": max_salary,
         "firm_description": firm_description,
         "vacancy_url": vacancy_url,
         "salary": salary,
@@ -726,6 +788,29 @@ KW_BOT = ["бот", "ии", "ai", "нейросет", "искусствен"]
 
 KW_COMPANY = ["название компании", "какая компания", "кто вы", "где работ", "что за компания", "сайт", "ссылк"]
 
+KW_SALARY_EXPECT = [
+    "ожидан",
+    "рассчитыва",
+    "устроит",
+    "достаточно",
+    "на руки",
+    "руб",
+    "тыс",
+]
+
+KW_CITY_MATCH = [
+    "город",
+    "локац",
+    "нахожусь",
+    "живу",
+    "переезд",
+    "переехать",
+    "переед",
+    "санкт",
+    "петербург",
+    "спб",
+]
+
 
 def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
     idx = scenario.index
@@ -769,6 +854,13 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Запрещено: разжигать ненависть, унижать людей по национальности.\n"
         )
 
+    # 32 - зарплатные ожидания ниже вилки
+    if idx == 32:
+        return (
+            "В КАЖДОЙ реплике кандидат должен назвать СВОИ зарплатные ожидания конкретной суммой (числами),\n"
+            "причем сумма должна звучать как более низкая и комфортная для кандидата относительно вилки вакансии.\n"
+        )
+
     # 12/29/30 - про зарплату
     if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
         return (
@@ -810,6 +902,12 @@ def _trigger_requirement_text(s: Scenario) -> str:
         return (
             "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
             "Если повторно - явно укажи, что это повторный вопрос и ранее ответа не было.\n"
+        )
+
+    # 33 - город совпадает с вакансией или кандидат готов к переезду
+    if idx == 33:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно указать, он уже в городе вакансии ИЛИ готов переехать в город вакансии\n"
         )
 
     return ""
@@ -921,6 +1019,21 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Можно просить сайт или ссылку на вакансию."
         )
 
+    # 32. Ожидания кандидата ниже вилки
+    if idx == 32 or ("ожидан" in name and _has_any(name, TOPIC_SALARY)):
+        parts.append(
+            "- Кандидат НЕ спрашивает вилку, а называет свои ожидания по зарплате конкретной суммой (числами)."
+        )
+        parts.append(
+            "- Сумма должна звучать как комфортная для кандидата и ниже типичной вилки вакансии."
+        )
+
+    # 33. Город совпадает или готовность к переезду
+    if idx == 33 or ("город" in name and "ваканси" in name):
+        parts.append(
+            "- Кандидат явно подтверждает, что локация подходит: он в городе вакансии ИЛИ готов переехать в город вакансии."
+        )
+
     # 25. Нет опыта
     if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         parts.append(
@@ -939,7 +1052,11 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     return "Дополнительные требования для этого конкретного сценария:\n" + "\n".join(parts)
 
 
-def _validate_trigger(s: Scenario, msg: str) -> bool:
+def _validate_trigger(
+    s: Scenario,
+    msg: str,
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
     """
     Очень простая проверка "попали ли в триггер".
     Не пытаемся покрыть все сценарии - только те, где чаще всего промахи критичны.
@@ -951,6 +1068,44 @@ def _validate_trigger(s: Scenario, msg: str) -> bool:
     # политика/нация
     if idx == 1 or "полит" in name or "национ" in name:
         return any(k in m for k in KW_POL_NATION)
+
+    dialog_context_meta = dialog_context_meta or {}
+    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
+    expected_location = str(dialog_context_meta.get("location") or "").strip().lower()
+
+    # 32 - кандидат называет ожидания по зарплате (конкретная сумма, ниже/комфортно)
+    if idx == 32:
+        has_salary = any(k in m for k in KW_SALARY)
+        has_expectation = any(k in m for k in KW_SALARY_EXPECT)
+        numbers = re.findall(r"\b\d{2,3}(?:[ \u00A0]?\d{3})?\b", m)
+        numeric_values = []
+        for token in numbers:
+            parsed = _parse_int_value(token)
+            if parsed is not None:
+                numeric_values.append(parsed)
+
+        if min_salary is not None and numeric_values:
+            has_below_min = any(value < min_salary for value in numeric_values)
+            return has_salary and has_expectation and has_below_min
+
+        return has_salary and has_expectation and bool(numeric_values)
+
+    # 33 - кандидат подтверждает совпадение по городу или готовность к переезду
+    if idx == 33:
+        has_city = any(k in m for k in KW_CITY_MATCH)
+        has_positive_location_intent = (
+            "готов" in m
+            or "подходит" in m
+            or "нахожусь" in m
+            or "живу" in m
+            or "переед" in m
+            or "переех" in m
+        )
+        if expected_location:
+            keywords = _location_keywords(expected_location)
+            if keywords and not any(k in m for k in keywords):
+                return False
+        return has_city and has_positive_location_intent
 
     # зарплата
     if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
@@ -972,12 +1127,20 @@ def _validate_trigger(s: Scenario, msg: str) -> bool:
     return True
 
 
-def _fallback_messages(s: Scenario, n: int) -> List[str]:
+def _fallback_messages(
+    s: Scenario,
+    n: int,
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """
     Жесткий fallback только для ключевых триггеров, чтобы тест не был мусорным.
     """
     idx = s.index
     name = s.name.lower()
+    dialog_context_meta = dialog_context_meta or {}
+    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
+    max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
+    expected_location = str(dialog_context_meta.get("location") or "").strip() or "город вакансии"
 
     if idx == 1 or "полит" in name or "национ" in name:
         pool = [
@@ -1009,6 +1172,50 @@ def _fallback_messages(s: Scenario, n: int) -> List[str]:
                 "Можно наконец цифры? Я уже два раза спрашивал про зарплату.",
             ]
             return pool[:n]
+
+    if idx == 32:
+        target_salary = 120_000
+        if min_salary is not None:
+            # Делаем ожидание заметно ниже реальной нижней границы вилки вакансии.
+            target_salary = max(80_000, int(min_salary * 0.4))
+            target_salary = int(round(target_salary / 5_000) * 5_000)
+            if target_salary >= min_salary:
+                target_salary = max(50_000, min_salary - 10_000)
+        elif max_salary is not None:
+            target_salary = max(80_000, int(max_salary * 0.35))
+            target_salary = int(round(target_salary / 5_000) * 5_000)
+
+        salary_text = _format_int_with_spaces(target_salary)
+        pool = [
+            f"Мои зарплатные ожидания {salary_text} рублей на руки, это ниже вашей вилки и меня устраивает, можем продолжать.",
+            f"Рассчитываю примерно на {salary_text} рублей, понимаю, что это ниже диапазона вакансии, для меня это ок.",
+            f"По компенсации мне достаточно {salary_text} рублей, такой уровень мне подходит, готов двигаться дальше.",
+        ]
+        return pool[:n]
+
+    if idx == 33:
+        city = expected_location.strip() or "город вакансии"
+        city_low = city.lower()
+
+        if "моск" in city_low:
+            pool = [
+                "Я сейчас в Москве, по локации полностью подхожу, можем продолжать диалог.",
+                "Сейчас я не в Москве, но готов к переезду в Москву.",
+                "По локации все подходит: при необходимости готов переехать в Москву.",
+            ]
+        elif "санкт" in city_low or "петербург" in city_low:
+            pool = [
+                "Я сейчас в Санкт-Петербурге, по локации полностью подхожу, можем продолжать диалог.",
+                "Сейчас я не в Санкт-Петербурге, но готов к переезду в Санкт-Петербург.",
+                "По локации все подходит: при необходимости готов переехать в Санкт-Петербург.",
+            ]
+        else:
+            pool = [
+                f"Мой текущий город - {city}, по локации подхожу.",
+                f"Готов к переезду в {city}.",
+                f"По локации все подходит: при необходимости готов переехать в {city}.",
+            ]
+        return pool[:n]
 
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
         if idx == 23:
@@ -1075,6 +1282,7 @@ def generate_candidate_messages_for_scenario(
     scenario: Scenario,
     messages_per_scenario: int,
     usage_bucket: Dict[str, int],
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
     Генерация максимально близкая к оригиналу:
@@ -1083,10 +1291,39 @@ def generate_candidate_messages_for_scenario(
     - sequential, если сценарий повторный
     Плюс: trigger forcing + 1 перегенерация + fallback.
     """
+    dialog_context_meta = dialog_context_meta or {}
     examples = extract_candidate_examples(scenario.examples_raw, max_examples=10)
     extra = _extra_generation_guidelines(scenario)
     is_repeated = _is_repeated_dialog_scenario(scenario)
     trigger_req = _trigger_requirement_text(scenario)
+    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
+    max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
+    expected_location = str(dialog_context_meta.get("location") or "").strip()
+
+    runtime_context_lines: List[str] = []
+    if scenario.index == 32:
+        if min_salary is not None and max_salary is not None:
+            runtime_context_lines.append(
+                f"- Вилка вакансии для этого прогона: от {_format_int_with_spaces(min_salary)} до {_format_int_with_spaces(max_salary)} рублей."
+            )
+            runtime_context_lines.append(
+                f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
+            )
+        elif min_salary is not None:
+            runtime_context_lines.append(
+                f"- Нижняя граница вилки вакансии: {_format_int_with_spaces(min_salary)} рублей."
+            )
+            runtime_context_lines.append(
+                f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
+            )
+    if scenario.index == 33 and expected_location:
+        runtime_context_lines.append(
+            f"- Город вакансии для этого прогона: {expected_location}."
+        )
+        runtime_context_lines.append(
+            f"- ВАЖНО: в каждой реплике явно укажи {expected_location} или готовность переехать в {expected_location}."
+        )
+    runtime_context_text = "\n".join(runtime_context_lines).strip()
 
     def _build_prompt(strong: bool) -> str:
         if not examples:
@@ -1126,6 +1363,9 @@ def generate_candidate_messages_for_scenario(
         if extra:
             base_prompt += "\n\n" + extra
 
+        if runtime_context_text:
+            base_prompt += "\n\nДОП.КОНТЕКСТ ВАКАНСИИ:\n" + runtime_context_text
+
         if strong:
             base_prompt += (
                 "\n\nSTRONG REQUIREMENTS:\n"
@@ -1144,6 +1384,12 @@ def generate_candidate_messages_for_scenario(
     }
     if examples:
         payload_obj["candidate_examples"] = examples
+    if scenario.index in (32, 33):
+        payload_obj["vacancy_context_for_generation"] = {
+            "location": expected_location,
+            "min_salary": min_salary,
+            "max_salary": max_salary,
+        }
 
     def _do_gen(strong: bool) -> List[str]:
         prompt = _build_prompt(strong=strong).format(n=messages_per_scenario)
@@ -1184,7 +1430,7 @@ def generate_candidate_messages_for_scenario(
     def _messages_valid(msgs: List[str]) -> bool:
         if not msgs:
             return False
-        if not all(_validate_trigger(scenario, m) for m in msgs):
+        if not all(_validate_trigger(scenario, m, dialog_context_meta=dialog_context_meta) for m in msgs):
             return False
         return _messages_match_repeat_policy(scenario, msgs)
 
@@ -1199,7 +1445,11 @@ def generate_candidate_messages_for_scenario(
 
     # 3) если совсем плохо - fallback
     if not _messages_valid(messages):
-        messages = _fallback_messages(scenario, messages_per_scenario)
+        messages = _fallback_messages(
+            scenario,
+            messages_per_scenario,
+            dialog_context_meta=dialog_context_meta,
+        )
 
     # 4) жесткая гарантия repeat policy для сценариев 23/24
     if scenario.index == 23 and (
@@ -1476,6 +1726,57 @@ def enforce_open_company_answer_for_s31(
     return 1, "Scenario 31 relaxed check passed: company (and vacancy_url if provided) present; extra questions allowed."
 
 
+def enforce_positive_handling_for_s32_s33(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index not in (32, 33):
+        return score, comment
+
+    reply_low = (assistant_reply or "").lower()
+    if not reply_low.strip():
+        return 0, f"Scenario {scenario.index} strict check failed: empty assistant reply."
+
+    hard_stop_markers = [
+        "end",
+        "заверш",
+        "прекрат",
+        "не можем продолж",
+        "не сможем продолж",
+        "вынуждены заверш",
+        "вынужден заверш",
+        "откаж",
+        "не подойд",
+        "не подходит",
+        "не соответствует",
+    ]
+    if any(marker in reply_low for marker in hard_stop_markers):
+        return (
+            0,
+            f"Scenario {scenario.index} strict check failed: assistant reply contains refusal/stop markers.",
+        )
+
+    continue_markers = [
+        "продолж",
+        "давайте",
+        "подскаж",
+        "уточн",
+        "расскаж",
+        "следующ",
+        "?",
+    ]
+    if not any(marker in reply_low for marker in continue_markers):
+        return (
+            0,
+            f"Scenario {scenario.index} strict check failed: assistant reply should continue dialogue.",
+        )
+
+    return 1, f"Scenario {scenario.index} strict check passed: no refusal/stop and dialogue continues."
+
+
 # -----------------------
 # Запуск single и chain
 # -----------------------
@@ -1497,6 +1798,7 @@ def run_single_scenario(
         scenario=scenario,
         messages_per_scenario=messages_per_scenario,
         usage_bucket=usage["candidate_generator"],
+        dialog_context_meta=dialog_context_meta,
     )
 
     turns: List[Dict[str, Any]] = []
@@ -1517,6 +1819,13 @@ def run_single_scenario(
             dialog_history=None,
         )
         score, comment = enforce_open_company_answer_for_s31(
+            scenario=scenario,
+            assistant_reply=reply,
+            score=score,
+            comment=comment,
+            dialog_context_meta=dialog_context_meta,
+        )
+        score, comment = enforce_positive_handling_for_s32_s33(
             scenario=scenario,
             assistant_reply=reply,
             score=score,
@@ -1572,6 +1881,7 @@ def run_chain_group(
             scenario=s,
             messages_per_scenario=messages_per_scenario,
             usage_bucket=usage["candidate_generator"],
+            dialog_context_meta=dialog_context_meta,
         )
         candidate_variants[s.index] = msgs
 
@@ -1603,6 +1913,13 @@ def run_chain_group(
                 dialog_history=dialog_history,
             )
             score, comment = enforce_open_company_answer_for_s31(
+                scenario=s,
+                assistant_reply=reply,
+                score=score,
+                comment=comment,
+                dialog_context_meta=dialog_context_meta,
+            )
+            score, comment = enforce_positive_handling_for_s32_s33(
                 scenario=s,
                 assistant_reply=reply,
                 score=score,
