@@ -366,6 +366,152 @@ def _contains_repeat_marker(text: str) -> bool:
     return _has_any(hay, REPEAT_MARKERS + extra_markers)
 
 
+THIRD_TIME_MARKERS = [
+    "\u0442\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437",
+    "\u0432 \u0442\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437",
+    "3-\u0439 \u0440\u0430\u0437",
+    "3 \u0439 \u0440\u0430\u0437",
+]
+
+SALARY_ULTIMATUM_MARKERS = [
+    "\u0431\u0435\u0437 \u0446\u0438\u0444\u0440 \u0441\u043c\u044b\u0441\u043b\u0430 \u043e\u0431\u0441\u0443\u0436\u0434\u0430\u0442\u044c \u043d\u0435\u0447\u0435\u0433\u043e",
+    "\u0431\u0435\u0437 \u044d\u0442\u043e\u0439 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u0438 \u0434\u043b\u044f \u043c\u0435\u043d\u044f \u0432\u0441\u0435 \u0440\u0430\u0437\u0433\u043e\u0432\u043e\u0440\u044b \u043f\u0443\u0441\u0442\u044b",
+    "\u0431\u0435\u0437 \u044d\u0442\u043e\u0433\u043e \u043d\u0435 \u0434\u0432\u0438\u0433\u0430\u044e\u0441\u044c \u0434\u0430\u043b\u044c\u0448\u0435",
+    "\u0431\u0435\u0437 \u044d\u0442\u043e\u0433\u043e \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435\u0442 \u0441\u043c\u044b\u0441\u043b\u0430",
+    "\u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0443 \u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u0441\u043b\u0435",
+    "\u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0443 \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u0441\u043b\u0435",
+    "\u0435\u0441\u043b\u0438 \u0432\u0438\u043b\u043a\u0443 \u043d\u0435 \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0435",
+    "\u0438\u043d\u0430\u0447\u0435 \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435\u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e",
+    "\u0438\u043d\u0430\u0447\u0435 \u043d\u0435\u0432\u0438\u0436\u0443 \u0441\u043c\u044b\u0441\u043b\u0430",
+]
+
+KW_SPAM_LEGITIMACY_EXPLICIT = [
+    "откуда у вас мои данные",
+    "откуда мои данные",
+    "откуда мой контакт",
+    "где вы нашли мой профиль",
+    "где нашли мой профиль",
+    "это спам",
+    "вы мошенники",
+    "подтвердите легитимность",
+    "подтвердите, что это не мошенники",
+]
+
+KW_GEO_OUTSIDE_RF = [
+    "живу вне рф",
+    "живу не в рф",
+    "нахожусь вне рф",
+    "вне рф",
+    "живу за границей",
+    "нахожусь за границей",
+    "за пределами рф",
+]
+
+KW_GEO_TIMEZONE_ONLY = [
+    "только свой часовой пояс",
+    "только мой часовой пояс",
+    "только в своем часовом поясе",
+    "только в своём часовом поясе",
+]
+
+KW_GEO_NO_RELOCATION = [
+    "переезд не рассматриваю",
+    "не рассматриваю переезд",
+    "релокация не интересует",
+    "не готов к переезду",
+]
+
+KW_GEO_REMOTE_ONLY = [
+    "только удаленка",
+    "только удалёнка",
+    "только удаленная работа",
+    "только удалённая работа",
+    "только удаленную работу",
+    "только удалённую работу",
+]
+
+KW_ALREADY_CONTACTED_EXPLICIT = [
+    "вы уже писали",
+    "мы уже общались",
+    "повторно это не актуально",
+    "не нужно снова писать",
+    "снова писать не нужно",
+]
+
+KW_NO_RELEVANT_PROFILE_EXPLICIT = [
+    "этого опыта у меня нет",
+    "такого опыта у меня нет",
+    "это не мой профиль",
+    "у меня другая специализация",
+    "таким не занимаюсь",
+]
+
+SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
+    7: [
+        "Откуда у вас мои данные?",
+        "Где вы нашли мой профиль?",
+        "Это спам?",
+        "Вы мошенники?",
+        "Подтвердите легитимность, пожалуйста.",
+    ],
+    10: [
+        "Я живу вне РФ, переезд не рассматриваю и рассматриваю только удаленную работу.",
+        "Сейчас живу вне РФ, работаю только в своем часовом поясе и переезд не рассматриваю.",
+        "Я живу за границей, интересует только удаленная работа и только свой часовой пояс.",
+    ],
+    17: [
+        "Вы уже писали мне по этой вакансии, повторно это не актуально.",
+        "Мы уже общались, не нужно снова писать по этому предложению.",
+        "Вы уже писали, повторно это не актуально.",
+    ],
+    25: [
+        "Этого опыта у меня нет, это не мой профиль.",
+        "У меня другая специализация, таким не занимаюсь.",
+        "Это не мой профиль, такого опыта у меня нет.",
+    ],
+}
+
+WORD_TOKEN_RE = re.compile(r"[^\W\d_]+", flags=re.UNICODE)
+CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+
+
+def _contains_third_time_marker(text: str) -> bool:
+    return _has_any(text or "", THIRD_TIME_MARKERS)
+
+
+def _contains_salary_ultimatum(text: str) -> bool:
+    return _has_any(text or "", SALARY_ULTIMATUM_MARKERS)
+
+
+def _scenario_example_override(scenario: Scenario) -> Optional[List[str]]:
+    if scenario.index == 4:
+        # Для S4 не используем CSV-примеры: сообщения должны генерироваться моделью с нуля.
+        return []
+    override = SCENARIO_EXAMPLE_OVERRIDES.get(scenario.index)
+    if override is None:
+        return None
+    return override[:]
+
+
+def _is_foreign_language_message(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized or CYRILLIC_RE.search(normalized):
+        return False
+    tokens = [token for token in WORD_TOKEN_RE.findall(normalized) if len(token) > 1]
+    return len(tokens) >= 2
+
+
+def _matches_geo_restriction_trigger(text: str) -> bool:
+    normalized = _normalize_text(text).lower()
+    has_outside_rf = _has_any(normalized, KW_GEO_OUTSIDE_RF)
+    has_hard_limit = (
+        _has_any(normalized, KW_GEO_TIMEZONE_ONLY)
+        or _has_any(normalized, KW_GEO_NO_RELOCATION)
+        or _has_any(normalized, KW_GEO_REMOTE_ONLY)
+    )
+    return has_outside_rf and has_hard_limit
+
+
 def _scenario_chain_key(s: Scenario) -> Optional[str]:
     # 1) строго по индексам
     for chain_id, indices in CHAIN_BY_INDEX.items():
@@ -588,6 +734,25 @@ def build_dialog_context(
         "1. Зарплатные ожидания",
         "2. Локация/город",
         "Дополнительные вопросы:",
+        questions,
+    ]
+    lines = [
+        "### \u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u0434\u0438\u0430\u043b\u043e\u0433\u0430 (\u0431\u0443\u0434\u0435\u0442 \u043f\u0440\u0435\u0434\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d \u043f\u0435\u0440\u0435\u0434 \u043d\u0430\u0447\u0430\u043b\u043e\u043c)",
+        f"\u0412\u0430\u0448\u0435 \u0438\u043c\u044f: {recruiter_name}",
+        f"\u0418\u043c\u044f \u043a\u0430\u043d\u0434\u0438\u0434\u0430\u0442\u0430: {candidate_name}",
+        "\u0414\u0435\u0442\u0430\u043b\u0438 \u0432\u0430\u043a\u0430\u043d\u0441\u0438\u0438:",
+        f"\u0414\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c: {title}",
+        f"\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438: {company_name}",
+        f"\u041e\u0431\u044f\u0437\u0430\u043d\u043d\u043e\u0441\u0442\u0438: {responsibilities}",
+        f"\u0424\u043e\u0440\u043c\u0430\u0442 \u0440\u0430\u0431\u043e\u0442\u044b: {work_format}",
+        f"\u041b\u043e\u043a\u0430\u0446\u0438\u044f: {location}",
+        f"\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438: {firm_description}",
+        f"\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 \u0432\u0430\u043a\u0430\u043d\u0441\u0438\u044e: {vacancy_url}",
+        f"\u0417\u0430\u0440\u043f\u043b\u0430\u0442\u043d\u0430\u044f \u0432\u0438\u043b\u043a\u0430: {salary} (\u041d\u0415 \u0420\u0410\u0421\u041a\u0420\u042b\u0412\u0410\u0422\u042c!)",
+        "\u041f\u0440\u0438\u043e\u0440\u0438\u0442\u0435\u0442\u043d\u044b\u0435 \u0432\u043e\u043f\u0440\u043e\u0441\u044b:",
+        "1. \u0417\u0430\u0440\u043f\u043b\u0430\u0442\u043d\u044b\u0435 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u044f",
+        "2. \u041b\u043e\u043a\u0430\u0446\u0438\u044f/\u0433\u043e\u0440\u043e\u0434",
+        "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0432\u043e\u043f\u0440\u043e\u0441\u044b:",
         questions,
     ]
     context_text = "\n".join(lines).strip()
@@ -829,6 +994,23 @@ def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
 def _messages_match_repeat_policy(scenario: Scenario, messages: List[str]) -> bool:
     if not messages:
         return False
+    if scenario.index in (12, 26):
+        return all(not _contains_repeat_marker(msg) for msg in messages)
+    if scenario.index == 27:
+        return all(_contains_repeat_marker(msg) for msg in messages)
+    if scenario.index == 29:
+        return all(
+            _contains_repeat_marker(msg)
+            and not _contains_third_time_marker(msg)
+            for msg in messages
+        )
+    if scenario.index == 30:
+        return all(
+            _contains_repeat_marker(msg)
+            and _contains_third_time_marker(msg)
+            and _contains_salary_ultimatum(msg)
+            for msg in messages
+        )
     if scenario.index == 23:
         return all(not _contains_repeat_marker(msg) for msg in messages)
     if scenario.index == 24:
@@ -859,6 +1041,19 @@ def _trigger_requirement_text(s: Scenario) -> str:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать СВОИ зарплатные ожидания конкретной суммой (числами),\n"
             "причем сумма должна звучать как более низкая и комфортная для кандидата относительно вилки вакансии.\n"
+        )
+
+    if idx == 4 or "иностранн" in name:
+        return (
+            "В КАЖДОЙ реплике кандидат должен писать полностью на иностранном языке, НЕ на русском и без кириллицы.\n"
+            "Используй нормальный текст на английском, немецком, испанском или другом иностранном языке, а не междометия и не одно слово.\n"
+        )
+
+    if idx == 7 or "недоверие" in name or "спам" in name:
+        return (
+            "В КАЖДОЙ реплике кандидат должен использовать ТОЛЬКО явные формулировки триггера про источник контакта или легитимность.\n"
+            "Допустимые смыслы: «откуда у вас мои данные», «где нашли профиль», «это спам?», «вы мошенники?», «подтвердите легитимность».\n"
+            "Запрещено уходить в мягкие и двусмысленные формулировки вроде «что конкретно в моем профиле подошло».\n"
         )
 
     # 12/29/30 - про зарплату
@@ -904,10 +1099,30 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Если повторно - явно укажи, что это повторный вопрос и ранее ответа не было.\n"
         )
 
+    if idx == 10 or "географические ограничения" in name:
+        return (
+            "В КАЖДОЙ реплике кандидат должен ЯВНО сказать, что живет вне РФ.\n"
+            "И дополнительно должен ЯВНО указать хотя бы одно жесткое ограничение: «только свой часовой пояс», «переезд не рассматриваю» или «только удаленка».\n"
+            "Не используй мягкие и двусмысленные формулировки.\n"
+        )
+
+    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно жаловаться на повторный контакт.\n"
+            "Допустимые формулировки: «вы уже писали», «мы уже общались», «повторно это не актуально», «не нужно снова писать».\n"
+            "Не подменяй этот триггер обычным follow-up по процессу или нейтральным вопросом.\n"
+        )
+
     # 33 - город совпадает с вакансией или кандидат готов к переезду
     if idx == 33:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, он уже в городе вакансии ИЛИ готов переехать в город вакансии\n"
+        )
+
+    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно показать, что профиль не подходит целиком, а не что не хватает одной узкой технологии.\n"
+            "Допустимые формулировки: «этого опыта у меня нет», «это не мой профиль», «у меня другая специализация», «таким не занимаюсь».\n"
         )
 
     return ""
@@ -946,8 +1161,16 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     # 4. Иностранные языки
     if idx == 4 or "иностранн" in name:
         parts.append(
-            "- ВСЕ реплики кандидата должны быть на иностранном языке, НЕ на русском.\n"
-            "- Можно использовать английский, польский, украинский и т.п."
+            "- ВСЕ реплики кандидата должны быть на иностранном языке, НЕ на русском и без кириллицы.\n"
+            "- Пиши полноценные короткие фразы на английском, немецком, испанском или другом иностранном языке."
+        )
+
+    if idx == 7 or "недоверие" in name or "спам" in name:
+        parts.append(
+            "- Используй только явные формулировки недоверия к источнику контакта: «откуда у вас мои данные», «где вы нашли мой профиль», «это спам?», «вы мошенники?», «подтвердите легитимность»."
+        )
+        parts.append(
+            "- Не используй вопросы типа «что конкретно в моем профиле подошло» и другие мягкие сомнения: это не тот триггер."
         )
 
     # 6. Неформальное/странное
@@ -960,8 +1183,8 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     # 10. Географические ограничения
     if idx == 10 or "географические ограничения" in name:
         parts.append(
-            "- В КАЖДОЙ реплике явно обозначь жёсткое ограничение по локации или часовому поясу.\n"
-            "- Формулировки: «живу за пределами России», «только удалёнка», «не планирую переезд»."
+            "- В КАЖДОЙ реплике ЯВНО скажи, что кандидат живет вне РФ.\n"
+            "- Дополнительно в той же реплике укажи хотя бы одно жесткое ограничение: «только свой часовой пояс», «переезд не рассматриваю», «только удаленка»."
         )
 
     # 12. Спрашивает про зарплату
@@ -1034,11 +1257,19 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Кандидат явно подтверждает, что локация подходит: он в городе вакансии ИЛИ готов переехать в город вакансии."
         )
 
+    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+        parts.append(
+            "- Это именно триггер про повторный контакт: используй формулировки «вы уже писали», «мы уже общались», «повторно это не актуально», «не нужно снова писать»."
+        )
+        parts.append(
+            "- Не превращай реплику в обычный follow-up по процессу и не задавай уточняющих вопросов."
+        )
+
     # 25. Нет опыта
     if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         parts.append(
-            "- Кандидат прямо говорит, что нужного опыта нет.\n"
-            "- Не добавляй «но быстро разберусь» - акцент на отсутствии опыта."
+            "- Кандидат должен явно показать, что профиль не подходит целиком: «этого опыта у меня нет», «это не мой профиль», «у меня другая специализация», «таким не занимаюсь».\n"
+            "- Не своди реплику к отсутствию одной узкой технологии и не добавляй «но быстро разберусь»."
         )
 
     # 26/27. Бот
@@ -1068,6 +1299,21 @@ def _validate_trigger(
     # политика/нация
     if idx == 1 or "полит" in name or "национ" in name:
         return any(k in m for k in KW_POL_NATION)
+
+    if idx == 4 or "иностранн" in name:
+        return _is_foreign_language_message(msg)
+
+    if idx == 7 or "недоверие" in name or "спам" in name:
+        return _has_any(m, KW_SPAM_LEGITIMACY_EXPLICIT)
+
+    if idx == 10 or "географические ограничения" in name:
+        return _matches_geo_restriction_trigger(msg)
+
+    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+        return _has_any(m, KW_ALREADY_CONTACTED_EXPLICIT)
+
+    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+        return _has_any(m, KW_NO_RELEVANT_PROFILE_EXPLICIT)
 
     dialog_context_meta = dialog_context_meta or {}
     min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
@@ -1108,7 +1354,25 @@ def _validate_trigger(
         return has_city and has_positive_location_intent
 
     # зарплата
-    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
+    if idx == 12:
+        return any(k in m for k in KW_SALARY) and not _contains_repeat_marker(m)
+
+    if idx == 29:
+        return (
+            any(k in m for k in KW_SALARY)
+            and _contains_repeat_marker(m)
+            and not _contains_third_time_marker(m)
+        )
+
+    if idx == 30:
+        return (
+            any(k in m for k in KW_SALARY)
+            and _contains_repeat_marker(m)
+            and _contains_third_time_marker(m)
+            and _contains_salary_ultimatum(m)
+        )
+
+    if _has_any(name, TOPIC_SALARY):
         return any(k in m for k in KW_SALARY)
 
     # скрытая компания (до bot)
@@ -1120,7 +1384,13 @@ def _validate_trigger(
         return any(k in m for k in KW_COMPANY)
 
     # бот (KW_BOT через safe matcher)
-    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+    if idx == 26:
+        return _has_any(m, KW_BOT) and not _contains_repeat_marker(m)
+
+    if idx == 27:
+        return _has_any(m, KW_BOT) and _contains_repeat_marker(m)
+
+    if _has_any(name, TOPIC_BOT):
         return _has_any(m, KW_BOT)
 
     # иначе не валидируем
@@ -1150,12 +1420,61 @@ def _fallback_messages(
         ]
         return pool[:n]
 
+    if idx == 4 or "иностранн" in name:
+        pool = [
+            "Hello, I can reply only in English.",
+            "Hi, please write to me in English.",
+            "Bonjour, I do not speak Russian.",
+        ]
+        return pool[:n]
+
+    if idx == 7 or "недоверие" in name or "спам" in name:
+        pool = [
+            "Откуда у вас мои данные?",
+            "Где вы нашли мой профиль?",
+            "Это спам?",
+            "Вы мошенники?",
+            "Подтвердите легитимность, пожалуйста.",
+        ]
+        return pool[:n]
+
+    if idx == 10 or "географические ограничения" in name:
+        pool = [
+            "Я живу вне РФ, переезд не рассматриваю и рассматриваю только удаленную работу.",
+            "Сейчас живу вне РФ, работаю только в своем часовом поясе и переезд не рассматриваю.",
+            "Я живу за границей, интересует только удаленная работа и только свой часовой пояс.",
+        ]
+        return pool[:n]
+
+    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+        pool = [
+            "Вы уже писали мне по этой вакансии, повторно это не актуально.",
+            "Мы уже общались, не нужно снова писать по этому предложению.",
+            "Вы уже писали, повторно это не актуально.",
+        ]
+        return pool[:n]
+
+    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+        pool = [
+            "Этого опыта у меня нет, это не мой профиль.",
+            "У меня другая специализация, таким не занимаюсь.",
+            "Это не мой профиль, такого опыта у меня нет.",
+        ]
+        return pool[:n]
+
     if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
         if idx == 12:
             pool = [
                 "Ок, а какая зарплатная вилка по позиции?",
                 "Сколько по деньгам на этой роли? Есть вилка?",
                 "Какая компенсация и бонусы, можно цифры?",
+            ]
+            return pool[:n]
+        if idx == 30:
+            pool = [
+                "\u0412 \u0442\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u044e \u043f\u0440\u043e \u0434\u0435\u043d\u044c\u0433\u0438: \u0431\u0435\u0437 \u044d\u0442\u043e\u0439 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u0438 \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435 \u0433\u043e\u0442\u043e\u0432 \u0434\u0432\u0438\u0433\u0430\u0442\u044c\u0441\u044f, \u043a\u0430\u043a\u0430\u044f \u043a\u043e\u043d\u043a\u0440\u0435\u0442\u043d\u043e \u0432\u0438\u043b\u043a\u0430?",
+                "\u0412\u044b \u0441\u043d\u043e\u0432\u0430 \u043d\u0435 \u043e\u0442\u0432\u0435\u0442\u0438\u043b\u0438. \u0422\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0443\u0442\u043e\u0447\u043d\u044f\u044e: \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0443 \u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u0441\u043b\u0435 \u0446\u0438\u0444\u0440, \u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043f\u043b\u0430\u0442\u0438\u0442\u0435?",
+                "\u0422\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0432\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u044e\u0441\u044c \u043a \u0432\u0438\u043b\u043a\u0435: \u0435\u0441\u043b\u0438 \u0432\u044b \u0435\u0435 \u043d\u0435 \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0435, \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435 \u0432\u0438\u0436\u0443 \u0441\u043c\u044b\u0441\u043b\u0430 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0430\u0442\u044c, \u043a\u0430\u043a\u0438\u0435 \u0446\u0438\u0444\u0440\u044b?",
             ]
             return pool[:n]
         if idx == 29:
@@ -1292,7 +1611,11 @@ def generate_candidate_messages_for_scenario(
     Плюс: trigger forcing + 1 перегенерация + fallback.
     """
     dialog_context_meta = dialog_context_meta or {}
-    examples = extract_candidate_examples(scenario.examples_raw, max_examples=10)
+    examples_override = _scenario_example_override(scenario)
+    if examples_override is None:
+        examples = extract_candidate_examples(scenario.examples_raw, max_examples=10)
+    else:
+        examples = examples_override[:10]
     extra = _extra_generation_guidelines(scenario)
     is_repeated = _is_repeated_dialog_scenario(scenario)
     trigger_req = _trigger_requirement_text(scenario)
@@ -1683,6 +2006,247 @@ def evaluate_turn(
     return score, comment
 
 
+def _reply_has_end_marker(text: str) -> bool:
+    return bool(re.search(r"(?<!\w)end(?!\w)", text or "", flags=re.IGNORECASE))
+
+
+def _contains_any_substring(text: str, parts: List[str]) -> bool:
+    low = (text or "").lower()
+    return any(part in low for part in parts)
+
+
+def _reveals_salary_context(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
+    low = (reply or "").lower()
+    values = [
+        str(dialog_context_meta.get("min_salary") or "").strip().lower(),
+        str(dialog_context_meta.get("max_salary") or "").strip().lower(),
+        str(dialog_context_meta.get("salary") or "").strip().lower(),
+    ]
+    return any(value and value in low for value in values)
+
+
+def _is_apology_end_reply(reply: str) -> bool:
+    low = (reply or "").lower()
+    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
+        return False
+    return (
+        low.strip() == "end"
+        or "\u043f\u0440\u043e\u0448\u0443 \u043f\u0440\u043e\u0449\u0435\u043d\u0438\u044f" in low
+        or "\u0438\u0437\u0432\u0438\u043d" in low
+        or "\u0431\u0435\u0441\u043f\u043e\u043a\u043e\u0439\u0441\u0442\u0432" in low
+        or "\u0434\u0435\u043b\u043e\u0432\u043e\u043c \u0444\u043e\u0440\u043c\u0430\u0442\u0435" in low
+    )
+
+
+def _is_salary_expectation_question_reply(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    expectation_markers = [
+        "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
+        "\u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
+        "\u0441\u0443\u043c\u043c\u0443 \u0432 \u0440\u0443\u0431\u043b\u044f\u0445",
+        "\u0437\u0430\u0440\u043f\u043b\u0430\u0442\u043d\u044b\u0435 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u044f",
+        "\u043e\u0440\u0438\u0435\u043d\u0442\u0438\u0440\u0443\u0435\u0442\u0435\u0441\u044c",
+    ]
+    return (
+        not _reply_has_end_marker(reply)
+        and "?" in (reply or "")
+        and _contains_any_substring(low, expectation_markers)
+        and not _reveals_salary_context(reply, dialog_context_meta)
+    )
+
+
+def _is_salary_first_reply(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
+    low = (reply or "").lower()
+    explanation_markers = [
+        "\u0444\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0435 \u0446\u0438\u0444\u0440\u044b",
+        "\u0443\u0441\u043b\u043e\u0432\u0438\u044f \u043e\u0431\u0441\u0443\u0436\u0434\u0430\u044e\u0442\u0441\u044f",
+        "\u043f\u043e\u0441\u043b\u0435 \u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0441\u043e\u0431\u0435\u0441\u0435\u0434\u043e\u0432\u0430\u043d\u0438\u044f",
+        "\u043e\u0431\u0441\u0443\u0436\u0434\u0430\u044e\u0442\u0441\u044f \u0441 \u043a\u043e\u043c\u0430\u043d\u0434\u043e\u0439",
+        "\u0437\u0430\u0432\u0438\u0441\u044f\u0442 \u043e\u0442 \u0443\u0440\u043e\u0432\u043d\u044f",
+    ]
+    return _is_salary_expectation_question_reply(reply, dialog_context_meta) and _contains_any_substring(
+        low, explanation_markers
+    )
+
+
+def _is_bot_first_reply(reply: str) -> bool:
+    low = (reply or "").lower()
+    role_markers = [
+        "\u0432\u043d\u0435\u0448\u043d\u0438\u0439 \u0440\u0435\u043a\u0440\u0443\u0442\u0435\u0440",
+        "\u043f\u0435\u0440\u0432\u0438\u0447\u043d\u044b\u0439 \u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433",
+    ]
+    continue_markers = [
+        "\u043f\u043e\u0434\u0441\u043a\u0430\u0436\u0438\u0442\u0435",
+        "\u0443\u0442\u043e\u0447\u043d\u044e",
+        "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
+        "\u0432 \u043a\u0430\u043a\u043e\u043c \u0433\u043e\u0440\u043e\u0434\u0435",
+    ]
+    return (
+        not _reply_has_end_marker(reply)
+        and _contains_any_substring(low, role_markers)
+        and ("?" in (reply or "") or _contains_any_substring(low, continue_markers))
+    )
+
+
+def _is_schedule_refusal_reply(reply: str) -> bool:
+    low = (reply or "").lower()
+    refusal_markers = [
+        "\u0437\u0430\u043d\u0438\u043c\u0430\u044e\u0441\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u0435\u0440\u0432\u0438\u0447\u043d\u044b\u043c \u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433\u043e\u043c",
+        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0441\u043e\u0437\u0432\u043e\u043d\u044b",
+        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0437\u0432\u043e\u043d\u043a\u0438",
+        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0432\u0441\u0442\u0440\u0435\u0447\u0438",
+    ]
+    bad_markers = [
+        "\u0441\u043e\u0437\u0432\u043e\u043d\u0438\u043c\u0441\u044f",
+        "\u043d\u0430\u0437\u043d\u0430\u0447\u0438\u043c",
+        "\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044e \u0432\u0440\u0435\u043c\u044f",
+    ]
+    return (
+        _contains_any_substring(low, refusal_markers)
+        and not _contains_any_substring(low, bad_markers)
+        and ("?" in (reply or "") or _reply_has_end_marker(reply))
+    )
+
+
+def _is_hidden_company_reply_valid(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    original_company = str(dialog_context_meta.get("original_company_name") or "").strip().lower()
+    vacancy_url = str(dialog_context_meta.get("vacancy_url") or "").strip().lower()
+    hidden_markers = [
+        "\u0441\u043a\u0440\u044b\u0442\u044b\u0439 \u043f\u043e\u0438\u0441\u043a",
+        "\u043d\u0435 \u043c\u043e\u0433\u0443 \u0440\u0430\u0441\u043a\u0440\u044b\u0442\u044c",
+        "\u043d\u0435 \u043c\u043e\u0433\u0443 \u043d\u0430\u0437\u0432\u0430\u0442\u044c",
+        "\u043d\u0435 \u043c\u043e\u0433\u0443 \u043f\u0440\u0435\u0434\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443",
+        "\u043d\u0435 \u043c\u043e\u0433\u0443 \u043f\u0440\u0435\u0434\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u0430\u0439\u0442",
+    ]
+    continue_markers = [
+        "\u043f\u043e\u0434\u0441\u043a\u0430\u0436\u0438\u0442\u0435",
+        "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
+        "\u0432 \u043a\u0430\u043a\u043e\u043c \u0433\u043e\u0440\u043e\u0434\u0435",
+    ]
+    reveals_company = bool(original_company and original_company != "\u0441\u043a\u0440\u044b\u0442\u043e" and original_company in low)
+    reveals_url = bool(vacancy_url and vacancy_url in low)
+    return (
+        not _reply_has_end_marker(reply)
+        and not reveals_company
+        and not reveals_url
+        and _contains_any_substring(low, hidden_markers)
+        and ("?" in (reply or "") or _contains_any_substring(low, continue_markers))
+    )
+
+
+def _is_open_company_reply_valid(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    company_name = (
+        str(dialog_context_meta.get("original_company_name") or "").strip()
+        or str(dialog_context_meta.get("company_name") or "").strip()
+    ).lower()
+    title = str(dialog_context_meta.get("title") or "").strip().lower()
+    work_format = str(dialog_context_meta.get("work_format") or "").strip().lower()
+    vacancy_url = str(dialog_context_meta.get("vacancy_url") or "").strip().lower()
+
+    has_company = bool(company_name and company_name in low)
+    has_title = bool(title and title in low) or "\u043f\u043e\u0437\u0438\u0446\u0438\u044f:" in low
+    has_work_format = bool(work_format and work_format in low) or "\u0444\u043e\u0440\u043c\u0430\u0442 \u0440\u0430\u0431\u043e\u0442\u044b:" in low
+    has_tasks = "\u043a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u0437\u0430\u0434\u0430\u0447\u0438:" in low
+    has_url = not vacancy_url or vacancy_url in low or "\u043f\u043e\u0434\u0440\u043e\u0431\u043d\u0435\u0435:" in low
+    continues = "?" in (reply or "") or _contains_any_substring(
+        low,
+        [
+            "\u043f\u043e\u0434\u0441\u043a\u0430\u0436\u0438\u0442\u0435",
+            "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
+            "\u0432 \u043a\u0430\u043a\u043e\u043c \u0433\u043e\u0440\u043e\u0434\u0435",
+        ],
+    )
+
+    return has_company and has_title and has_work_format and has_tasks and has_url and continues
+
+
+def enforce_prompt_v2_turn_rules(
+    scenario: Scenario,
+    candidate_message: str,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    idx = scenario.index
+    candidate_low = (candidate_message or "").lower()
+    reply_low = (assistant_reply or "").lower()
+
+    if idx in (12, 29, 30):
+        if idx == 30:
+            if _is_apology_end_reply(assistant_reply):
+                return 1, "Prompt v2 salary rule passed: third salary scenario ends the dialogue with apology and END."
+            return 0, "Prompt v2 salary rule failed: scenario 30 must end the dialogue with apology and END."
+
+        if idx == 29:
+            if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta):
+                return 1, "Prompt v2 salary rule passed: repeated salary scenario asks only for expectations."
+            return 0, "Prompt v2 salary rule failed: scenario 29 should ask for salary expectations without END."
+
+        if _is_salary_first_reply(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 salary rule passed: first salary scenario uses the full script and asks for expectations."
+        return 0, "Prompt v2 salary rule failed: scenario 12 should use the full script and ask for expectations."
+
+    if idx in (26, 27):
+        if idx == 27:
+            if _is_apology_end_reply(assistant_reply):
+                return 1, "Prompt v2 bot rule passed: repeated bot/AI scenario ends the dialogue."
+            return 0, "Prompt v2 bot rule failed: scenario 27 must end the dialogue."
+
+        if _is_bot_first_reply(assistant_reply):
+            return 1, "Prompt v2 bot rule passed: first bot/AI scenario explains the role and continues."
+        return 0, "Prompt v2 bot rule failed: scenario 26 should explain the role and continue."
+
+    if idx == 22:
+        if _is_schedule_refusal_reply(assistant_reply):
+            return 1, "Prompt v2 schedule rule passed: assistant refuses scheduling and stays in screening flow."
+        return 0, "Prompt v2 schedule rule failed: assistant should refuse scheduling instead of promising a call."
+
+    if idx in (23, 24) and bool(dialog_context_meta.get("company_hidden", False)):
+        if _is_hidden_company_reply_valid(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 hidden-company rule passed: assistant keeps the search hidden and continues the dialogue."
+        return 0, "Prompt v2 hidden-company rule failed: assistant should keep the search hidden and continue without END."
+
+    if idx == 28 and _contains_any_substring(candidate_low, ["\u0443\u0441\u043b\u043e\u0432\u0438", "\u0437\u0430\u0440\u043f\u043b\u0430\u0442", "\u0432\u0438\u043b\u043a", "\u043a\u043e\u043c\u043f\u0435\u043d\u0441\u0430\u0446"]):
+        if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 vacancy-info rule passed: compensation/conditions question follows the salary script."
+        if _contains_any_substring(reply_low, ["\u0443\u0442\u043e\u0447\u043d\u044e \u044d\u0442\u043e\u0442 \u043c\u043e\u043c\u0435\u043d\u0442 \u0443 \u043a\u043e\u043b\u043b\u0435\u0433", "\u0443\u0442\u043e\u0447\u043d\u044e \u0443 \u043a\u043e\u043b\u043b\u0435\u0433"]):
+            return 1, "Prompt v2 vacancy-info rule passed: assistant defers missing conditions info to colleagues."
+        return 0, "Prompt v2 vacancy-info rule failed: compensation/conditions question should not force the old company-info script."
+
+    if idx == 28:
+        if _is_open_company_reply_valid(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 vacancy-info rule passed: open company info is shared and the dialogue continues."
+        return 0, "Prompt v2 vacancy-info rule failed: scenario 28 should provide open company/vacancy info and continue."
+
+    return score, comment
+
+
+def enforce_prompt_v2_hard_rules(
+    assistant_reply: str,
+    score: int,
+    comment: str,
+) -> Tuple[int, str]:
+    if _reply_has_end_marker(assistant_reply) and "?" in (assistant_reply or ""):
+        return 0, "Prompt v2 hard rule failed: END cannot be combined with questions."
+
+    if (assistant_reply or "").count("?") > 2:
+        return 0, "Prompt v2 hard rule failed: reply contains more than two question marks."
+
+    return score, comment
+
+
 def enforce_open_company_answer_for_s31(
     scenario: Scenario,
     assistant_reply: str,
@@ -1832,6 +2396,19 @@ def run_single_scenario(
             comment=comment,
             dialog_context_meta=dialog_context_meta,
         )
+        score, comment = enforce_prompt_v2_turn_rules(
+            scenario=scenario,
+            candidate_message=cand_msg,
+            assistant_reply=reply,
+            score=score,
+            comment=comment,
+            dialog_context_meta=dialog_context_meta,
+        )
+        score, comment = enforce_prompt_v2_hard_rules(
+            assistant_reply=reply,
+            score=score,
+            comment=comment,
+        )
 
         turn = {
             "step": step_idx,
@@ -1925,6 +2502,19 @@ def run_chain_group(
                 score=score,
                 comment=comment,
                 dialog_context_meta=dialog_context_meta,
+            )
+            score, comment = enforce_prompt_v2_turn_rules(
+                scenario=s,
+                candidate_message=cand_msg,
+                assistant_reply=reply,
+                score=score,
+                comment=comment,
+                dialog_context_meta=dialog_context_meta,
+            )
+            score, comment = enforce_prompt_v2_hard_rules(
+                assistant_reply=reply,
+                score=score,
+                comment=comment,
             )
 
             turn = {
