@@ -26,6 +26,61 @@ DEFAULT_CDM_COUNT = None
 DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
 DIALOGUE_GEN_MAX_RETRIES = 1
 
+REGRESSION_CASES: List[Dict[str, Any]] = [
+    {
+        "name": "wf_hybrid_explicit_candidate",
+        "description": "Кандидат явно согласен на гибрид, но модель не должна подменять это на remote.",
+        "vacancy_title": "Senior Virtualization Engineer",
+        "vacancy_company": "DataGrid",
+        "dialogue": (
+            "Кандидат: Добрый день! Последние 6 лет занимаюсь инфраструктурой и виртуализацией, "
+            "в основном VMware ESXi и vCenter, плюс сопровождал отказоустойчивые кластеры.\n"
+            "Рекрутер: Добрый день! Подскажите, пожалуйста, какой уровень дохода рассматриваете "
+            "и в каком городе находитесь?\n"
+            "Кандидат: По деньгам ориентируюсь на 420000 рублей gross, нахожусь в Москве.\n"
+            "Рекрутер: Поняла, спасибо. Готовы ли вы к гибридному формату, 1-2 дня в офисе? "
+            "И отдельно расскажите, пожалуйста, был ли у вас опыт с VMware ESXi и виртуализацией?\n"
+            "Кандидат: Готов к гибриду, 1-2 дня в офисе для меня нормально. "
+            "С VMware ESXi работаю давно: настраивал кластеры, хранилища и миграции без даунтайма."
+        ),
+        "expected_json": {"work_format": "hybrid"},
+    },
+    {
+        "name": "wf_empty_when_candidate_silent",
+        "description": "Кандидат ничего не говорит про формат работы, значит work_format должен остаться пустым.",
+        "vacancy_title": "Backend Python Engineer",
+        "vacancy_company": "CloudCore",
+        "dialogue": (
+            "Кандидат: Добрый день! Я backend-разработчик, последние пять лет работаю с Python, "
+            "FastAPI и PostgreSQL, плюс немного трогал Kafka.\n"
+            "Рекрутер: Добрый день! Подскажите, пожалуйста, в каком городе вы сейчас находитесь "
+            "и какие у вас зарплатные ожидания?\n"
+            "Кандидат: Сейчас я в Санкт-Петербурге, по деньгам ориентируюсь на 360000 рублей gross.\n"
+            "Рекрутер: Спасибо. А какой у вас практический опыт с highload-сервисами и очередями?\n"
+            "Кандидат: На текущем проекте вел сервисы с нагрузкой порядка 20 тысяч запросов в минуту, "
+            "Kafka использовал для асинхронной обработки событий и ретраев."
+        ),
+        "expected_json": {"work_format": ""},
+    },
+    {
+        "name": "wf_empty_when_only_recruiter_mentions_hybrid",
+        "description": "Рекрутер упоминает гибрид, но кандидат формат не подтверждает; извлекать work_format нельзя.",
+        "vacancy_title": "Infrastructure Engineer",
+        "vacancy_company": "InfraWave",
+        "dialogue": (
+            "Кандидат: Добрый день! У меня 7 лет опыта в администрировании Linux и виртуализации, "
+            "последние проекты были связаны с on-prem и private cloud.\n"
+            "Рекрутер: Подскажите, пожалуйста, какую зарплату рассматриваете и в каком городе вы находитесь?\n"
+            "Кандидат: Я в Москве, по деньгам ориентируюсь на 400000 рублей gross.\n"
+            "Рекрутер: Готовы ли вы рассматривать гибридный формат? И второй вопрос: "
+            "какой у вас опыт с виртуализацией и VMware ESXi?\n"
+            "Кандидат: По VMware ESXi работал около четырех лет: поднимал кластеры, "
+            "настраивал HA и занимался обновлениями гипервизоров."
+        ),
+        "expected_json": {"work_format": ""},
+    },
+]
+
 
 def _log(quiet: bool, msg: str) -> None:
     if not quiet:
@@ -171,6 +226,55 @@ def _validate_schema(obj: Any) -> List[str]:
                     errors.append(f"additional_info[{i}]_question_answer_must_be_strings")
 
     return errors
+
+
+def _json_debug_value(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _validate_expected_json_subset(parsed: Any, expected: Optional[Dict[str, Any]]) -> List[str]:
+    if not expected:
+        return []
+    if not isinstance(parsed, dict):
+        return ["expected_json_subset_output_not_object"]
+
+    errors: List[str] = []
+    for key, expected_value in expected.items():
+        actual_value = parsed.get(key)
+        if actual_value != expected_value:
+            errors.append(
+                "expected_field_mismatch:"
+                f"{key}:expected={_json_debug_value(expected_value)}:"
+                f"actual={_json_debug_value(actual_value)}"
+            )
+    return errors
+
+
+def _parse_case_names_filter(raw: Optional[str]) -> Optional[Set[str]]:
+    if not raw:
+        return None
+    out = {item.strip() for item in raw.split(",") if item.strip()}
+    return out or None
+
+
+def _select_regression_cases(case_names: Optional[Set[str]]) -> List[Dict[str, Any]]:
+    if not case_names:
+        return [dict(case) for case in REGRESSION_CASES]
+
+    selected: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for case in REGRESSION_CASES:
+        name = str(case.get("name") or "")
+        if name in case_names:
+            selected.append(dict(case))
+            seen.add(name)
+
+    missing = sorted(case_names - seen)
+    if missing:
+        raise ValueError(
+            "unknown regression case names: " + ", ".join(missing)
+        )
+    return selected
 
 
 def _resolve_prompt_from_cfg(cfg: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -695,14 +799,52 @@ class ScreeningAutofillPromptRunner:
         return (getattr(resp, "output_text", "") or "").strip()
 
 
-def _collect_errors(schema_errors: List[str], semantic_errors: List[str], exc: Optional[str]) -> List[str]:
+def _run_single_autofill_case(
+    autofill: ScreeningAutofillPromptRunner,
+    dialogue: str,
+    flatten_like_prod: bool,
+    token_usage_total: Dict[str, int],
+    expected_json: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    final_dialogue = _flatten_like_prod(dialogue) if flatten_like_prod else dialogue
+
+    parsed: Any = None
+    schema_errors: List[str] = []
+    semantic_errors: List[str] = []
+    expectation_errors: List[str] = []
+    error: Optional[str] = None
+
+    try:
+        raw_out = autofill.run_once(final_dialogue)
+        _accumulate_usage(token_usage_total, autofill.last_usage)
+
+        parsed = _safe_json_loads(raw_out)
+        schema_errors = _validate_schema(parsed)
+        expectation_errors = _validate_expected_json_subset(parsed, expected_json)
+        if not schema_errors:
+            semantic_errors = _semantic_validate(final_dialogue, parsed)
+    except Exception as e:
+        error = repr(e)
+
+    if isinstance(parsed, dict) and not schema_errors:
+        parsed = _ordered_parsed_json(parsed)
+
+    return {
+        "dialogue": final_dialogue,
+        "parsed_json": parsed,
+        "schema_errors": schema_errors or [],
+        "semantic_errors": semantic_errors or [],
+        "expectation_errors": expectation_errors or [],
+        "error": error,
+    }
+
+
+def _collect_errors(*error_groups: Optional[List[str]], exc: Optional[str] = None) -> List[str]:
     out: List[str] = []
-    for e in schema_errors:
-        if e:
-            out.append(e)
-    for e in semantic_errors:
-        if e:
-            out.append(e)
+    for group in error_groups:
+        for e in group or []:
+            if e:
+                out.append(e)
     if exc:
         out.append(f"exception:{exc}")
     return out
@@ -720,11 +862,17 @@ def run_autofill_from_cdm(
     flatten_like_prod: bool,
     seed: Optional[int],
     quiet: bool,
+    include_regression_cases: bool = False,
+    regression_only: bool = False,
+    regression_case_names: Optional[Set[str]] = None,
 ) -> pathlib.Path:
     ensure_dirs()
 
     started_at = datetime.datetime.now()
     run_id = started_at.strftime("%Y%m%d_%H%M%S")
+    run_generated_cases = not regression_only
+    run_regression_cases = bool(include_regression_cases or regression_only or regression_case_names)
+    selected_regression_cases = _select_regression_cases(regression_case_names) if run_regression_cases else []
 
     _log(
         quiet,
@@ -735,7 +883,9 @@ def run_autofill_from_cdm(
         f"noise_level={noise_level} "
         f"allow_two_questions={allow_two_questions} "
         f"flatten_like_prod={flatten_like_prod} "
-        f"seed={seed}",
+        f"seed={seed} "
+        f"run_generated_cases={run_generated_cases} "
+        f"run_regression_cases={run_regression_cases}",
     )
 
     cfg: Dict[str, Any] = {}
@@ -762,7 +912,7 @@ def run_autofill_from_cdm(
 
     final_gen_model = dialogue_gen_model or cfg_gen_model or DEFAULT_DIALOGUE_GEN_MODEL
 
-    cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count)
+    cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count) if run_generated_cases else []
 
     _log(
         quiet,
@@ -770,10 +920,11 @@ def run_autofill_from_cdm(
         f"prompt_id={final_pid} "
         f"prompt_version={final_pver} "
         f"dialogue_gen_model={final_gen_model} "
-        f"dialogue_gen_retries={DIALOGUE_GEN_MAX_RETRIES}",
+        f"dialogue_gen_retries={DIALOGUE_GEN_MAX_RETRIES} "
+        f"regression_cases_selected={len(selected_regression_cases)}",
     )
 
-    synth = DialogueSynthesizer(model=final_gen_model, seed=seed)
+    synth = DialogueSynthesizer(model=final_gen_model, seed=seed) if run_generated_cases else None
     autofill = ScreeningAutofillPromptRunner(prompt_id=final_pid, prompt_version=final_pver)
 
     token_usage_total = _blank_usage()
@@ -785,91 +936,204 @@ def run_autofill_from_cdm(
     passed = 0
     failed = 0
 
-    total_cases = len(cdm_paths)
+    source_counts = {"cdm": 0, "regression": 0}
+    total_cdm_cases = len(cdm_paths)
 
-    for case_idx, cdm_path in enumerate(cdm_paths, start=1):
-        cdm = load_json(cdm_path)
-        vacancy = cdm.get("vacancy") or {}
-        v_title = vacancy.get("title")
-        v_company = vacancy.get("company_name") if "company_name" in vacancy else vacancy.get("company_name")
+    if run_generated_cases:
+        if synth is None:
+            raise RuntimeError("dialogue synthesizer is not initialized")
 
-        _log(
-            quiet,
-            f"[run] case {case_idx}/{total_cases} ({cdm_path.name}) title={v_title} company={v_company}",
-        )
+        for case_idx, cdm_path in enumerate(cdm_paths, start=1):
+            cdm = load_json(cdm_path)
+            vacancy = cdm.get("vacancy") or {}
+            v_title = vacancy.get("title")
+            v_company = vacancy.get("company_name") if "company_name" in vacancy else vacancy.get("company_name")
 
-        try:
-            dialogues = synth.synthesize(
-                cdm=cdm,
-                variants=variants_per_cdm,
-                noise_level=noise_level,
-                allow_two_questions=allow_two_questions,
+            _log(
+                quiet,
+                f"[run] case {case_idx}/{total_cdm_cases} ({cdm_path.name}) title={v_title} company={v_company}",
             )
-            _accumulate_usage(token_usage_total, synth.last_usage)
-        except Exception as e:
-            err = repr(e)
-            failed += 1
 
-            _log(quiet, f"[warn] dialogue synthesis failed: {cdm_path.name}: {err}")
+            try:
+                dialogues = synth.synthesize(
+                    cdm=cdm,
+                    variants=variants_per_cdm,
+                    noise_level=noise_level,
+                    allow_two_questions=allow_two_questions,
+                )
+                _accumulate_usage(token_usage_total, synth.last_usage)
+            except Exception as e:
+                err = repr(e)
+                failed += 1
 
-            results.append(
-                {
+                _log(quiet, f"[warn] dialogue synthesis failed: {cdm_path.name}: {err}")
+
+                result = {
+                    "case_source": "cdm",
+                    "case_name": cdm_path.name,
+                    "case_description": None,
                     "cdm_file": str(cdm_path),
                     "vacancy_title": v_title,
                     "vacancy_company": v_company,
                     "variant_index": None,
                     "dialogue": "",
                     "parsed_json": None,
+                    "expected_json": None,
                     "schema_errors": ["dialogue_synthesis_failed"],
                     "semantic_errors": ["dialogue_synthesis_failed"],
+                    "expectation_errors": [],
                     "error": err,
                 }
+                results.append(result)
+                source_counts["cdm"] += 1
+                errors_by_dialogue.append(
+                    {
+                        "cdm_file": str(cdm_path),
+                        "variant_index": None,
+                        "errors": ["dialogue_synthesis_failed", f"exception:{err}"],
+                    }
+                )
+                all_error_counts["dialogue_synthesis_failed"] += 1
+                continue
+
+            for v_idx, dialogue in enumerate(dialogues, start=1):
+                _log(quiet, f"  [variant {v_idx}/{variants_per_cdm}] running screening_autofill...")
+
+                evaluated = _run_single_autofill_case(
+                    autofill=autofill,
+                    dialogue=dialogue,
+                    flatten_like_prod=flatten_like_prod,
+                    token_usage_total=token_usage_total,
+                )
+                schema_errors = evaluated["schema_errors"]
+                semantic_errors = evaluated["semantic_errors"]
+                expectation_errors = evaluated["expectation_errors"]
+                error = evaluated["error"]
+
+                combined_errors = _collect_errors(
+                    schema_errors,
+                    semantic_errors,
+                    expectation_errors,
+                    exc=error,
+                )
+
+                if combined_errors:
+                    failed += 1
+                    errors_by_dialogue.append(
+                        {
+                            "cdm_file": str(cdm_path),
+                            "variant_index": v_idx,
+                            "errors": combined_errors,
+                        }
+                    )
+                    for ce in combined_errors:
+                        all_error_counts[ce] += 1
+
+                    if error is not None:
+                        _log(quiet, f"    [fail] error={error}")
+                    elif schema_errors:
+                        _log(quiet, f"    [fail] schema_errors={schema_errors}")
+                    elif expectation_errors:
+                        _log(quiet, f"    [fail] expectation_errors={expectation_errors}")
+                    else:
+                        _log(quiet, f"    [fail] semantic_errors={semantic_errors}")
+                else:
+                    passed += 1
+                    _log(quiet, "    [ok] semantic_errors=[]")
+
+                results.append(
+                    {
+                        "case_source": "cdm",
+                        "case_name": cdm_path.name,
+                        "case_description": None,
+                        "cdm_file": str(cdm_path),
+                        "vacancy_title": v_title,
+                        "vacancy_company": v_company,
+                        "variant_index": v_idx,
+                        "dialogue": evaluated["dialogue"],
+                        "parsed_json": evaluated["parsed_json"],
+                        "expected_json": None,
+                        "schema_errors": schema_errors,
+                        "semantic_errors": semantic_errors,
+                        "expectation_errors": expectation_errors,
+                        "error": error,
+                    }
+                )
+                source_counts["cdm"] += 1
+
+    if run_regression_cases:
+        total_regression_cases = len(selected_regression_cases)
+        for case_idx, regression_case in enumerate(selected_regression_cases, start=1):
+            case_name = str(regression_case.get("name") or f"regression_{case_idx:04d}")
+            case_ref = f"regression_case::{case_name}"
+            description = regression_case.get("description")
+            dialogue = str(regression_case.get("dialogue") or "").strip()
+            expected_json = regression_case.get("expected_json")
+            v_title = regression_case.get("vacancy_title")
+            v_company = regression_case.get("vacancy_company")
+
+            _log(
+                quiet,
+                f"[run] regression {case_idx}/{total_regression_cases} "
+                f"({case_name}) expected={expected_json}",
             )
-            errors_by_dialogue.append(
-                {
-                    "cdm_file": str(cdm_path),
-                    "variant_index": None,
-                    "errors": ["dialogue_synthesis_failed", f"exception:{err}"],
-                }
+
+            if not dialogue:
+                err = "empty_regression_dialogue"
+                failed += 1
+                errors_by_dialogue.append(
+                    {
+                        "cdm_file": case_ref,
+                        "variant_index": 1,
+                        "errors": [err],
+                    }
+                )
+                all_error_counts[err] += 1
+                results.append(
+                    {
+                        "case_source": "regression",
+                        "case_name": case_name,
+                        "case_description": description,
+                        "cdm_file": case_ref,
+                        "vacancy_title": v_title,
+                        "vacancy_company": v_company,
+                        "variant_index": 1,
+                        "dialogue": dialogue,
+                        "parsed_json": None,
+                        "expected_json": expected_json,
+                        "schema_errors": [],
+                        "semantic_errors": [],
+                        "expectation_errors": [err],
+                        "error": None,
+                    }
+                )
+                source_counts["regression"] += 1
+                continue
+
+            evaluated = _run_single_autofill_case(
+                autofill=autofill,
+                dialogue=dialogue,
+                flatten_like_prod=flatten_like_prod,
+                token_usage_total=token_usage_total,
+                expected_json=expected_json if isinstance(expected_json, dict) else None,
             )
-            all_error_counts["dialogue_synthesis_failed"] += 1
-            continue
-
-        for v_idx, dialogue in enumerate(dialogues, start=1):
-            _log(quiet, f"  [variant {v_idx}/{variants_per_cdm}] running screening_autofill...")
-
-            final_dialogue = _flatten_like_prod(dialogue) if flatten_like_prod else dialogue
-
-            parsed: Any = None
-            schema_errors: List[str] = []
-            semantic_errors: List[str] = []
-            error: Optional[str] = None
-
-            try:
-                raw_out = autofill.run_once(final_dialogue)
-                _accumulate_usage(token_usage_total, autofill.last_usage)
-
-                parsed = _safe_json_loads(raw_out)
-                schema_errors = _validate_schema(parsed)
-                if not schema_errors:
-                    semantic_errors = _semantic_validate(final_dialogue, parsed)
-            except Exception as e:
-                error = repr(e)
-
-            schema_errors = schema_errors or []
-            semantic_errors = semantic_errors or []
-
-            if isinstance(parsed, dict) and not schema_errors:
-                parsed = _ordered_parsed_json(parsed)
-
-            combined_errors = _collect_errors(schema_errors, semantic_errors, error)
+            schema_errors = evaluated["schema_errors"]
+            semantic_errors = evaluated["semantic_errors"]
+            expectation_errors = evaluated["expectation_errors"]
+            error = evaluated["error"]
+            combined_errors = _collect_errors(
+                schema_errors,
+                semantic_errors,
+                expectation_errors,
+                exc=error,
+            )
 
             if combined_errors:
                 failed += 1
                 errors_by_dialogue.append(
                     {
-                        "cdm_file": str(cdm_path),
-                        "variant_index": v_idx,
+                        "cdm_file": case_ref,
+                        "variant_index": 1,
                         "errors": combined_errors,
                     }
                 )
@@ -880,25 +1144,33 @@ def run_autofill_from_cdm(
                     _log(quiet, f"    [fail] error={error}")
                 elif schema_errors:
                     _log(quiet, f"    [fail] schema_errors={schema_errors}")
+                elif expectation_errors:
+                    _log(quiet, f"    [fail] expectation_errors={expectation_errors}")
                 else:
                     _log(quiet, f"    [fail] semantic_errors={semantic_errors}")
             else:
                 passed += 1
-                _log(quiet, "    [ok] semantic_errors=[]")
+                _log(quiet, "    [ok] regression matched expected_json")
 
             results.append(
                 {
-                    "cdm_file": str(cdm_path),
+                    "case_source": "regression",
+                    "case_name": case_name,
+                    "case_description": description,
+                    "cdm_file": case_ref,
                     "vacancy_title": v_title,
                     "vacancy_company": v_company,
-                    "variant_index": v_idx,
-                    "dialogue": final_dialogue,
-                    "parsed_json": parsed,
+                    "variant_index": 1,
+                    "dialogue": evaluated["dialogue"],
+                    "parsed_json": evaluated["parsed_json"],
+                    "expected_json": expected_json,
                     "schema_errors": schema_errors,
                     "semantic_errors": semantic_errors,
+                    "expectation_errors": expectation_errors,
                     "error": error,
                 }
             )
+            source_counts["regression"] += 1
 
     total = passed + failed
     pass_rate = round((passed / total * 100.0), 2) if total else 0.0
@@ -911,21 +1183,27 @@ def run_autofill_from_cdm(
     for r in results:
         schema_errors = r.get("schema_errors") or []
         semantic_errors = r.get("semantic_errors") or []
+        expectation_errors = r.get("expectation_errors") or []
         exc = r.get("error")
-        combined = _collect_errors(schema_errors, semantic_errors, exc)
+        combined = _collect_errors(schema_errors, semantic_errors, expectation_errors, exc=exc)
 
         match = len(combined) == 0
 
         case = {
             "match": match,
+            "case_source": r.get("case_source"),
+            "case_name": r.get("case_name"),
+            "case_description": r.get("case_description"),
             "cdm_file": r.get("cdm_file"),
             "variant_index": r.get("variant_index"),
             "vacancy_title": r.get("vacancy_title"),
             "vacancy_company": r.get("vacancy_company"),
             "dialogue": r.get("dialogue"),
             "parsed_json": r.get("parsed_json"),
+            "expected_json": r.get("expected_json"),
             "schema_errors": schema_errors,
             "semantic_errors": semantic_errors,
+            "expectation_errors": expectation_errors,
             "error": exc,
         }
         cases.append(case)
@@ -933,6 +1211,9 @@ def run_autofill_from_cdm(
         if not match:
             mismatches.append(
                 {
+                    "case_source": case["case_source"],
+                    "case_name": case["case_name"],
+                    "case_description": case["case_description"],
                     "cdm_file": case["cdm_file"],
                     "variant_index": case["variant_index"],
                     "vacancy_title": case["vacancy_title"],
@@ -940,6 +1221,7 @@ def run_autofill_from_cdm(
                     "errors": combined,
                     "dialogue": case["dialogue"],
                     "parsed_json": case["parsed_json"],
+                    "expected_json": case["expected_json"],
                 }
             )
 
@@ -947,6 +1229,8 @@ def run_autofill_from_cdm(
         if exc is not None:
             errors.append(
                 {
+                    "case_source": case["case_source"],
+                    "case_name": case["case_name"],
                     "cdm_file": case["cdm_file"],
                     "variant_index": case["variant_index"],
                     "vacancy_title": case["vacancy_title"],
@@ -957,6 +1241,8 @@ def run_autofill_from_cdm(
         elif "dialogue_synthesis_failed" in schema_errors or "dialogue_synthesis_failed" in semantic_errors:
             errors.append(
                 {
+                    "case_source": case["case_source"],
+                    "case_name": case["case_name"],
                     "cdm_file": case["cdm_file"],
                     "variant_index": case["variant_index"],
                     "vacancy_title": case["vacancy_title"],
@@ -977,6 +1263,7 @@ def run_autofill_from_cdm(
         "mismatches_count": len(mismatches),
         "errors_count": len(errors),
         "error_counts": dict(all_error_counts),
+        "source_counts": source_counts,
     }
 
     report: Dict[str, Any] = {
@@ -988,6 +1275,10 @@ def run_autofill_from_cdm(
         "allow_two_questions": allow_two_questions,
         "flatten_like_prod": flatten_like_prod,
         "seed": seed,
+        "include_regression_cases": include_regression_cases,
+        "regression_only": regression_only,
+        "regression_case_names": sorted(regression_case_names) if regression_case_names else None,
+        "regression_cases_selected": [case.get("name") for case in selected_regression_cases],
         "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
         "dialogue_gen_model": final_gen_model,
         "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES,
@@ -1024,7 +1315,7 @@ def run_autofill_from_cdm(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run screening_autofill_prompt using dialogues synthesized from CDM fixtures."
+        description="Run screening_autofill_prompt on synthesized CDM dialogues and deterministic regression cases."
     )
     parser.add_argument(
         "--cdm-dir",
@@ -1089,8 +1380,25 @@ def main() -> None:
         action="store_true",
         help="Disable console progress output.",
     )
+    parser.add_argument(
+        "--include-regression-cases",
+        action="store_true",
+        help="Also run built-in deterministic regression dialogues for work_format extraction.",
+    )
+    parser.add_argument(
+        "--regression-only",
+        action="store_true",
+        help="Run only built-in deterministic regression dialogues and skip CDM synthesis.",
+    )
+    parser.add_argument(
+        "--regression-case-names",
+        type=str,
+        default=None,
+        help="Comma-separated built-in regression case names to run (implies regression cases).",
+    )
 
     args = parser.parse_args()
+    regression_case_names = _parse_case_names_filter(args.regression_case_names)
 
     run_autofill_from_cdm(
         cdm_dir=pathlib.Path(args.cdm_dir),
@@ -1104,6 +1412,9 @@ def main() -> None:
         flatten_like_prod=bool(args.flatten_like_prod),
         seed=args.seed,
         quiet=bool(args.quiet),
+        include_regression_cases=bool(args.include_regression_cases),
+        regression_only=bool(args.regression_only),
+        regression_case_names=regression_case_names,
     )
 
 
