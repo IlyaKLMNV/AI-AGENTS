@@ -226,28 +226,28 @@ python -m app.telegram_generator_runner --limit 5 --require-question
 ### `app/screening_autofill_runner.py` — тест `screening_autofill`
 Как работает:
 - Генерирует диалоги на основе CDM (несколько вариантов на вакансию).
-- Опционально прогоняет встроенные детерминированные regression-кейсы для `work_format`.
+- Опционально прогоняет deterministic regression-кейсы для `work_format`, которые теперь строятся из реальных вакансий `tests/fixtures/cdm/*`.
 - Прогоняет диалоги через `screening_autofill` и парсит JSON.
-- Валидирует схему, семантическую согласованность ответов и точечные ожидаемые поля для regression-кейсов.
+- Валидирует схему, семантику и точечные ожидаемые поля для regression-кейсов.
 - `prompt_id` берется из CLI/env/model.yaml, без него запуск невозможен.
 
 Запуск:
 ```bash
 python -m app.screening_autofill_runner --cdm-count 5 --variants-per-cdm 3
 
-# Только детерминированные regression-кейсы для воспроизведения багов work_format
-python -m app.screening_autofill_runner --regression-only
+# Только regression-кейсы по реальным CDM
+python -m app.screening_autofill_runner --regression-only --regression-variants-per-case 3
 
-# Точечный прогон основного регрессионного кейса:
-# кандидат явно подтверждает hybrid, а prompt не должен ставить remote
+# Несколько выбранных regression-сценариев, по 2 варианта на каждый
 python -m app.screening_autofill_runner \
   --regression-only \
-  --regression-case-names wf_hybrid_explicit_candidate
+  --regression-case-names wf_hybrid_explicit_candidate,wf_empty_when_only_recruiter_mentions_hybrid \
+  --regression-variants-per-case 2
 ```
 
 Параметры:
 - `--cdm-dir` — путь к CDM.
-- `--cdm-count` — сколько CDM взять (по умолчанию все).
+- `--cdm-count` — сколько CDM взять в исходный пул вакансий (по умолчанию все).
 - `--variants-per-cdm` — число диалогов на CDM.
 - `--noise-level` — 0..2, уровень шума в ответах.
 - `--allow-two-questions` — разрешить два вопроса в реплике рекрутера.
@@ -256,13 +256,15 @@ python -m app.screening_autofill_runner \
 - `--dialogue-gen-model` — модель генерации диалогов.
 - `--prompt-id`, `--prompt-version` — переопределить промпт.
 - `--include-regression-cases` — добавить встроенные regression-кейсы к обычному CDM-прогону.
-- `--regression-only` — запускать только встроенные regression-кейсы, без синтетических CDM-диалогов.
+- `--regression-only` — запускать только regression-кейсы, без обычной генерации диалогов.
 - `--regression-case-names` — список имён regression-кейсов через запятую для точечного прогона.
+- `--regression-variants-per-case` — сколько вариантов диалога строить на каждый regression-кейс.
 - `--quiet` — без прогресс-логов.
 
 Отчеты:
 - `tests/reports/screening_autofill/screening_autofill_report_<run_id>.json`
-- Для regression-кейсов в отчёте сохраняются `case_source=regression`, `case_name`, `expected_json` и `expectation_errors`.
+- Отчёт теперь компактный: `summary`, краткий `cases` и подробные `mismatches`.
+- Для regression-кейсов в `cases/mismatches` видны `expected_work_format` / `actual_work_format` и `source_cdm`.
 
 ### `app/verdict_classifier_runner.py` — тест `verdict_classifier`
 Как работает:

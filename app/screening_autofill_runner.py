@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import yaml
 from openai import OpenAI
 
+from app.screening_autofill_client import ScreeningAutofillPromptClient, safe_json_loads
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
@@ -25,59 +27,29 @@ DEFAULT_CDM_COUNT = None
 
 DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
 DIALOGUE_GEN_MAX_RETRIES = 1
+DEFAULT_REGRESSION_VARIANTS_PER_CASE = 1
 
-REGRESSION_CASES: List[Dict[str, Any]] = [
+REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
     {
         "name": "wf_hybrid_explicit_candidate",
-        "description": "Кандидат явно согласен на гибрид, но модель не должна подменять это на remote.",
-        "vacancy_title": "Senior Virtualization Engineer",
-        "vacancy_company": "DataGrid",
-        "dialogue": (
-            "Кандидат: Добрый день! Последние 6 лет занимаюсь инфраструктурой и виртуализацией, "
-            "в основном VMware ESXi и vCenter, плюс сопровождал отказоустойчивые кластеры.\n"
-            "Рекрутер: Добрый день! Подскажите, пожалуйста, какой уровень дохода рассматриваете "
-            "и в каком городе находитесь?\n"
-            "Кандидат: По деньгам ориентируюсь на 420000 рублей gross, нахожусь в Москве.\n"
-            "Рекрутер: Поняла, спасибо. Готовы ли вы к гибридному формату, 1-2 дня в офисе? "
-            "И отдельно расскажите, пожалуйста, был ли у вас опыт с VMware ESXi и виртуализацией?\n"
-            "Кандидат: Готов к гибриду, 1-2 дня в офисе для меня нормально. "
-            "С VMware ESXi работаю давно: настраивал кластеры, хранилища и миграции без даунтайма."
-        ),
+        "description": "Кандидат явно подтверждает hybrid, и prompt не должен подменять это на remote.",
+        "scenario_type": "hybrid_explicit",
         "expected_json": {"work_format": "hybrid"},
+        "preferred_work_formats": ["hybrid"],
     },
     {
         "name": "wf_empty_when_candidate_silent",
-        "description": "Кандидат ничего не говорит про формат работы, значит work_format должен остаться пустым.",
-        "vacancy_title": "Backend Python Engineer",
-        "vacancy_company": "CloudCore",
-        "dialogue": (
-            "Кандидат: Добрый день! Я backend-разработчик, последние пять лет работаю с Python, "
-            "FastAPI и PostgreSQL, плюс немного трогал Kafka.\n"
-            "Рекрутер: Добрый день! Подскажите, пожалуйста, в каком городе вы сейчас находитесь "
-            "и какие у вас зарплатные ожидания?\n"
-            "Кандидат: Сейчас я в Санкт-Петербурге, по деньгам ориентируюсь на 360000 рублей gross.\n"
-            "Рекрутер: Спасибо. А какой у вас практический опыт с highload-сервисами и очередями?\n"
-            "Кандидат: На текущем проекте вел сервисы с нагрузкой порядка 20 тысяч запросов в минуту, "
-            "Kafka использовал для асинхронной обработки событий и ретраев."
-        ),
+        "description": "Кандидат не говорит про формат работы, значит work_format должен остаться пустым.",
+        "scenario_type": "format_silent",
         "expected_json": {"work_format": ""},
+        "preferred_work_formats": ["remote", "hybrid", "office"],
     },
     {
         "name": "wf_empty_when_only_recruiter_mentions_hybrid",
-        "description": "Рекрутер упоминает гибрид, но кандидат формат не подтверждает; извлекать work_format нельзя.",
-        "vacancy_title": "Infrastructure Engineer",
-        "vacancy_company": "InfraWave",
-        "dialogue": (
-            "Кандидат: Добрый день! У меня 7 лет опыта в администрировании Linux и виртуализации, "
-            "последние проекты были связаны с on-prem и private cloud.\n"
-            "Рекрутер: Подскажите, пожалуйста, какую зарплату рассматриваете и в каком городе вы находитесь?\n"
-            "Кандидат: Я в Москве, по деньгам ориентируюсь на 400000 рублей gross.\n"
-            "Рекрутер: Готовы ли вы рассматривать гибридный формат? И второй вопрос: "
-            "какой у вас опыт с виртуализацией и VMware ESXi?\n"
-            "Кандидат: По VMware ESXi работал около четырех лет: поднимал кластеры, "
-            "настраивал HA и занимался обновлениями гипервизоров."
-        ),
+        "description": "Гибрид упомянул только рекрутер, кандидат формат не подтвердил, значит work_format должен остаться пустым.",
+        "scenario_type": "hybrid_ignored",
         "expected_json": {"work_format": ""},
+        "preferred_work_formats": ["hybrid"],
     },
 ]
 
@@ -145,34 +117,8 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["total_tokens"] += tt
 
 
-def _extract_json_substring(text: str) -> Optional[str]:
-    if not text:
-        return None
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if 0 <= start < end:
-        return text[start : end + 1].strip()
-
-    start = text.find("[")
-    end = text.rfind("]")
-    if 0 <= start < end:
-        return text[start : end + 1].strip()
-
-    return None
-
-
 def _safe_json_loads(text: str) -> Any:
-    raw = (text or "").strip()
-    if not raw:
-        raise ValueError("empty json text")
-    try:
-        return json.loads(raw)
-    except Exception:
-        extracted = _extract_json_substring(raw)
-        if not extracted:
-            raise
-        return json.loads(extracted)
+    return safe_json_loads(text)
 
 
 def _only_digits_or_empty(s: Any) -> bool:
@@ -257,13 +203,13 @@ def _parse_case_names_filter(raw: Optional[str]) -> Optional[Set[str]]:
     return out or None
 
 
-def _select_regression_cases(case_names: Optional[Set[str]]) -> List[Dict[str, Any]]:
+def _select_regression_case_specs(case_names: Optional[Set[str]]) -> List[Dict[str, Any]]:
     if not case_names:
-        return [dict(case) for case in REGRESSION_CASES]
+        return [dict(case) for case in REGRESSION_CASE_SPECS]
 
     selected: List[Dict[str, Any]] = []
     seen: Set[str] = set()
-    for case in REGRESSION_CASES:
+    for case in REGRESSION_CASE_SPECS:
         name = str(case.get("name") or "")
         if name in case_names:
             selected.append(dict(case))
@@ -411,7 +357,12 @@ _SALARY_WORDS = re.compile(
     re.IGNORECASE,
 )
 _CURRENCY_WORDS = re.compile(r"(₽|\$|€|\bруб\b|\bрубл)", re.IGNORECASE)
-_THOUSAND_NUMBER_SUFFIX = re.compile(r"\b\d+\s*(тыс|тысяч|т\.?р\.?|к|k)\b", re.IGNORECASE)
+_SALARY_SHORTHAND_SUFFIX = re.compile(r"\b\d+\s*(т\.?р\.?|к|k)\b", re.IGNORECASE)
+_THOUSAND_BARE = re.compile(r"\b\d+\s*тыс(?:яч)?\b", re.IGNORECASE)
+_THOUSAND_WITH_MONEY = re.compile(
+    r"\b\d+\s*тыс(?:яч)?\s*(?:руб(?:\.|лей|ля)?|₽|р\b|gross|net|netto|гросс|брутто|на руки)\b",
+    re.IGNORECASE,
+)
 
 _LOCATION_WORDS = re.compile(r"(город|локац|находит|жив[еу]|прожива|переезд|релокац)", re.IGNORECASE)
 _WORKFORMAT_WORDS = re.compile(
@@ -435,7 +386,11 @@ def _salary_topic(text: str) -> bool:
         return True
     if _CURRENCY_WORDS.search(t):
         return True
-    if _THOUSAND_NUMBER_SUFFIX.search(t):
+    if _SALARY_SHORTHAND_SUFFIX.search(t):
+        return True
+    if _THOUSAND_WITH_MONEY.search(t):
+        return True
+    if _THOUSAND_BARE.search(t) and (_SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t)):
         return True
     return False
 
@@ -449,8 +404,14 @@ def _salary_expectation_provided(text: str) -> bool:
     if not t:
         return False
 
-    # any explicit "N тыс/к/k" is an expectation (350к, 350 тыс)
-    if _THOUSAND_NUMBER_SUFFIX.search(t):
+    # explicit money shorthand like 350к / 350 т.р.
+    if _SALARY_SHORTHAND_SUFFIX.search(t):
+        return True
+
+    # "350 тысяч рублей" is explicit money, but "20 тысяч запросов" is not
+    if _THOUSAND_WITH_MONEY.search(t):
+        return True
+    if _THOUSAND_BARE.search(t) and (_SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t)):
         return True
 
     # full money numbers with currency/context nearby
@@ -468,12 +429,24 @@ def _salary_expectation_provided(text: str) -> bool:
     # ranges like 350-400 with salary context (usually "к/тыс/руб/зарплата")
     m = _SALARY_RANGE_DASH.search(t)
     if m:
-        if _SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t) or _THOUSAND_NUMBER_SUFFIX.search(t) or _SALARY_FROM_TO.search(t):
+        if (
+            _SALARY_WORDS.search(t)
+            or _CURRENCY_WORDS.search(t)
+            or _SALARY_SHORTHAND_SUFFIX.search(t)
+            or _THOUSAND_WITH_MONEY.search(t)
+            or (_THOUSAND_BARE.search(t) and (_SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t)))
+            or _SALARY_FROM_TO.search(t)
+        ):
             return True
 
     # "от 350" with context
     if re.search(r"\bот\s+\d{2,7}\b", t, flags=re.IGNORECASE):
-        if _SALARY_WORDS.search(t) or _CURRENCY_WORDS.search(t) or _THOUSAND_NUMBER_SUFFIX.search(t):
+        if (
+            _SALARY_WORDS.search(t)
+            or _CURRENCY_WORDS.search(t)
+            or _SALARY_SHORTHAND_SUFFIX.search(t)
+            or _THOUSAND_WITH_MONEY.search(t)
+        ):
             return True
 
     return False
@@ -599,6 +572,396 @@ def _ordered_parsed_json(obj: Any) -> Any:
         "work_format": str(obj.get("work_format") or ""),
         "additional_info": obj.get("additional_info") if isinstance(obj.get("additional_info"), list) else [],
     }
+
+
+def _dedupe_keep_order(items: List[str]) -> List[str]:
+    seen: Set[str] = set()
+    out: List[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+def _stable_text_seed(text: str) -> int:
+    total = 0
+    for idx, ch in enumerate(text or "", start=1):
+        total += idx * ord(ch)
+    return total
+
+
+def _split_text_tokens(value: Any) -> List[str]:
+    if isinstance(value, list):
+        raw_items: List[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                for key in ("skill", "title", "name", "company"):
+                    v = item.get(key)
+                    if isinstance(v, str) and v.strip():
+                        raw_items.append(v.strip())
+                        break
+            elif isinstance(item, str) and item.strip():
+                raw_items.append(item.strip())
+        return _dedupe_keep_order(raw_items)
+
+    text = str(value or "").strip()
+    if not text:
+        return []
+    parts = re.split(r"[,\n;/]+", text)
+    return _dedupe_keep_order([part.strip() for part in parts if part.strip()])
+
+
+def _vacancy_skill_tokens(vacancy: Dict[str, Any]) -> List[str]:
+    tokens = _split_text_tokens(vacancy.get("vacancy_stack"))
+    tokens.extend(_split_text_tokens(vacancy.get("vacancy_skills")))
+    return _dedupe_keep_order(tokens)
+
+
+def _candidate_skill_tokens(candidate: Dict[str, Any]) -> List[str]:
+    tokens: List[str] = []
+    for item in candidate.get("candidate_skills") or []:
+        if not isinstance(item, dict):
+            continue
+        skill = item.get("skill")
+        if isinstance(skill, str) and skill.strip():
+            tokens.append(skill.strip())
+    return _dedupe_keep_order(tokens)
+
+
+def _responsibility_fragments(vacancy: Dict[str, Any]) -> List[str]:
+    text = str(vacancy.get("responsibilities") or "").strip()
+    if not text:
+        return []
+    parts = re.split(r"[,\n;]+", text)
+    out = [part.strip(" .") for part in parts if len(part.strip()) >= 12]
+    return _dedupe_keep_order(out)
+
+
+def _extract_city_from_location(location: str, fallback_index: int) -> str:
+    raw = str(location or "").strip()
+    for city in _COMMON_CITIES:
+        if re.search(rf"\b{re.escape(city)}\b", raw, flags=re.IGNORECASE):
+            return city
+    fallback_cities = ["Москва", "Санкт-Петербург", "Казань", "Новосибирск", "Екатеринбург"]
+    return fallback_cities[fallback_index % len(fallback_cities)]
+
+
+def _candidate_location_answer(vacancy: Dict[str, Any], variant_index: int) -> str:
+    return _extract_city_from_location(str(vacancy.get("location") or ""), variant_index - 1)
+
+
+def _salary_currency(vacancy: Dict[str, Any]) -> str:
+    raw_vacancy = str(vacancy.get("raw_vacancy") or "")
+    salary_to = vacancy.get("salary_range_to")
+    try:
+        upper = int(salary_to) if salary_to is not None else 0
+    except Exception:
+        upper = 0
+    if "$" in raw_vacancy or (0 < upper <= 10000):
+        return "usd"
+    if "€" in raw_vacancy:
+        return "eur"
+    return "rub"
+
+
+def _candidate_salary_answer(vacancy: Dict[str, Any], variant_index: int) -> str:
+    salary_from = vacancy.get("salary_range_from")
+    salary_to = vacancy.get("salary_range_to")
+    try:
+        lower = int(salary_from) if salary_from is not None else 0
+    except Exception:
+        lower = 0
+    try:
+        upper = int(salary_to) if salary_to is not None else 0
+    except Exception:
+        upper = 0
+
+    if lower and upper and upper >= lower:
+        step = max((upper - lower) // 4, 1)
+        target = lower + step * min(variant_index, 2)
+    else:
+        target = upper or lower or 300000
+
+    currency = _salary_currency(vacancy)
+    if currency == "usd":
+        return f"По деньгам ориентируюсь на {target} долларов gross."
+    if currency == "eur":
+        return f"По компенсации рассматриваю уровень около {target} евро gross."
+    return f"По деньгам ориентируюсь на {target} рублей gross."
+
+
+def _fallback_non_format_questions(vacancy: Dict[str, Any]) -> List[str]:
+    skills = _vacancy_skill_tokens(vacancy)
+    responsibilities = _responsibility_fragments(vacancy)
+
+    fallbacks: List[str] = []
+    if skills:
+        lead_skills = ", ".join(skills[:2])
+        fallbacks.append(f"Расскажите, пожалуйста, подробнее про ваш опыт с {lead_skills}?")
+    if responsibilities:
+        fallbacks.append(f"Был ли у вас опыт, где вы отвечали за {responsibilities[0]}?")
+    if len(skills) >= 3:
+        fallbacks.append(f"Насколько уверенно вы работали со стеком {skills[1]} и {skills[2]} на практике?")
+    return _dedupe_keep_order(fallbacks)
+
+
+def _question_pools(vacancy: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    raw_questions = _parse_questions(str(vacancy.get("questions") or ""))
+    format_questions = [q for q in raw_questions if _workformat_topic(q)]
+    non_format_questions = [
+        q for q in raw_questions if not _workformat_topic(q) and not _salary_topic(q) and not _location_topic(q)
+    ]
+    if not non_format_questions:
+        non_format_questions = _fallback_non_format_questions(vacancy)
+    return (_dedupe_keep_order(format_questions), _dedupe_keep_order(non_format_questions))
+
+
+def _pick_question(questions: List[str], offset: int, fallback: str) -> str:
+    if not questions:
+        return fallback
+    return questions[offset % len(questions)]
+
+
+def _candidate_intro(cdm: Dict[str, Any], variant_index: int) -> str:
+    vacancy = cdm.get("vacancy") or {}
+    candidate = cdm.get("candidate") or {}
+    title = str(vacancy.get("title") or "позиции")
+    skills = _vacancy_skill_tokens(vacancy) or _candidate_skill_tokens(candidate)
+    responsibilities = _responsibility_fragments(vacancy)
+    years = 5 + ((variant_index + len(title)) % 4)
+    skill_part = ", ".join(skills[:3]) if skills else title
+    responsibility_part = responsibilities[0] if responsibilities else "разработку и развитие продукта"
+
+    templates = [
+        f"Добрый день. Последние {years} лет я в роли, близкой к {title}, и много работал с {skill_part}. "
+        f"На текущем месте отвечаю за {responsibility_part}.",
+        f"Добрый день. По профилю я последние {years} лет веду задачи уровня {title}: "
+        f"работал с {skill_part}, плюс был вовлечён в {responsibility_part}.",
+        f"Добрый день. У меня около {years} лет релевантного опыта: основной стек был {skill_part}, "
+        f"а в зоне ответственности обычно были {responsibility_part}.",
+    ]
+    return templates[(variant_index - 1) % len(templates)]
+
+
+def _question_terms(question: str, cdm: Dict[str, Any]) -> List[str]:
+    q_lower = str(question or "").lower()
+    vacancy = cdm.get("vacancy") or {}
+    candidate = cdm.get("candidate") or {}
+    token_pool = _candidate_skill_tokens(candidate) + _vacancy_skill_tokens(vacancy)
+
+    matched = [token for token in token_pool if token and token.lower() in q_lower]
+    if matched:
+        return _dedupe_keep_order(matched)[:3]
+    return _dedupe_keep_order(token_pool)[:3]
+
+
+def _technical_answer(question: str, cdm: Dict[str, Any], variant_index: int) -> str:
+    vacancy = cdm.get("vacancy") or {}
+    responsibilities = _responsibility_fragments(vacancy)
+    terms = _question_terms(question, cdm)
+    terms_part = ", ".join(terms) if terms else str(vacancy.get("title") or "этим стеком")
+    responsibility_part = responsibilities[min(variant_index - 1, len(responsibilities) - 1)] if responsibilities else "несколько смежных инженерных задач"
+
+    templates = [
+        f"Да, этот опыт у меня есть. На последних проектах работал с {terms_part}; из практики ближе всего {responsibility_part}.",
+        f"По этой части опыт уверенный: работал с {terms_part}, а ещё регулярно брал на себя {responsibility_part}.",
+        f"Да, на практике это делал. Основной опыт был вокруг {terms_part}, плюс занимался такими задачами, как {responsibility_part}.",
+    ]
+    return templates[(variant_index - 1) % len(templates)]
+
+
+def _candidate_clarifying_question(variant_index: int) -> str:
+    questions = [
+        "Как у вас устроена команда и кому будет подчиняться эта роль?",
+        "Какие задачи для этой позиции самые приоритетные в первые месяцы?",
+        "Как у вас обычно устроен процесс принятия технических решений внутри команды?",
+    ]
+    return questions[(variant_index - 1) % len(questions)]
+
+
+def _recruiter_clarifying_reply(vacancy: Dict[str, Any], variant_index: int) -> str:
+    company = str(vacancy.get("company_name") or "компании")
+    title = str(vacancy.get("title") or "роли")
+    replies = [
+        f"Команда по {title} работает плотно с hiring manager и соседними инженерами, контекст по задачам быстро даём.",
+        f"По процессу в {company} решения принимаются совместно с лидом направления и командой, без лишней бюрократии.",
+        f"На входе по роли в {company} обычно быстро погружаем в продукт и приоритеты, чтобы человек понял контекст команды.",
+    ]
+    return replies[(variant_index - 1) % len(replies)]
+
+
+def _build_hybrid_question(vacancy: Dict[str, Any], variant_index: int) -> str:
+    format_questions, _ = _question_pools(vacancy)
+    if format_questions:
+        for question in format_questions:
+            if "гибрид" in question.lower():
+                return question
+    city = _extract_city_from_location(str(vacancy.get("location") or ""), variant_index - 1)
+    return f"Насколько вам подходит гибридный формат с 1-2 днями в офисе в {city}?"
+
+
+def _filter_regression_pool(
+    cdm_records: List[Dict[str, Any]],
+    spec: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    preferred_formats = {str(value).strip() for value in (spec.get("preferred_work_formats") or []) if str(value).strip()}
+    if not preferred_formats:
+        return cdm_records
+
+    filtered = [
+        record for record in cdm_records
+        if str(((record.get("cdm") or {}).get("vacancy") or {}).get("work_format") or "").strip() in preferred_formats
+    ]
+    return filtered or cdm_records
+
+
+def _build_regression_dialogue(
+    spec: Dict[str, Any],
+    cdm: Dict[str, Any],
+    variant_index: int,
+) -> str:
+    vacancy = cdm.get("vacancy") or {}
+    candidate = cdm.get("candidate") or {}
+    recruiter_name = str(candidate.get("recruiter_name") or "Рекрутер")
+    candidate_name = str(candidate.get("candidate_name") or "Кандидат")
+    title = str(vacancy.get("title") or "позиции")
+    company = str(vacancy.get("company_name") or "компании")
+
+    _, non_format_questions = _question_pools(vacancy)
+    fallback_questions = _fallback_non_format_questions(vacancy)
+    technical_q1 = _pick_question(
+        non_format_questions,
+        variant_index - 1,
+        _pick_question(fallback_questions, 0, "Расскажите, пожалуйста, подробнее про ваш релевантный опыт."),
+    )
+    technical_q2 = _pick_question(
+        non_format_questions,
+        variant_index,
+        _pick_question(fallback_questions, 1, "Какие из ваших последних задач ближе всего к роли?"),
+    )
+
+    candidate_question_1 = _candidate_clarifying_question(variant_index)
+    candidate_question_2 = _candidate_clarifying_question(variant_index + 1)
+    recruiter_context_reply = _recruiter_clarifying_reply(vacancy, variant_index)
+
+    intro = _candidate_intro(cdm, variant_index)
+    salary_answer = _candidate_salary_answer(vacancy, variant_index)
+    location_answer = _candidate_location_answer(vacancy, variant_index)
+    technical_answer_1 = _technical_answer(technical_q1, cdm, variant_index)
+    technical_answer_2 = _technical_answer(technical_q2, cdm, variant_index + 1)
+
+    turns: List[Dict[str, str]] = [
+        {
+            "speaker": "recruiter",
+            "text": (
+                f"{candidate_name}, добрый день! Меня зовут {recruiter_name}, я по вакансии {title} в {company}. "
+                "Коротко расскажите, пожалуйста, про ваш релевантный опыт и последние задачи."
+            ),
+        },
+        {"speaker": "candidate", "text": intro},
+        {
+            "speaker": "recruiter",
+            "text": "Спасибо. Сориентируйте, пожалуйста, по ожидаемому доходу и по городу, где вы сейчас находитесь.",
+        },
+        {
+            "speaker": "candidate",
+            "text": f"{salary_answer} Сейчас нахожусь в {location_answer}. И заодно уточню: {candidate_question_1}",
+        },
+    ]
+
+    scenario_type = str(spec.get("scenario_type") or "")
+    if scenario_type == "hybrid_explicit":
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": f"{recruiter_context_reply} И ещё уточню: {_build_hybrid_question(vacancy, variant_index)} {technical_q1}",
+                },
+                {
+                    "speaker": "candidate",
+                    "text": (
+                        "Да, гибрид мне подходит, спокойно рассматриваю 1-2 дня в офисе. "
+                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
+                    ),
+                },
+            ]
+        )
+    elif scenario_type == "hybrid_ignored":
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": f"{recruiter_context_reply} И ещё уточню: {_build_hybrid_question(vacancy, variant_index)} {technical_q1}",
+                },
+                {
+                    "speaker": "candidate",
+                    "text": f"{technical_answer_1} И ещё хотел бы уточнить: {candidate_question_2}",
+                },
+            ]
+        )
+    else:
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": f"{recruiter_context_reply} И ещё уточню: {technical_q1} {technical_q2}",
+                },
+                {
+                    "speaker": "candidate",
+                    "text": f"{technical_answer_1} {technical_answer_2} И ещё хотел бы понять: {candidate_question_2}",
+                },
+            ]
+        )
+
+    turns.extend(
+        [
+            {
+                "speaker": "recruiter",
+                "text": f"Отвечу: {recruiter_context_reply} И ещё короткий вопрос: {technical_q2}",
+            },
+            {
+                "speaker": "candidate",
+                "text": f"{technical_answer_2} В целом по стеку и задачам вакансия мне понятна.",
+            },
+        ]
+    )
+    return _format_dialogue(turns)
+
+
+def _build_regression_cases(
+    spec: Dict[str, Any],
+    cdm_records: List[Dict[str, Any]],
+    variants_per_case: int,
+    seed: Optional[int],
+) -> List[Dict[str, Any]]:
+    pool = _filter_regression_pool(cdm_records, spec)
+    if not pool:
+        raise ValueError("no CDM fixtures available for regression cases")
+
+    base_seed = (seed or 0) + _stable_text_seed(str(spec.get("name") or ""))
+    cases: List[Dict[str, Any]] = []
+    for variant_index in range(1, variants_per_case + 1):
+        record = pool[(base_seed + (variant_index - 1) * 3) % len(pool)]
+        cdm = record.get("cdm") or {}
+        vacancy = cdm.get("vacancy") or {}
+        dialogue = _build_regression_dialogue(spec=spec, cdm=cdm, variant_index=variant_index)
+        cases.append(
+            {
+                "case_source": "regression",
+                "case_name": str(spec.get("name") or ""),
+                "case_description": spec.get("description"),
+                "cdm_file": str(record.get("path")),
+                "vacancy_title": vacancy.get("title"),
+                "vacancy_company": vacancy.get("company_name"),
+                "variant_index": variant_index,
+                "dialogue": dialogue,
+                "expected_json": spec.get("expected_json"),
+            }
+        )
+    return cases
 
 
 class DialogueSynthesizer:
@@ -770,37 +1133,8 @@ class DialogueSynthesizer:
         return out_dialogues
 
 
-class ScreeningAutofillPromptRunner:
-    def __init__(self, prompt_id: str, prompt_version: Optional[str]) -> None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise EnvironmentError("OPENAI_API_KEY is not set")
-
-        self.client = OpenAI(api_key=api_key)
-        self.prompt: Dict[str, Any] = {"id": prompt_id}
-        if prompt_version:
-            self.prompt["version"] = str(prompt_version)
-        self.last_usage: Any = None
-
-    def run_once(self, dialogue: str) -> str:
-        payload = "\n".join(
-            [
-                "Fill the screening form based on the dialogue below.",
-                "",
-                dialogue.strip(),
-            ]
-        ).strip()
-
-        resp = self.client.responses.create(
-            prompt=self.prompt,
-            input=payload,
-        )
-        self.last_usage = getattr(resp, "usage", None)
-        return (getattr(resp, "output_text", "") or "").strip()
-
-
 def _run_single_autofill_case(
-    autofill: ScreeningAutofillPromptRunner,
+    autofill: ScreeningAutofillPromptClient,
     dialogue: str,
     flatten_like_prod: bool,
     token_usage_total: Dict[str, int],
@@ -815,10 +1149,8 @@ def _run_single_autofill_case(
     error: Optional[str] = None
 
     try:
-        raw_out = autofill.run_once(final_dialogue)
+        parsed = autofill.run(final_dialogue)
         _accumulate_usage(token_usage_total, autofill.last_usage)
-
-        parsed = _safe_json_loads(raw_out)
         schema_errors = _validate_schema(parsed)
         expectation_errors = _validate_expected_json_subset(parsed, expected_json)
         if not schema_errors:
@@ -850,6 +1182,58 @@ def _collect_errors(*error_groups: Optional[List[str]], exc: Optional[str] = Non
     return out
 
 
+def _case_id(result: Dict[str, Any]) -> str:
+    source = str(result.get("case_source") or "case")
+    name = str(result.get("case_name") or "unnamed")
+    variant_index = result.get("variant_index")
+    if variant_index is None:
+        return f"{source}:{name}"
+    return f"{source}:{name}:v{variant_index}"
+
+
+def _work_format_from_payload(payload: Any) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("work_format")
+    if value is None:
+        return None
+    return str(value)
+
+
+def _compact_case_record(result: Dict[str, Any], issues: List[str]) -> Dict[str, Any]:
+    parsed_json = result.get("parsed_json")
+    expected_json = result.get("expected_json")
+    return {
+        "case_id": _case_id(result),
+        "source": result.get("case_source"),
+        "name": result.get("case_name"),
+        "variant_index": result.get("variant_index"),
+        "source_cdm": pathlib.Path(str(result.get("cdm_file") or "")).name if result.get("cdm_file") else None,
+        "vacancy_title": result.get("vacancy_title"),
+        "vacancy_company": result.get("vacancy_company"),
+        "match": len(issues) == 0,
+        "expected_work_format": _work_format_from_payload(expected_json),
+        "actual_work_format": _work_format_from_payload(parsed_json),
+        "issues": issues,
+    }
+
+
+def _mismatch_record(result: Dict[str, Any], issues: List[str]) -> Dict[str, Any]:
+    return {
+        "case_id": _case_id(result),
+        "source": result.get("case_source"),
+        "name": result.get("case_name"),
+        "variant_index": result.get("variant_index"),
+        "source_cdm": pathlib.Path(str(result.get("cdm_file") or "")).name if result.get("cdm_file") else None,
+        "vacancy_title": result.get("vacancy_title"),
+        "vacancy_company": result.get("vacancy_company"),
+        "expected": result.get("expected_json"),
+        "observed": result.get("parsed_json"),
+        "issues": issues,
+        "dialogue": result.get("dialogue"),
+    }
+
+
 def run_autofill_from_cdm(
     cdm_dir: pathlib.Path,
     cdm_count: Optional[int],
@@ -865,6 +1249,7 @@ def run_autofill_from_cdm(
     include_regression_cases: bool = False,
     regression_only: bool = False,
     regression_case_names: Optional[Set[str]] = None,
+    regression_variants_per_case: int = DEFAULT_REGRESSION_VARIANTS_PER_CASE,
 ) -> pathlib.Path:
     ensure_dirs()
 
@@ -872,7 +1257,12 @@ def run_autofill_from_cdm(
     run_id = started_at.strftime("%Y%m%d_%H%M%S")
     run_generated_cases = not regression_only
     run_regression_cases = bool(include_regression_cases or regression_only or regression_case_names)
-    selected_regression_cases = _select_regression_cases(regression_case_names) if run_regression_cases else []
+    selected_regression_specs = (
+        _select_regression_case_specs(regression_case_names) if run_regression_cases else []
+    )
+
+    if regression_variants_per_case <= 0:
+        raise ValueError("--regression-variants-per-case must be > 0")
 
     _log(
         quiet,
@@ -885,7 +1275,8 @@ def run_autofill_from_cdm(
         f"flatten_like_prod={flatten_like_prod} "
         f"seed={seed} "
         f"run_generated_cases={run_generated_cases} "
-        f"run_regression_cases={run_regression_cases}",
+        f"run_regression_cases={run_regression_cases} "
+        f"regression_variants_per_case={regression_variants_per_case}",
     )
 
     cfg: Dict[str, Any] = {}
@@ -912,7 +1303,8 @@ def run_autofill_from_cdm(
 
     final_gen_model = dialogue_gen_model or cfg_gen_model or DEFAULT_DIALOGUE_GEN_MODEL
 
-    cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count) if run_generated_cases else []
+    cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count) if (run_generated_cases or run_regression_cases) else []
+    cdm_records = [{"path": path, "cdm": load_json(path)} for path in cdm_paths]
 
     _log(
         quiet,
@@ -921,30 +1313,31 @@ def run_autofill_from_cdm(
         f"prompt_version={final_pver} "
         f"dialogue_gen_model={final_gen_model} "
         f"dialogue_gen_retries={DIALOGUE_GEN_MAX_RETRIES} "
-        f"regression_cases_selected={len(selected_regression_cases)}",
+        f"regression_cases_selected={len(selected_regression_specs)} "
+        f"source_cdm_count={len(cdm_records)}",
     )
 
     synth = DialogueSynthesizer(model=final_gen_model, seed=seed) if run_generated_cases else None
-    autofill = ScreeningAutofillPromptRunner(prompt_id=final_pid, prompt_version=final_pver)
+    autofill = ScreeningAutofillPromptClient(prompt_id=final_pid, prompt_version=final_pver)
 
     token_usage_total = _blank_usage()
 
     results: List[Dict[str, Any]] = []
-    errors_by_dialogue: List[Dict[str, Any]] = []
-    all_error_counts: Counter[str] = Counter()
+    issue_counts: Counter[str] = Counter()
 
     passed = 0
     failed = 0
 
     source_counts = {"cdm": 0, "regression": 0}
-    total_cdm_cases = len(cdm_paths)
+    total_cdm_cases = len(cdm_records)
 
     if run_generated_cases:
         if synth is None:
             raise RuntimeError("dialogue synthesizer is not initialized")
 
-        for case_idx, cdm_path in enumerate(cdm_paths, start=1):
-            cdm = load_json(cdm_path)
+        for case_idx, record in enumerate(cdm_records, start=1):
+            cdm_path = pathlib.Path(str(record["path"]))
+            cdm = record["cdm"]
             vacancy = cdm.get("vacancy") or {}
             v_title = vacancy.get("title")
             v_company = vacancy.get("company_name") if "company_name" in vacancy else vacancy.get("company_name")
@@ -971,7 +1364,7 @@ def run_autofill_from_cdm(
                 result = {
                     "case_source": "cdm",
                     "case_name": cdm_path.name,
-                    "case_description": None,
+                    "case_description": "dialogue_synthesis_failed",
                     "cdm_file": str(cdm_path),
                     "vacancy_title": v_title,
                     "vacancy_company": v_company,
@@ -986,14 +1379,8 @@ def run_autofill_from_cdm(
                 }
                 results.append(result)
                 source_counts["cdm"] += 1
-                errors_by_dialogue.append(
-                    {
-                        "cdm_file": str(cdm_path),
-                        "variant_index": None,
-                        "errors": ["dialogue_synthesis_failed", f"exception:{err}"],
-                    }
-                )
-                all_error_counts["dialogue_synthesis_failed"] += 1
+                issue_counts["dialogue_synthesis_failed"] += 1
+                issue_counts[f"exception:{err}"] += 1
                 continue
 
             for v_idx, dialogue in enumerate(dialogues, start=1):
@@ -1019,15 +1406,8 @@ def run_autofill_from_cdm(
 
                 if combined_errors:
                     failed += 1
-                    errors_by_dialogue.append(
-                        {
-                            "cdm_file": str(cdm_path),
-                            "variant_index": v_idx,
-                            "errors": combined_errors,
-                        }
-                    )
                     for ce in combined_errors:
-                        all_error_counts[ce] += 1
+                        issue_counts[ce] += 1
 
                     if error is not None:
                         _log(quiet, f"    [fail] error={error}")
@@ -1062,123 +1442,76 @@ def run_autofill_from_cdm(
                 source_counts["cdm"] += 1
 
     if run_regression_cases:
-        total_regression_cases = len(selected_regression_cases)
-        for case_idx, regression_case in enumerate(selected_regression_cases, start=1):
-            case_name = str(regression_case.get("name") or f"regression_{case_idx:04d}")
-            case_ref = f"regression_case::{case_name}"
-            description = regression_case.get("description")
-            dialogue = str(regression_case.get("dialogue") or "").strip()
-            expected_json = regression_case.get("expected_json")
-            v_title = regression_case.get("vacancy_title")
-            v_company = regression_case.get("vacancy_company")
+        total_regression_specs = len(selected_regression_specs)
+        for spec_idx, spec in enumerate(selected_regression_specs, start=1):
+            case_name = str(spec.get("name") or f"regression_{spec_idx:04d}")
+            built_cases = _build_regression_cases(
+                spec=spec,
+                cdm_records=cdm_records,
+                variants_per_case=regression_variants_per_case,
+                seed=seed,
+            )
 
             _log(
                 quiet,
-                f"[run] regression {case_idx}/{total_regression_cases} "
-                f"({case_name}) expected={expected_json}",
+                f"[run] regression {spec_idx}/{total_regression_specs} "
+                f"({case_name}) variants={len(built_cases)} expected={spec.get('expected_json')}",
             )
 
-            if not dialogue:
-                err = "empty_regression_dialogue"
-                failed += 1
-                errors_by_dialogue.append(
-                    {
-                        "cdm_file": case_ref,
-                        "variant_index": 1,
-                        "errors": [err],
-                    }
+            for built_case in built_cases:
+                variant_index = int(built_case.get("variant_index") or 1)
+                evaluated = _run_single_autofill_case(
+                    autofill=autofill,
+                    dialogue=str(built_case.get("dialogue") or ""),
+                    flatten_like_prod=flatten_like_prod,
+                    token_usage_total=token_usage_total,
+                    expected_json=built_case.get("expected_json") if isinstance(built_case.get("expected_json"), dict) else None,
                 )
-                all_error_counts[err] += 1
+                schema_errors = evaluated["schema_errors"]
+                semantic_errors = evaluated["semantic_errors"]
+                expectation_errors = evaluated["expectation_errors"]
+                error = evaluated["error"]
+                combined_errors = _collect_errors(
+                    schema_errors,
+                    semantic_errors,
+                    expectation_errors,
+                    exc=error,
+                )
+
+                if combined_errors:
+                    failed += 1
+                    for ce in combined_errors:
+                        issue_counts[ce] += 1
+                    if error is not None:
+                        _log(quiet, f"    [fail] {case_name} v{variant_index} error={error}")
+                    elif expectation_errors:
+                        _log(quiet, f"    [fail] {case_name} v{variant_index} expectation_errors={expectation_errors}")
+                    elif schema_errors:
+                        _log(quiet, f"    [fail] {case_name} v{variant_index} schema_errors={schema_errors}")
+                    else:
+                        _log(quiet, f"    [fail] {case_name} v{variant_index} semantic_errors={semantic_errors}")
+                else:
+                    passed += 1
+                    _log(quiet, f"    [ok] {case_name} v{variant_index}")
+
                 results.append(
                     {
-                        "case_source": "regression",
-                        "case_name": case_name,
-                        "case_description": description,
-                        "cdm_file": case_ref,
-                        "vacancy_title": v_title,
-                        "vacancy_company": v_company,
-                        "variant_index": 1,
-                        "dialogue": dialogue,
-                        "parsed_json": None,
-                        "expected_json": expected_json,
-                        "schema_errors": [],
-                        "semantic_errors": [],
-                        "expectation_errors": [err],
-                        "error": None,
+                        **built_case,
+                        "dialogue": evaluated["dialogue"],
+                        "parsed_json": evaluated["parsed_json"],
+                        "schema_errors": schema_errors,
+                        "semantic_errors": semantic_errors,
+                        "expectation_errors": expectation_errors,
+                        "error": error,
                     }
                 )
                 source_counts["regression"] += 1
-                continue
-
-            evaluated = _run_single_autofill_case(
-                autofill=autofill,
-                dialogue=dialogue,
-                flatten_like_prod=flatten_like_prod,
-                token_usage_total=token_usage_total,
-                expected_json=expected_json if isinstance(expected_json, dict) else None,
-            )
-            schema_errors = evaluated["schema_errors"]
-            semantic_errors = evaluated["semantic_errors"]
-            expectation_errors = evaluated["expectation_errors"]
-            error = evaluated["error"]
-            combined_errors = _collect_errors(
-                schema_errors,
-                semantic_errors,
-                expectation_errors,
-                exc=error,
-            )
-
-            if combined_errors:
-                failed += 1
-                errors_by_dialogue.append(
-                    {
-                        "cdm_file": case_ref,
-                        "variant_index": 1,
-                        "errors": combined_errors,
-                    }
-                )
-                for ce in combined_errors:
-                    all_error_counts[ce] += 1
-
-                if error is not None:
-                    _log(quiet, f"    [fail] error={error}")
-                elif schema_errors:
-                    _log(quiet, f"    [fail] schema_errors={schema_errors}")
-                elif expectation_errors:
-                    _log(quiet, f"    [fail] expectation_errors={expectation_errors}")
-                else:
-                    _log(quiet, f"    [fail] semantic_errors={semantic_errors}")
-            else:
-                passed += 1
-                _log(quiet, "    [ok] regression matched expected_json")
-
-            results.append(
-                {
-                    "case_source": "regression",
-                    "case_name": case_name,
-                    "case_description": description,
-                    "cdm_file": case_ref,
-                    "vacancy_title": v_title,
-                    "vacancy_company": v_company,
-                    "variant_index": 1,
-                    "dialogue": evaluated["dialogue"],
-                    "parsed_json": evaluated["parsed_json"],
-                    "expected_json": expected_json,
-                    "schema_errors": schema_errors,
-                    "semantic_errors": semantic_errors,
-                    "expectation_errors": expectation_errors,
-                    "error": error,
-                }
-            )
-            source_counts["regression"] += 1
 
     total = passed + failed
     pass_rate = round((passed / total * 100.0), 2) if total else 0.0
 
-    # ---- NEW report structure: cases / mismatches / errors (verdict-like) ----
     cases: List[Dict[str, Any]] = []
     mismatches: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
 
     for r in results:
         schema_errors = r.get("schema_errors") or []
@@ -1186,112 +1519,43 @@ def run_autofill_from_cdm(
         expectation_errors = r.get("expectation_errors") or []
         exc = r.get("error")
         combined = _collect_errors(schema_errors, semantic_errors, expectation_errors, exc=exc)
-
-        match = len(combined) == 0
-
-        case = {
-            "match": match,
-            "case_source": r.get("case_source"),
-            "case_name": r.get("case_name"),
-            "case_description": r.get("case_description"),
-            "cdm_file": r.get("cdm_file"),
-            "variant_index": r.get("variant_index"),
-            "vacancy_title": r.get("vacancy_title"),
-            "vacancy_company": r.get("vacancy_company"),
-            "dialogue": r.get("dialogue"),
-            "parsed_json": r.get("parsed_json"),
-            "expected_json": r.get("expected_json"),
-            "schema_errors": schema_errors,
-            "semantic_errors": semantic_errors,
-            "expectation_errors": expectation_errors,
-            "error": exc,
-        }
-        cases.append(case)
-
-        if not match:
-            mismatches.append(
-                {
-                    "case_source": case["case_source"],
-                    "case_name": case["case_name"],
-                    "case_description": case["case_description"],
-                    "cdm_file": case["cdm_file"],
-                    "variant_index": case["variant_index"],
-                    "vacancy_title": case["vacancy_title"],
-                    "vacancy_company": case["vacancy_company"],
-                    "errors": combined,
-                    "dialogue": case["dialogue"],
-                    "parsed_json": case["parsed_json"],
-                    "expected_json": case["expected_json"],
-                }
-            )
-
-        # "errors" bucket: exceptions or synthesis failures (procedural errors)
-        if exc is not None:
-            errors.append(
-                {
-                    "case_source": case["case_source"],
-                    "case_name": case["case_name"],
-                    "cdm_file": case["cdm_file"],
-                    "variant_index": case["variant_index"],
-                    "vacancy_title": case["vacancy_title"],
-                    "vacancy_company": case["vacancy_company"],
-                    "error": exc,
-                }
-            )
-        elif "dialogue_synthesis_failed" in schema_errors or "dialogue_synthesis_failed" in semantic_errors:
-            errors.append(
-                {
-                    "case_source": case["case_source"],
-                    "case_name": case["case_name"],
-                    "cdm_file": case["cdm_file"],
-                    "variant_index": case["variant_index"],
-                    "vacancy_title": case["vacancy_title"],
-                    "vacancy_company": case["vacancy_company"],
-                    "error": "dialogue_synthesis_failed",
-                }
-            )
+        cases.append(_compact_case_record(r, combined))
+        if combined:
+            mismatches.append(_mismatch_record(r, combined))
 
     summary = {
-        # legacy-compatible
-        "results_total": len(results),
+        "total_cases": len(results),
         "passed": passed,
         "failed": failed,
         "pass_rate": pass_rate,
-        "errors_by_dialogue": errors_by_dialogue,
-        # verdict-like
-        "total_cases": len(cases),
         "mismatches_count": len(mismatches),
-        "errors_count": len(errors),
-        "error_counts": dict(all_error_counts),
         "source_counts": source_counts,
+        "issue_counts": dict(issue_counts),
+        "token_usage_total": token_usage_total,
     }
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
-        "cdm_count": cdm_count,
-        "variants_per_cdm": variants_per_cdm,
-        "noise_level": noise_level,
-        "allow_two_questions": allow_two_questions,
-        "flatten_like_prod": flatten_like_prod,
-        "seed": seed,
-        "include_regression_cases": include_regression_cases,
-        "regression_only": regression_only,
-        "regression_case_names": sorted(regression_case_names) if regression_case_names else None,
-        "regression_cases_selected": [case.get("name") for case in selected_regression_cases],
         "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
-        "dialogue_gen_model": final_gen_model,
-        "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES,
-        "token_usage_total": token_usage_total,
+        "mode": {
+            "generated_from_cdm": run_generated_cases,
+            "regression": run_regression_cases,
+            "cdm_source_count": len(cdm_records),
+            "variants_per_cdm": variants_per_cdm if run_generated_cases else 0,
+            "regression_variants_per_case": regression_variants_per_case if run_regression_cases else 0,
+            "noise_level": noise_level,
+            "allow_two_questions": allow_two_questions,
+            "flatten_like_prod": flatten_like_prod,
+            "seed": seed,
+            "dialogue_gen_model": final_gen_model if run_generated_cases else None,
+            "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES if run_generated_cases else 0,
+            "regression_case_names": sorted(regression_case_names) if regression_case_names else None,
+            "regression_cases_selected": [case.get("name") for case in selected_regression_specs],
+        },
         "summary": summary,
-
-        # NEW: verdict-like top-level lists
         "cases": cases,
         "mismatches": mismatches,
-        "errors": errors,
-
-        # OLD: keep for backward compatibility
-        "results": results,
     }
 
     out_path = REPORTS_DIR / f"screening_autofill_report_{run_id}.json"
@@ -1305,7 +1569,6 @@ def run_autofill_from_cdm(
         f"failed={failed} "
         f"pass_rate={pass_rate:.2f} "
         f"mismatches={len(mismatches)} "
-        f"errors={len(errors)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
     )
     _log(quiet, "[done] report saved: " + str(out_path))
@@ -1396,6 +1659,12 @@ def main() -> None:
         default=None,
         help="Comma-separated built-in regression case names to run (implies regression cases).",
     )
+    parser.add_argument(
+        "--regression-variants-per-case",
+        type=int,
+        default=DEFAULT_REGRESSION_VARIANTS_PER_CASE,
+        help=f"How many deterministic dialogue variants to run for each selected regression case (default: {DEFAULT_REGRESSION_VARIANTS_PER_CASE}).",
+    )
 
     args = parser.parse_args()
     regression_case_names = _parse_case_names_filter(args.regression_case_names)
@@ -1415,6 +1684,7 @@ def main() -> None:
         include_regression_cases=bool(args.include_regression_cases),
         regression_only=bool(args.regression_only),
         regression_case_names=regression_case_names,
+        regression_variants_per_case=args.regression_variants_per_case,
     )
 
 

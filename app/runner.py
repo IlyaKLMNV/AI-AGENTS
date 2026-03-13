@@ -18,9 +18,9 @@ from openai import OpenAI
 import traceback
 
 from adapters.adapters import names_from_cdm, to_vacancy_info, to_input_form
+from app.screening_autofill_client import ScreeningAutofillPromptClient
 from messageLabelGenerator.classifierLLM import ClassifierAssistant, AssistantError
 from screeningAssistant.screeningAss import Assistants as ScreeningAssistants
-from screening_autofill.screeningAutofill import ScreeningAutofill
 from verdict_classifier.chatClassifierLLM import ChatClassifierAssistant
 
 # --- Paths & constants ---
@@ -283,7 +283,10 @@ def classify_message(message_text: str, cfg: Dict[str, Any]) -> tuple[str, Any]:
 
 def run_autofill(dialog_text: str, cfg: Dict[str, Any]) -> tuple[Dict[str, object], Dict[str, int]]:
     af_cfg = _component_cfg(cfg, "screening_autofill")
-    autofiller = ScreeningAutofill(
+    prompt_id = af_cfg.get("prompt_id")
+    if not prompt_id:
+        raise ValueError("screening_autofill.prompt_id is not set in model.yaml")
+    autofiller = ScreeningAutofillPromptClient(
         prompt_id=af_cfg.get("prompt_id"),
         prompt_version=af_cfg.get("prompt_version"),
     )
