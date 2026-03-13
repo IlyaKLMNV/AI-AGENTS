@@ -27,6 +27,108 @@ from extractor_agent_runner import (
 
 
 LEVELS = ("junior", "middle", "senior", "lead", "head", "c-level")
+RUSSIAN_SUFFIXES = (
+    "иями",
+    "ями",
+    "ами",
+    "его",
+    "ого",
+    "ому",
+    "ему",
+    "ыми",
+    "ими",
+    "иях",
+    "ях",
+    "ах",
+    "ия",
+    "ья",
+    "ий",
+    "ый",
+    "ой",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ых",
+    "их",
+    "ым",
+    "им",
+    "ов",
+    "ев",
+    "ей",
+    "ам",
+    "ям",
+    "ом",
+    "ем",
+    "ы",
+    "и",
+    "а",
+    "я",
+    "у",
+    "ю",
+    "о",
+    "е",
+)
+TOKEN_CANONICAL_MAP = {
+    "developer": "developer",
+    "developers": "developer",
+    "develop": "developer",
+    "разработчик": "developer",
+    "разработч": "developer",
+    "engineer": "engineer",
+    "engineers": "engineer",
+    "инженер": "engineer",
+    "инженерн": "engineer",
+    "platform": "platform",
+    "platforms": "platform",
+    "платформ": "platform",
+    "network": "network",
+    "сетев": "network",
+    "сеть": "network",
+    "monitoring": "monitoring",
+    "monitor": "monitoring",
+    "мониторинг": "monitoring",
+    "логирован": "logging",
+    "logging": "logging",
+    "process": "process",
+    "процесс": "process",
+    "system": "system",
+    "systems": "system",
+    "систем": "system",
+    "manager": "manager",
+    "менеджер": "manager",
+}
+GENERIC_MATCH_TOKENS = {
+    "and",
+    "or",
+    "with",
+    "from",
+    "for",
+    "the",
+    "a",
+    "an",
+    "и",
+    "или",
+    "с",
+    "со",
+    "в",
+    "во",
+    "на",
+    "по",
+    "из",
+    "от",
+    "до",
+    "опыт",
+    "знан",
+    "пониман",
+    "экспертиз",
+    "работ",
+    "обязан",
+    "обязател",
+    "необходим",
+}
 REAL_GEO_BLACKLIST = {
     "remote",
     "hybrid",
@@ -50,7 +152,7 @@ FORBIDDEN_PATTERNS = {
         re.IGNORECASE,
     ),
     "salary_or_compensation_mentioned": re.compile(
-        r"[₽$€]|зарплат|оклад|gross|net|компенсац|вилка|бонус|kpi|руб",
+        r"[₽$€]|зарплат|оклад|компенсац|вилка|бонус|\bgross\b|\bnet\b|\bkpi\b|\bруб(?:\.|ля|лей)?\b",
         re.IGNORECASE,
     ),
     "benefits_or_marketing_mentioned": re.compile(
@@ -143,12 +245,42 @@ def resolve_prompt_from_cfg(
 
 def normalize_text(text: str) -> str:
     value = str(text or "").lower().replace("ё", "е")
-    value = re.sub(r"[^a-zа-я0-9+#/.-]+", " ", value)
+    value = re.sub(r"[^a-zа-я0-9+#]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
 
+def stem_token(token: str) -> str:
+    value = str(token or "").strip().lower().replace("ё", "е")
+    if not value:
+        return ""
+    if re.fullmatch(r"[a-z0-9+#]+", value):
+        if value.endswith("ies") and len(value) > 5:
+            return value[:-3] + "y"
+        if value.endswith("ing") and len(value) > 6:
+            return value[:-3]
+        if value.endswith("es") and len(value) > 5:
+            return value[:-2]
+        if value.endswith("s") and len(value) > 4 and value not in {"js", "ts"}:
+            return value[:-1]
+        return value
+    for suffix in RUSSIAN_SUFFIXES:
+        if value.endswith(suffix) and len(value) - len(suffix) >= 4:
+            return value[: -len(suffix)]
+    return value
+
+
+def canonicalize_token(token: str) -> str:
+    stemmed = stem_token(token)
+    return TOKEN_CANONICAL_MAP.get(stemmed, stemmed)
+
+
 def tokenize(text: str) -> List[str]:
-    return [tok for tok in normalize_text(text).split() if tok]
+    out: List[str] = []
+    for tok in normalize_text(text).split():
+        canonical = canonicalize_token(tok)
+        if canonical and canonical not in GENERIC_MATCH_TOKENS:
+            out.append(canonical)
+    return out
 
 
 def split_csv_like(value: Any) -> List[str]:
@@ -302,7 +434,10 @@ def entity_supported(raw_text: str, evidences: Sequence[str]) -> bool:
         hay_tokens = set(tokenize(evidence))
         if needle_tokens and hay_tokens:
             overlap = len(needle_tokens & hay_tokens) / max(1, len(needle_tokens))
-            if overlap >= 0.6:
+            if overlap >= 0.5:
+                return True
+            shared = needle_tokens & hay_tokens
+            if shared and len(shared) >= min(len(needle_tokens), len(hay_tokens), 2):
                 return True
     return False
 

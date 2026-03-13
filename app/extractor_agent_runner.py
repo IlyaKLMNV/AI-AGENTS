@@ -795,10 +795,13 @@ def call_openai_step1(
 # ----------------------------
 
 INSUFFICIENT_MSG_RE = re.compile(r"Positions or skills or keys must be set", re.IGNORECASE)
+AUTH_MSG_RE = re.compile(r"wrong token|unauthorized|forbidden|invalid token", re.IGNORECASE)
 
 def classify_step3_error(status: int, body_text: str) -> str:
     if status == 400 and INSUFFICIENT_MSG_RE.search(body_text or ""):
         return "insufficient_search_terms"
+    if status in (401, 403) or AUTH_MSG_RE.search(body_text or ""):
+        return "auth_error"
     return "http_error"
 
 def call_backend_search_bool(
@@ -808,6 +811,8 @@ def call_backend_search_bool(
 ) -> Tuple[str, int, int, Optional[int], Optional[str], Optional[Dict[str, Any]]]:
     url = backend.base_url.rstrip("/") + backend.step3_path
     attempts = 0
+    last_status = 0
+    last_kind = "http_error"
     last_err: Optional[str] = None
     last_json: Optional[Dict[str, Any]] = None
 
@@ -827,9 +832,11 @@ def call_backend_search_bool(
             continue
 
         status = r.status_code
+        last_status = status
         text = r.text or ""
         if status >= 400:
             kind = classify_step3_error(status, text)
+            last_kind = kind
             if kind == "insufficient_search_terms":
                 return "insufficient_search_terms", status, attempts, None, None, None
             last_err = text[:800]
@@ -853,7 +860,7 @@ def call_backend_search_bool(
 
         return "success", status, attempts, count, None, last_json
 
-    return "http_error", 0, attempts, None, last_err, last_json
+    return last_kind, last_status, attempts, None, last_err, last_json
 
 
 # ----------------------------
