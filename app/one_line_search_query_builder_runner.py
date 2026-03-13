@@ -628,6 +628,230 @@ def compute_pass_rate(ok_count: int, total: int) -> float:
     return round((ok_count / total) * 100.0, 2)
 
 
+def dedupe_keep_order(values: Sequence[Any]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def format_range_pair(pair: Optional[Sequence[Any]]) -> Optional[str]:
+    if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+        return None
+    frm = str(pair[0] or "").strip()
+    to = str(pair[1] or "").strip()
+    if frm and to:
+        return f"{frm}-{to}"
+    if frm:
+        return f"от {frm}"
+    if to:
+        return f"до {to}"
+    return None
+
+
+def range_obj_to_pair(obj: Any) -> Optional[List[str]]:
+    if not isinstance(obj, dict):
+        return None
+    frm = obj.get("from")
+    to = obj.get("to")
+    if frm is None and to is None:
+        return None
+    return [str(frm) if frm is not None else "", str(to) if to is not None else ""]
+
+
+def summarize_entity_list(items: Any) -> Dict[str, List[str]]:
+    if not isinstance(items, list):
+        return {}
+    buckets: Dict[str, List[str]] = {"required": [], "optional": [], "excluded": []}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_text = str(item.get("raw_text") or "").strip()
+        if not raw_text:
+            continue
+        op = str(item.get("operator") or "AND").upper()
+        bucket = "required"
+        if op == "OR":
+            bucket = "optional"
+        elif op == "NOT":
+            bucket = "excluded"
+        buckets[bucket].append(raw_text)
+    return {key: dedupe_keep_order(values) for key, values in buckets.items() if values}
+
+
+def summarize_grouped_payload(items: Any) -> Dict[str, List[str]]:
+    if not isinstance(items, list):
+        return {}
+    buckets: Dict[str, List[str]] = {"required": [], "optional": [], "excluded": []}
+    for item in items:
+        if not isinstance(item, list) or len(item) != 2 or not isinstance(item[1], list):
+            continue
+        group = str(item[0] or "").strip().lower()
+        values = dedupe_keep_order(item[1])
+        if not values:
+            continue
+        bucket = "required"
+        if group == "or":
+            bucket = "optional"
+        elif group == "not":
+            bucket = "excluded"
+        buckets[bucket].extend(values)
+    return {key: dedupe_keep_order(values) for key, values in buckets.items() if values}
+
+
+def summarize_languages(lang_obj: Any) -> Dict[str, List[str]]:
+    if not isinstance(lang_obj, dict):
+        return {}
+    required = [key for key, value in lang_obj.items() if value is True]
+    excluded = [key for key, value in lang_obj.items() if value is False]
+    out: Dict[str, List[str]] = {}
+    if required:
+        out["required"] = dedupe_keep_order(required)
+    if excluded:
+        out["excluded"] = dedupe_keep_order(excluded)
+    return out
+
+
+def summarize_extractor_output(extractor_json: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(extractor_json, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    positions = summarize_entity_list(extractor_json.get("positions"))
+    skills = summarize_entity_list(extractor_json.get("skills"))
+    keywords = summarize_entity_list(extractor_json.get("keywords"))
+    locations = summarize_entity_list(extractor_json.get("locations"))
+    companies = summarize_entity_list(extractor_json.get("companies"))
+    business_spheres = summarize_entity_list(extractor_json.get("business_spheres"))
+    languages = summarize_languages(extractor_json.get("languages"))
+    experience = format_range_pair(range_obj_to_pair(extractor_json.get("experience")))
+
+    if positions:
+        out["positions"] = positions
+    if skills:
+        out["skills"] = skills
+    if keywords:
+        out["keywords"] = keywords
+    if business_spheres:
+        out["business_spheres"] = business_spheres
+    if locations:
+        out["locations"] = locations
+    if companies:
+        out["companies"] = companies
+    levels = [str(x) for x in (extractor_json.get("level") or []) if isinstance(x, str)]
+    if levels:
+        out["levels"] = dedupe_keep_order(levels)
+    if experience:
+        out["experience"] = experience
+    if languages:
+        out["languages"] = languages
+    return out
+
+
+def summarize_search_payload(step3_payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(step3_payload, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    positions = summarize_grouped_payload(step3_payload.get("positions"))
+    skills = summarize_grouped_payload(step3_payload.get("skills"))
+    keywords = summarize_grouped_payload(step3_payload.get("keys"))
+    locations = summarize_grouped_payload(step3_payload.get("geos"))
+    companies = summarize_grouped_payload(step3_payload.get("firms"))
+    experience = format_range_pair(step3_payload.get("experience"))
+    levels = step3_payload.get("seniorityLevels")
+
+    if positions:
+        out["positions"] = positions
+    if skills:
+        out["skills"] = skills
+    if keywords:
+        out["keywords"] = keywords
+    if locations:
+        out["locations"] = locations
+    if companies:
+        out["companies"] = companies
+    if isinstance(levels, list) and levels:
+        out["levels"] = dedupe_keep_order(levels)
+    if experience:
+        out["experience"] = experience
+
+    active_filters: List[str] = []
+    if step3_payload.get("onlyEnglish") is True:
+        active_filters.append("only_english")
+    if step3_payload.get("onlyRussian") is True:
+        active_filters.append("only_russian")
+    if step3_payload.get("onlyWithContacts") is True:
+        active_filters.append("only_with_contacts")
+    if step3_payload.get("onlyWithHigherEducation") is True:
+        active_filters.append("only_with_higher_education")
+    if step3_payload.get("currentPositionTitle") is True:
+        active_filters.append("current_position_title")
+    if active_filters:
+        out["filters"] = active_filters
+    return out
+
+
+def build_case_result_view(result: CaseResult) -> Dict[str, Any]:
+    backend = result.backend or {}
+    builder_errors = result.builder.get("errors") or []
+    extractor_errors = result.extractor.get("errors") or []
+
+    if result.status == "failed_builder":
+        return {
+            "stage": "builder",
+            "code": builder_errors[0] if builder_errors else "builder_failed",
+        }
+    if result.status == "failed_extractor":
+        return {
+            "stage": "extractor",
+            "code": extractor_errors[0] if extractor_errors else "extractor_failed",
+        }
+    if result.status == "failed_backend":
+        out = {
+            "stage": "backend",
+            "code": str(backend.get("kind") or "backend_failed"),
+        }
+        if backend.get("status") is not None:
+            out["http_status"] = backend.get("status")
+        if backend.get("error_message"):
+            out["message"] = backend.get("error_message")
+        return out
+    if result.status == "zero_results":
+        out = {"stage": "backend", "code": "zero_results", "count": 0}
+        if backend.get("status") is not None:
+            out["http_status"] = backend.get("status")
+        return out
+    out = {"stage": "done", "code": "passed"}
+    if backend.get("count") is not None:
+        out["count"] = backend.get("count")
+    return out
+
+
+def build_case_quality_view(result: CaseResult) -> Dict[str, Any]:
+    semantic = result.semantic or {}
+    out: Dict[str, Any] = {}
+    warnings = result.builder.get("warnings") or []
+    if warnings:
+        out["warnings"] = warnings
+    coverage = semantic.get("expected_anchor_coverage_pct")
+    if coverage is not None:
+        out["anchor_coverage_pct"] = coverage
+    forbidden_flags = semantic.get("forbidden_flags") or []
+    if forbidden_flags:
+        out["forbidden_flags"] = forbidden_flags
+    unsupported_count = 0
+    unsupported_count += len(semantic.get("unsupported_entities") or [])
+    unsupported_count += len(semantic.get("unsupported_levels") or [])
+    unsupported_count += len(semantic.get("unsupported_languages") or [])
+    unsupported_count += 1 if semantic.get("unsupported_experience") else 0
+    if unsupported_count:
+        out["unsupported_count"] = unsupported_count
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Run raw_vacancy -> one-line query -> extractor -> searchBool evaluation."
@@ -1024,79 +1248,74 @@ def main() -> int:
     basic_pass_rate = compute_pass_rate(basic_passed, total)
     strict_pass_rate = compute_pass_rate(strict_passed, total)
 
+    status_counts: Dict[str, int] = {}
+    for result in results:
+        status_counts[result.status] = status_counts.get(result.status, 0) + 1
+
     report: Dict[str, Any] = {
         "meta": {
             "run_id": run_id,
             "created_at": utc_now_iso(),
-            "cwd": str(Path.cwd()),
             "report_mode": args.report_mode,
-        },
-        "config": {
             "steps": steps,
-            "cdm_dir": str(Path(args.cdm_dir)),
-            "cdm_count": len(cases),
-            "thresholds": {
-                "min_anchor_coverage": float(args.min_anchor_coverage),
+            "cases": len(cases),
+            "prompts": {
+                "builder": {
+                    "prompt_id": builder_prompt.prompt_id,
+                    "prompt_version": builder_prompt.prompt_version,
+                },
+                "extractor": {
+                    "prompt_id": extractor_prompt.prompt_id,
+                    "prompt_version": extractor_prompt.prompt_version,
+                },
             },
-            "builder_prompt": {
-                "prompt_id": builder_prompt.prompt_id,
-                "prompt_version": builder_prompt.prompt_version,
-                "model": builder_prompt.model,
-            },
-            "extractor_prompt": {
-                "prompt_id": extractor_prompt.prompt_id,
-                "prompt_version": extractor_prompt.prompt_version,
-                "model": extractor_prompt.model,
-            },
-            "backend": {
-                "base_url": backend_cfg.base_url,
-                "step3_path": backend_cfg.step3_path,
-                "token_in_body": backend_cfg.token_in_body,
-                "timeout_s": backend_cfg.timeout_s,
-                "retries": backend_cfg.retries,
-                "sanitize_office_geo": backend_cfg.sanitize_office_geo,
-                "require_search_terms": backend_cfg.require_search_terms,
-                "require_count": backend_cfg.require_count,
-            },
-            "base_payload": base_payload,
         },
-        "token_usage_total": usage_total,
         "summary": {
-            "total_cases": total,
-            "basic_passed": basic_passed,
-            "strict_passed": strict_passed,
-            "basic_pass_rate": basic_pass_rate,
-            "strict_pass_rate": strict_pass_rate,
-            "builder_failures": builder_failures,
-            "extractor_failures": extractor_failures,
-            "backend_failures": backend_failures,
-            "insufficient_search_terms": insufficient_search_terms,
-            "zero_results": zero_results,
-            "semantic_unsupported_cases": semantic_unsupported_cases,
-            "semantic_forbidden_cases": semantic_forbidden_cases,
-            "avg_expected_anchor_coverage_pct": avg_anchor_coverage_pct,
-            "avg_positive_search_count": avg_positive_search_count,
+            "total": total,
+            "passed": basic_passed,
+            "failed": total - basic_passed,
+            "by_status": status_counts,
+            "avg_anchor_coverage_pct": avg_anchor_coverage_pct,
         },
         "cases": [],
     }
 
+    if args.report_mode == "full":
+        report["debug"] = {
+            "config": {
+                "cdm_dir": str(Path(args.cdm_dir)),
+                "min_anchor_coverage": float(args.min_anchor_coverage),
+                "builder_model": builder_prompt.model,
+                "extractor_model": extractor_prompt.model,
+                "backend": {
+                    "base_url": backend_cfg.base_url,
+                    "timeout_s": backend_cfg.timeout_s,
+                    "retries": backend_cfg.retries,
+                },
+                "base_payload": base_payload,
+            },
+            "token_usage_total": usage_total,
+        }
+
     for result in results:
         case_item: Dict[str, Any] = {
             "name": result.name,
-            "cdm_file": result.cdm_file,
-            "vacancy_title": result.vacancy_title,
-            "generated_query": result.generated_query,
-            "status": result.status,
-            "ok_basic": result.ok_basic,
-            "ok_strict": result.ok_strict,
-            "builder": result.builder,
-            "extractor": result.extractor,
-            "semantic": result.semantic,
-            "backend": result.backend,
+            "title": result.vacancy_title,
+            "query": result.generated_query,
+            "result": build_case_result_view(result),
+            "search_summary": summarize_search_payload(result.step3_payload)
+            or summarize_extractor_output(result.extractor_json),
+            "quality": build_case_quality_view(result),
         }
         if args.report_mode == "full":
-            case_item["extractor_json"] = result.extractor_json or {}
-            case_item["step3_payload"] = result.step3_payload or {}
+            case_item["debug"] = {
+                "builder": result.builder,
+                "extractor": result.extractor,
+                "semantic": result.semantic,
+                "backend": result.backend,
+                "extractor_json": result.extractor_json or {},
+                "step3_payload": result.step3_payload or {},
+            }
         report["cases"].append(case_item)
 
     report_dir = Path(args.report_dir)
