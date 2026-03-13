@@ -23,7 +23,8 @@
           "items": { "type": "string" },
           "default": []
         },
-        "questions": { "type": ["string", "null"] }
+        "questions": { "type": ["string", "null"] },
+        "raw_vacancy": { "type": ["string", "null"] }
       }
     },
     "candidate": {
