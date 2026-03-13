@@ -6,7 +6,6 @@ __MACOSX/
 *.joblib
 cases/
 fixtures/
-tests/fixtures/cdm/
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
