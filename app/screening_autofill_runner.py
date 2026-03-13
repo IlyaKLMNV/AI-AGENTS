@@ -617,7 +617,7 @@ def _split_text_tokens(value: Any) -> List[str]:
 def _vacancy_skill_tokens(vacancy: Dict[str, Any]) -> List[str]:
     tokens = _split_text_tokens(vacancy.get("vacancy_stack"))
     tokens.extend(_split_text_tokens(vacancy.get("vacancy_skills")))
-    return _dedupe_keep_order(tokens)
+    return _dedupe_keep_order([token for token in tokens if not _workformat_topic(token)])
 
 
 def _candidate_skill_tokens(candidate: Dict[str, Any]) -> List[str]:
@@ -628,7 +628,7 @@ def _candidate_skill_tokens(candidate: Dict[str, Any]) -> List[str]:
         skill = item.get("skill")
         if isinstance(skill, str) and skill.strip():
             tokens.append(skill.strip())
-    return _dedupe_keep_order(tokens)
+    return _dedupe_keep_order([token for token in tokens if not _workformat_topic(token)])
 
 
 def _responsibility_fragments(vacancy: Dict[str, Any]) -> List[str]:
@@ -636,7 +636,11 @@ def _responsibility_fragments(vacancy: Dict[str, Any]) -> List[str]:
     if not text:
         return []
     parts = re.split(r"[,\n;]+", text)
-    out = [part.strip(" .") for part in parts if len(part.strip()) >= 12]
+    out = [
+        part.strip(" .")
+        for part in parts
+        if len(part.strip()) >= 12 and not _workformat_topic(part) and not _location_topic(part)
+    ]
     return _dedupe_keep_order(out)
 
 
