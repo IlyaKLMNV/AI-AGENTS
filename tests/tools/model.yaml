@@ -28,6 +28,11 @@ extractor_agent:
   prompt_version: 27
   seed: 1234
 
+one_line_search_query_builder:
+  prompt_id: pmpt_69b1d2d4b9b88190af8d87f47a7617480c7e69c59e9f656e
+  prompt_version: 1
+  seed: 1234
+
 responsibilities_parser:
   prompt_id: pmpt_68e66b5d57c08194959b45d5b2acc0810ab2792039e4f59b
   prompt_version: 3
