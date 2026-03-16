@@ -440,7 +440,35 @@ _THOUSAND_WITH_MONEY = re.compile(
     re.IGNORECASE,
 )
 
-_LOCATION_WORDS = re.compile(r"(город|локац|находит|жив[еу]|прожива|переезд|релокац)", re.IGNORECASE)
+_LOCATION_CLAUSE_PATTERNS = [
+    re.compile(r"\b(?:жив[еу]|проживаю|нахожусь|базируюсь)\s+(?:в|из|на)\s+([^,.!?;:]+)", re.IGNORECASE),
+    re.compile(r"\b(?:локац(?:ия|ии)|город)\b\s*[:\-]\s*([^,.!?;:]+)", re.IGNORECASE),
+    re.compile(r"\b(?:переезд|релокац(?:ия|ию|ии)?)\s+(?:в|из|на)\s+([^,.!?;:]+)", re.IGNORECASE),
+]
+_GENERIC_LOCATION_TOKENS = {
+    "город",
+    "городе",
+    "города",
+    "городу",
+    "городом",
+    "городах",
+    "локация",
+    "локации",
+    "регион",
+    "регионе",
+    "страна",
+    "стране",
+    "место",
+    "месте",
+    "дом",
+    "доме",
+    "офис",
+    "офисе",
+    "рабочем",
+    "родном",
+    "другом",
+    "текущем",
+}
 _WORKFORMAT_WORDS = re.compile(
     r"(удален|удалён|дистанцион|remote|офис|\bочно\b|гибрид|смешан|формат работы|режим работы)",
     re.IGNORECASE,
@@ -532,7 +560,13 @@ def _location_topic(text: str) -> bool:
     t = text or ""
     if _mentions_city(t):
         return True
-    return bool(_LOCATION_WORDS.search(t))
+    for pattern in _LOCATION_CLAUSE_PATTERNS:
+        for match in pattern.finditer(t):
+            phrase = str(match.group(1) or "").strip().lower()
+            words = re.findall(r"[a-zа-яё-]+", phrase, flags=re.IGNORECASE)
+            if any(word not in _GENERIC_LOCATION_TOKENS for word in words):
+                return True
+    return False
 
 
 def _workformat_topic(text: str) -> bool:
