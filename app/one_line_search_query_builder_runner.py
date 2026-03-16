@@ -189,8 +189,7 @@ class CaseResult:
     vacancy_title: str
     generated_query: str
     status: str
-    ok_basic: bool
-    ok_strict: bool
+    passed: bool
     builder: Dict[str, Any]
     extractor: Dict[str, Any]
     semantic: Dict[str, Any]
@@ -622,12 +621,6 @@ def load_cdm_cases(cdm_dir: Path, cdm_count: Optional[int]) -> List[CdmCase]:
     return out
 
 
-def compute_pass_rate(ok_count: int, total: int) -> float:
-    if total <= 0:
-        return 0.0
-    return round((ok_count / total) * 100.0, 2)
-
-
 def dedupe_keep_order(values: Sequence[Any]) -> List[str]:
     seen = set()
     out: List[str] = []
@@ -800,17 +793,22 @@ def build_case_result_view(result: CaseResult) -> Dict[str, Any]:
     extractor_errors = result.extractor.get("errors") or []
 
     if result.status == "failed_builder":
-        return {
+        out = {
+            "passed": False,
             "stage": "builder",
             "code": builder_errors[0] if builder_errors else "builder_failed",
         }
+        return out
     if result.status == "failed_extractor":
-        return {
+        out = {
+            "passed": False,
             "stage": "extractor",
             "code": extractor_errors[0] if extractor_errors else "extractor_failed",
         }
+        return out
     if result.status == "failed_backend":
         out = {
+            "passed": False,
             "stage": "backend",
             "code": str(backend.get("kind") or "backend_failed"),
         }
@@ -820,35 +818,93 @@ def build_case_result_view(result: CaseResult) -> Dict[str, Any]:
             out["message"] = backend.get("error_message")
         return out
     if result.status == "zero_results":
-        out = {"stage": "backend", "code": "zero_results", "count": 0}
+        out = {"passed": False, "stage": "backend", "code": "zero_results", "count": 0}
         if backend.get("status") is not None:
             out["http_status"] = backend.get("status")
         return out
-    out = {"stage": "done", "code": "passed"}
+    if result.status == "failed_quality":
+        out = {"passed": False, "stage": "quality", "code": "quality_rules_failed"}
+        if backend.get("count") is not None:
+            out["count"] = backend.get("count")
+        if backend.get("status") is not None:
+            out["http_status"] = backend.get("status")
+        return out
+    out = {"passed": True, "stage": "done", "code": "passed"}
     if backend.get("count") is not None:
         out["count"] = backend.get("count")
     return out
 
 
-def build_case_quality_view(result: CaseResult) -> Dict[str, Any]:
+def build_case_issues_view(result: CaseResult, min_anchor_coverage: float) -> List[str]:
     semantic = result.semantic or {}
-    out: Dict[str, Any] = {}
+    out: List[str] = []
+    out.extend(str(x) for x in (result.builder.get("errors") or []))
     warnings = result.builder.get("warnings") or []
-    if warnings:
-        out["warnings"] = warnings
+    out.extend(str(x) for x in warnings)
     coverage = semantic.get("expected_anchor_coverage_pct")
-    if coverage is not None:
-        out["anchor_coverage_pct"] = coverage
     forbidden_flags = semantic.get("forbidden_flags") or []
-    if forbidden_flags:
-        out["forbidden_flags"] = forbidden_flags
+    out.extend(str(x) for x in forbidden_flags)
+    out.extend(str(x) for x in (result.extractor.get("errors") or []))
     unsupported_count = 0
     unsupported_count += len(semantic.get("unsupported_entities") or [])
     unsupported_count += len(semantic.get("unsupported_levels") or [])
     unsupported_count += len(semantic.get("unsupported_languages") or [])
     unsupported_count += 1 if semantic.get("unsupported_experience") else 0
     if unsupported_count:
-        out["unsupported_count"] = unsupported_count
+        out.append(f"unsupported:{unsupported_count}")
+    if coverage is not None and float(coverage) < float(min_anchor_coverage):
+        out.append(f"low_anchor_coverage:{coverage}")
+    return dedupe_keep_order(out)
+
+
+def build_case_debug_view(result: CaseResult) -> Dict[str, Any]:
+    semantic = result.semantic or {}
+    backend = result.backend or {}
+    out: Dict[str, Any] = {}
+
+    builder_debug: Dict[str, Any] = {}
+    if result.builder.get("errors"):
+        builder_debug["errors"] = result.builder.get("errors")
+    if result.builder.get("warnings"):
+        builder_debug["warnings"] = result.builder.get("warnings")
+    if builder_debug:
+        out["builder"] = builder_debug
+
+    extractor_debug: Dict[str, Any] = {}
+    if result.extractor.get("errors"):
+        extractor_debug["errors"] = result.extractor.get("errors")
+    if result.extractor.get("warnings"):
+        extractor_debug["warnings"] = result.extractor.get("warnings")
+    if extractor_debug:
+        out["extractor"] = extractor_debug
+
+    semantic_debug: Dict[str, Any] = {}
+    missing_anchors = [x["label"] for x in (semantic.get("anchor_details") or []) if not x.get("hit")]
+    if missing_anchors:
+        semantic_debug["missing_anchors"] = missing_anchors
+    if semantic.get("forbidden_flags"):
+        semantic_debug["forbidden_flags"] = semantic.get("forbidden_flags")
+    if semantic.get("unsupported_entities"):
+        semantic_debug["unsupported_entities"] = semantic.get("unsupported_entities")
+    if semantic.get("unsupported_levels"):
+        semantic_debug["unsupported_levels"] = semantic.get("unsupported_levels")
+    if semantic.get("unsupported_languages"):
+        semantic_debug["unsupported_languages"] = semantic.get("unsupported_languages")
+    if semantic.get("unsupported_experience"):
+        semantic_debug["unsupported_experience"] = True
+    if semantic_debug:
+        out["semantic"] = semantic_debug
+
+    backend_debug: Dict[str, Any] = {}
+    if backend.get("kind") not in (None, "success", "skipped"):
+        backend_debug["kind"] = backend.get("kind")
+    if backend.get("status") not in (None, 200):
+        backend_debug["http_status"] = backend.get("status")
+    if backend.get("error_message"):
+        backend_debug["message"] = backend.get("error_message")
+    if backend_debug:
+        out["backend"] = backend_debug
+
     return out
 
 
@@ -956,12 +1012,9 @@ def main() -> int:
     backend_failures = 0
     insufficient_search_terms = 0
     zero_results = 0
-    basic_passed = 0
-    strict_passed = 0
-    semantic_unsupported_cases = 0
-    semantic_forbidden_cases = 0
+    passed_total = 0
+    semantic_failures = 0
     coverage_values: List[float] = []
-    search_counts: List[int] = []
 
     for idx, case in enumerate(cases, start=1):
         print(f"[run] case {idx}/{len(cases)} file={case.path.name}")
@@ -992,8 +1045,7 @@ def main() -> int:
                     vacancy_title=str(case.vacancy.get("title") or ""),
                     generated_query="",
                     status="failed_builder",
-                    ok_basic=False,
-                    ok_strict=False,
+                    passed=False,
                     builder={"ok": False, "errors": [err or "builder_empty_output"]},
                     extractor=extractor_info,
                     semantic=semantic_info,
@@ -1014,8 +1066,7 @@ def main() -> int:
                     vacancy_title=str(case.vacancy.get("title") or ""),
                     generated_query=query,
                     status="failed_builder",
-                    ok_basic=False,
-                    ok_strict=False,
+                    passed=False,
                     builder=builder_info,
                     extractor=extractor_info,
                     semantic=semantic_info,
@@ -1044,8 +1095,7 @@ def main() -> int:
                         vacancy_title=str(case.vacancy.get("title") or ""),
                         generated_query=query,
                         status="failed_extractor",
-                        ok_basic=False,
-                        ok_strict=False,
+                        passed=False,
                         builder=builder_info,
                         extractor={"ok": False, "errors": [err2 or "extractor_empty_output"]},
                         semantic=semantic_info,
@@ -1065,8 +1115,7 @@ def main() -> int:
                         vacancy_title=str(case.vacancy.get("title") or ""),
                         generated_query=query,
                         status="failed_extractor",
-                        ok_basic=False,
-                        ok_strict=False,
+                        passed=False,
                         builder=builder_info,
                         extractor={"ok": False, "errors": [f"extractor_invalid_json:{exc}"]},
                         semantic=semantic_info,
@@ -1084,8 +1133,7 @@ def main() -> int:
                         vacancy_title=str(case.vacancy.get("title") or ""),
                         generated_query=query,
                         status="failed_extractor",
-                        ok_basic=False,
-                        ok_strict=False,
+                        passed=False,
                         builder=builder_info,
                         extractor={"ok": False, "errors": ["extractor_json_must_be_object"]},
                         semantic=semantic_info,
@@ -1120,8 +1168,7 @@ def main() -> int:
                         vacancy_title=str(case.vacancy.get("title") or ""),
                         generated_query=query,
                         status="failed_extractor",
-                        ok_basic=False,
-                        ok_strict=False,
+                        passed=False,
                         builder=builder_info,
                         extractor=extractor_info,
                         semantic=semantic_info,
@@ -1138,10 +1185,10 @@ def main() -> int:
                 or semantic_info["unsupported_levels"]
                 or semantic_info["unsupported_languages"]
                 or semantic_info["unsupported_experience"]
+                or semantic_info["forbidden_flags"]
+                or float(semantic_info.get("expected_anchor_coverage_pct") or 0.0) < float(args.min_anchor_coverage)
             ):
-                semantic_unsupported_cases += 1
-            if semantic_info["forbidden_flags"]:
-                semantic_forbidden_cases += 1
+                semantic_failures += 1
 
         if 3 in steps:
             if extractor_json is None:
@@ -1153,8 +1200,7 @@ def main() -> int:
                         vacancy_title=str(case.vacancy.get("title") or ""),
                         generated_query=query,
                         status="failed_extractor",
-                        ok_basic=False,
-                        ok_strict=False,
+                        passed=False,
                         builder=builder_info,
                         extractor={"ok": False, "errors": ["missing_extractor_json_for_step3"]},
                         semantic=semantic_info,
@@ -1188,15 +1234,13 @@ def main() -> int:
                 backend_failures += 1
             elif count == 0:
                 zero_results += 1
-            elif isinstance(count, int):
-                search_counts.append(count)
 
         backend_success = backend_info.get("kind") == "success"
         count_positive = isinstance(backend_info.get("count"), int) and backend_info["count"] > 0
-        ok_basic = builder_info["ok"] and extractor_info.get("ok", True) and ((3 not in steps) or (backend_success and count_positive))
-        strict_semantic_ok = True
+        retrieval_ok = builder_info["ok"] and extractor_info.get("ok", True) and ((3 not in steps) or (backend_success and count_positive))
+        semantic_ok = True
         if 2 in steps:
-            strict_semantic_ok = (
+            semantic_ok = (
                 not semantic_info.get("unsupported_entities")
                 and not semantic_info.get("unsupported_levels")
                 and not semantic_info.get("unsupported_languages")
@@ -1204,18 +1248,16 @@ def main() -> int:
                 and not semantic_info.get("forbidden_flags")
                 and float(semantic_info.get("expected_anchor_coverage_pct") or 0.0) >= float(args.min_anchor_coverage)
             )
-        ok_strict = ok_basic and strict_semantic_ok
+        passed = retrieval_ok and semantic_ok
 
-        if ok_basic:
-            basic_passed += 1
-        if ok_strict:
-            strict_passed += 1
+        if passed:
+            passed_total += 1
 
         status = (
-            "passed_strict"
-            if ok_strict
-            else "passed_basic"
-            if ok_basic
+            "passed"
+            if passed
+            else "failed_quality"
+            if retrieval_ok
             else "zero_results"
             if backend_success
             else "failed_backend"
@@ -1227,8 +1269,7 @@ def main() -> int:
                 vacancy_title=str(case.vacancy.get("title") or ""),
                 generated_query=query,
                 status=status,
-                ok_basic=ok_basic,
-                ok_strict=ok_strict,
+                passed=passed,
                 builder=builder_info,
                 extractor=extractor_info,
                 semantic=semantic_info,
@@ -1242,12 +1283,6 @@ def main() -> int:
     avg_anchor_coverage_pct = (
         round(sum(coverage_values) / len(coverage_values), 2) if coverage_values else 0.0
     )
-    avg_positive_search_count = (
-        round(sum(search_counts) / len(search_counts), 2) if search_counts else 0.0
-    )
-    basic_pass_rate = compute_pass_rate(basic_passed, total)
-    strict_pass_rate = compute_pass_rate(strict_passed, total)
-
     status_counts: Dict[str, int] = {}
     for result in results:
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
@@ -1272,8 +1307,8 @@ def main() -> int:
         },
         "summary": {
             "total": total,
-            "passed": basic_passed,
-            "failed": total - basic_passed,
+            "passed": passed_total,
+            "failed": total - passed_total,
             "by_status": status_counts,
             "avg_anchor_coverage_pct": avg_anchor_coverage_pct,
         },
@@ -1292,12 +1327,23 @@ def main() -> int:
                     "timeout_s": backend_cfg.timeout_s,
                     "retries": backend_cfg.retries,
                 },
-                "base_payload": base_payload,
+                "search_flags": [
+                    name
+                    for name, enabled in (
+                        ("only_russian", base_payload.get("onlyRussian")),
+                        ("only_english", base_payload.get("onlyEnglish")),
+                        ("only_with_contacts", base_payload.get("onlyWithContacts")),
+                        ("only_with_higher_education", base_payload.get("onlyWithHigherEducation")),
+                        ("current_position_title", base_payload.get("currentPositionTitle")),
+                    )
+                    if enabled
+                ],
             },
             "token_usage_total": usage_total,
         }
 
     for result in results:
+        issues = build_case_issues_view(result, float(args.min_anchor_coverage))
         case_item: Dict[str, Any] = {
             "name": result.name,
             "title": result.vacancy_title,
@@ -1305,17 +1351,16 @@ def main() -> int:
             "result": build_case_result_view(result),
             "search_summary": summarize_search_payload(result.step3_payload)
             or summarize_extractor_output(result.extractor_json),
-            "quality": build_case_quality_view(result),
         }
-        if args.report_mode == "full":
-            case_item["debug"] = {
-                "builder": result.builder,
-                "extractor": result.extractor,
-                "semantic": result.semantic,
-                "backend": result.backend,
-                "extractor_json": result.extractor_json or {},
-                "step3_payload": result.step3_payload or {},
-            }
+        if issues:
+            case_item["issues"] = issues
+        coverage = result.semantic.get("expected_anchor_coverage_pct") if isinstance(result.semantic, dict) else None
+        if coverage is not None and (not result.passed or float(coverage) < 100.0):
+            case_item["anchor_coverage_pct"] = coverage
+        if args.report_mode == "full" and not result.passed:
+            debug_view = build_case_debug_view(result)
+            if debug_view:
+                case_item["debug"] = debug_view
         report["cases"].append(case_item)
 
     report_dir = Path(args.report_dir)
@@ -1327,16 +1372,15 @@ def main() -> int:
     )
 
     print(
-        f"[summary] total={total} basic_passed={basic_passed} strict_passed={strict_passed} "
+        f"[summary] total={total} passed={passed_total} "
         f"builder_failures={builder_failures} extractor_failures={extractor_failures} "
         f"backend_failures={backend_failures} insufficient={insufficient_search_terms} "
-        f"zero_results={zero_results} basic_pass_rate={basic_pass_rate:.2f} "
-        f"strict_pass_rate={strict_pass_rate:.2f} "
+        f"zero_results={zero_results} semantic_failures={semantic_failures} "
         f"avg_anchor_coverage={avg_anchor_coverage_pct:.2f}"
     )
     print(f"[done] report saved: {out_path}")
 
-    return 0 if basic_passed == total else 2
+    return 0 if passed_total == total else 2
 
 
 if __name__ == "__main__":
