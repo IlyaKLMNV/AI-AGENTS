@@ -110,21 +110,21 @@ REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
     },
     {
         "name": "wf_candidate_says_remote_or_hybrid",
-        "description": "Candidate says remote or hybrid, single-value work_format should stay empty.",
+        "description": "Candidate says remote or hybrid, and business priority should resolve to hybrid.",
         "scenario_type": "format_multiple_allowed",
         "mentioned_work_format": "remote",
         "multiple_work_formats": ["remote", "hybrid"],
-        "expected_json": {"work_format": ""},
+        "expected_json": {"work_format": "hybrid"},
         "preferred_work_formats": ["remote", "hybrid"],
     },
     {
         "name": "wf_candidate_prefers_remote_but_office_ok",
-        "description": "Candidate prefers remote but is open to office, expected work_format is remote.",
+        "description": "Candidate prefers remote but is open to office visits, which should resolve to hybrid.",
         "scenario_type": "format_preferred_with_fallback",
         "mentioned_work_format": "remote",
         "candidate_work_format": "remote",
         "secondary_work_format": "office",
-        "expected_json": {"work_format": "remote"},
+        "expected_json": {"work_format": "hybrid"},
         "preferred_work_formats": ["remote", "office"],
     },
 ]
@@ -1810,7 +1810,7 @@ def run_autofill_from_cdm(
     }
 
     out_path = REPORTS_DIR / f"screening_autofill_report_{run_id}.json"
-    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8-sig")
 
     _log(
         quiet,
