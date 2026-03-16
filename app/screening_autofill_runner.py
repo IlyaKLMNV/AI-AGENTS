@@ -35,21 +35,27 @@ REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
     {
         "name": "wf_hybrid_explicit_candidate",
         "description": "Кандидат явно подтверждает hybrid, и prompt не должен подменять это на remote.",
-        "scenario_type": "hybrid_explicit",
+        "scenario_type": "format_explicit",
+        "mentioned_work_format": "hybrid",
+        "candidate_work_format": "hybrid",
         "expected_json": {"work_format": "hybrid"},
         "preferred_work_formats": ["hybrid"],
     },
     {
         "name": "wf_remote_explicit_candidate",
-        "description": "РљР°РЅРґРёРґР°С‚ СЏРІРЅРѕ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚ remote, Рё prompt РґРѕР»Р¶РµРЅ РёР·РІР»РµРєР°С‚СЊ РёРјРµРЅРЅРѕ remote.",
-        "scenario_type": "remote_explicit",
+        "description": "Candidate explicitly confirms remote, so screening_autofill must extract remote.",
+        "scenario_type": "format_explicit",
+        "mentioned_work_format": "remote",
+        "candidate_work_format": "remote",
         "expected_json": {"work_format": "remote"},
         "preferred_work_formats": ["remote"],
     },
     {
         "name": "wf_office_explicit_candidate",
-        "description": "РљР°РЅРґРёРґР°С‚ СЏРІРЅРѕ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚ office, Рё prompt РґРѕР»Р¶РµРЅ РёР·РІР»РµРєР°С‚СЊ РёРјРµРЅРЅРѕ office.",
-        "scenario_type": "office_explicit",
+        "description": "Candidate explicitly confirms office, so screening_autofill must extract office.",
+        "scenario_type": "format_explicit",
+        "mentioned_work_format": "office",
+        "candidate_work_format": "office",
         "expected_json": {"work_format": "office"},
         "preferred_work_formats": ["office"],
     },
@@ -63,9 +69,63 @@ REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
     {
         "name": "wf_empty_when_only_recruiter_mentions_hybrid",
         "description": "Гибрид упомянул только рекрутер, кандидат формат не подтвердил, значит work_format должен остаться пустым.",
-        "scenario_type": "hybrid_ignored",
+        "scenario_type": "format_ignored",
+        "mentioned_work_format": "hybrid",
         "expected_json": {"work_format": ""},
         "preferred_work_formats": ["hybrid"],
+    },
+    {
+        "name": "wf_empty_when_only_recruiter_mentions_remote",
+        "description": "Recruiter mentions remote only, candidate ignores work format, expected work_format stays empty.",
+        "scenario_type": "format_ignored",
+        "mentioned_work_format": "remote",
+        "expected_json": {"work_format": ""},
+        "preferred_work_formats": ["remote"],
+    },
+    {
+        "name": "wf_empty_when_only_recruiter_mentions_office",
+        "description": "Recruiter mentions office only, candidate ignores work format, expected work_format stays empty.",
+        "scenario_type": "format_ignored",
+        "mentioned_work_format": "office",
+        "expected_json": {"work_format": ""},
+        "preferred_work_formats": ["office"],
+    },
+    {
+        "name": "wf_rejects_hybrid_only_remote",
+        "description": "Candidate rejects hybrid and says only remote, expected work_format is remote.",
+        "scenario_type": "format_rejected_and_other",
+        "mentioned_work_format": "hybrid",
+        "candidate_work_format": "remote",
+        "expected_json": {"work_format": "remote"},
+        "preferred_work_formats": ["hybrid"],
+    },
+    {
+        "name": "wf_recruiter_asks_office_candidate_confirms_remote",
+        "description": "Recruiter asks about office, candidate explicitly says remote, expected work_format is remote.",
+        "scenario_type": "format_confirms_other",
+        "mentioned_work_format": "office",
+        "candidate_work_format": "remote",
+        "expected_json": {"work_format": "remote"},
+        "preferred_work_formats": ["office"],
+    },
+    {
+        "name": "wf_candidate_says_remote_or_hybrid",
+        "description": "Candidate says remote or hybrid, single-value work_format should stay empty.",
+        "scenario_type": "format_multiple_allowed",
+        "mentioned_work_format": "remote",
+        "multiple_work_formats": ["remote", "hybrid"],
+        "expected_json": {"work_format": ""},
+        "preferred_work_formats": ["remote", "hybrid"],
+    },
+    {
+        "name": "wf_candidate_prefers_remote_but_office_ok",
+        "description": "Candidate prefers remote but is open to office, expected work_format is remote.",
+        "scenario_type": "format_preferred_with_fallback",
+        "mentioned_work_format": "remote",
+        "candidate_work_format": "remote",
+        "secondary_work_format": "office",
+        "expected_json": {"work_format": "remote"},
+        "preferred_work_formats": ["remote", "office"],
     },
 ]
 
@@ -343,7 +403,7 @@ _COMMON_CITIES = [
     "Москва",
     "Санкт-Петербург",
     "Петербург",
-    "СПб",
+    "РЎРџР±",
     "Казань",
     "Екатеринбург",
     "Новосибирск",
@@ -373,7 +433,7 @@ _SALARY_WORDS = re.compile(
     re.IGNORECASE,
 )
 _CURRENCY_WORDS = re.compile(r"(₽|\$|€|\bруб\b|\bрубл)", re.IGNORECASE)
-_SALARY_SHORTHAND_SUFFIX = re.compile(r"\b\d+\s*(т\.?р\.?|к|k)\b", re.IGNORECASE)
+_SALARY_SHORTHAND_SUFFIX = re.compile(r"\b\d+\s*(С‚\.?СЂ\.?|Рє|k)\b", re.IGNORECASE)
 _THOUSAND_BARE = re.compile(r"\b\d+\s*тыс(?:яч)?\b", re.IGNORECASE)
 _THOUSAND_WITH_MONEY = re.compile(
     r"\b\d+\s*тыс(?:яч)?\s*(?:руб(?:\.|лей|ля)?|₽|р\b|gross|net|netto|гросс|брутто|на руки)\b",
@@ -391,8 +451,8 @@ _WORKFORMAT_CONCRETE = re.compile(
 )
 
 # NEW: salary expectation detection
-_SALARY_RANGE_DASH = re.compile(r"\b(\d{2,3})\s*[-–—]\s*(\d{2,3})\b", re.UNICODE)  # e.g. 350-400 (usually thousands)
-_SALARY_RANGE_FULL = re.compile(r"\b(\d{5,7})\s*[-–—]\s*(\d{5,7})\b", re.UNICODE)  # e.g. 350000-400000
+_SALARY_RANGE_DASH = re.compile(r"\b(\d{2,3})\s*[-вЂ“вЂ”]\s*(\d{2,3})\b", re.UNICODE)  # e.g. 350-400 (usually thousands)
+_SALARY_RANGE_FULL = re.compile(r"\b(\d{5,7})\s*[-вЂ“вЂ”]\s*(\d{5,7})\b", re.UNICODE)  # e.g. 350000-400000
 _SALARY_FROM_TO = re.compile(r"\b(от|до|в районе|примерно|порядка|диапазон)\b", re.IGNORECASE)
 
 
@@ -420,7 +480,7 @@ def _salary_expectation_provided(text: str) -> bool:
     if not t:
         return False
 
-    # explicit money shorthand like 350к / 350 т.р.
+    # explicit money shorthand like 350Рє / 350 С‚.СЂ.
     if _SALARY_SHORTHAND_SUFFIX.search(t):
         return True
 
@@ -455,8 +515,8 @@ def _salary_expectation_provided(text: str) -> bool:
         ):
             return True
 
-    # "от 350" with context
-    if re.search(r"\bот\s+\d{2,7}\b", t, flags=re.IGNORECASE):
+    # "РѕС‚ 350" with context
+    if re.search(r"\bРѕС‚\s+\d{2,7}\b", t, flags=re.IGNORECASE):
         if (
             _SALARY_WORDS.search(t)
             or _CURRENCY_WORDS.search(t)
@@ -682,7 +742,7 @@ def _salary_currency(vacancy: Dict[str, Any]) -> str:
         upper = 0
     if "$" in raw_vacancy or (0 < upper <= 10000):
         return "usd"
-    if "€" in raw_vacancy:
+    if "в‚¬" in raw_vacancy:
         return "eur"
     return "rub"
 
@@ -748,7 +808,7 @@ def _pick_question(questions: List[str], offset: int, fallback: str) -> str:
 def _candidate_intro(cdm: Dict[str, Any], variant_index: int) -> str:
     vacancy = cdm.get("vacancy") or {}
     candidate = cdm.get("candidate") or {}
-    title = str(vacancy.get("title") or "позиции")
+    title = str(vacancy.get("title") or "РїРѕР·РёС†РёРё")
     skills = _vacancy_skill_tokens(vacancy) or _candidate_skill_tokens(candidate)
     responsibilities = _responsibility_fragments(vacancy)
     years = 5 + ((variant_index + len(title)) % 4)
@@ -803,8 +863,8 @@ def _candidate_clarifying_question(variant_index: int) -> str:
 
 
 def _recruiter_clarifying_reply(vacancy: Dict[str, Any], variant_index: int) -> str:
-    company = str(vacancy.get("company_name") or "компании")
-    title = str(vacancy.get("title") or "роли")
+    company = str(vacancy.get("company_name") or "РєРѕРјРїР°РЅРёРё")
+    title = str(vacancy.get("title") or "СЂРѕР»Рё")
     replies = [
         f"Команда по {title} работает плотно с hiring manager и соседними инженерами, контекст по задачам быстро даём.",
         f"По процессу в {company} решения принимаются совместно с лидом направления и командой, без лишней бюрократии.",
@@ -813,14 +873,6 @@ def _recruiter_clarifying_reply(vacancy: Dict[str, Any], variant_index: int) -> 
     return replies[(variant_index - 1) % len(replies)]
 
 
-def _build_hybrid_question(vacancy: Dict[str, Any], variant_index: int) -> str:
-    format_questions, _ = _question_pools(vacancy)
-    if format_questions:
-        for question in format_questions:
-            if "гибрид" in question.lower():
-                return question
-    city = _extract_city_from_location(str(vacancy.get("location") or ""), variant_index - 1)
-    return f"Насколько вам подходит гибридный формат с 1-2 днями в офисе в {city}?"
 
 def _work_format_aliases(work_format: str) -> List[str]:
     normalized = str(work_format or "").strip().lower()
@@ -872,6 +924,80 @@ def _candidate_work_format_answer(work_format: str, variant_index: int) -> str:
     return replies[(variant_index - 1) % len(replies)]
 
 
+def _work_format_phrase(work_format: str) -> str:
+    normalized = str(work_format or "").strip().lower()
+    mapping = {
+        "remote": "удалённый формат",
+        "office": "офисный формат",
+        "hybrid": "гибридный формат",
+    }
+    return mapping.get(normalized, normalized)
+
+
+def _work_format_short(work_format: str) -> str:
+    normalized = str(work_format or "").strip().lower()
+    mapping = {
+        "remote": "удалёнка",
+        "office": "РѕС„РёСЃ",
+        "hybrid": "РіРёР±СЂРёРґ",
+    }
+    return mapping.get(normalized, normalized)
+
+
+def _join_text_parts(*parts: str) -> str:
+    return " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+
+
+def _candidate_work_format_response(spec: Dict[str, Any], variant_index: int) -> str:
+    scenario_type = str(spec.get("scenario_type") or "")
+    candidate_work_format = str(spec.get("candidate_work_format") or "").strip().lower()
+    mentioned_work_format = str(spec.get("mentioned_work_format") or "").strip().lower()
+
+    if scenario_type == "format_explicit":
+        return _candidate_work_format_answer(candidate_work_format, variant_index)
+
+    if scenario_type in ("format_silent", "format_ignored"):
+        return ""
+
+    if scenario_type == "format_rejected_and_other":
+        replies = [
+            f"{_work_format_short(mentioned_work_format).capitalize()} мне не очень подходит, ориентируюсь только на {_work_format_phrase(candidate_work_format)}.",
+            f"Если говорить про формат, то {_work_format_short(mentioned_work_format)} не рассматриваю, мне подходит только {_work_format_phrase(candidate_work_format)}.",
+            f"Для меня скорее только {_work_format_phrase(candidate_work_format)}, а {_work_format_short(mentioned_work_format)} не мой вариант.",
+        ]
+        return replies[(variant_index - 1) % len(replies)]
+
+    if scenario_type == "format_confirms_other":
+        replies = [
+            f"Если выбирать, мне скорее подходит {_work_format_phrase(candidate_work_format)}, чем {_work_format_short(mentioned_work_format)}.",
+            f"Скорее ориентируюсь на {_work_format_phrase(candidate_work_format)}; {_work_format_short(mentioned_work_format)} для меня не приоритет.",
+            f"Я бы рассматривал именно {_work_format_phrase(candidate_work_format)}, а не {_work_format_short(mentioned_work_format)}.",
+        ]
+        return replies[(variant_index - 1) % len(replies)]
+
+    if scenario_type == "format_multiple_allowed":
+        work_formats = [str(item).strip().lower() for item in (spec.get("multiple_work_formats") or []) if str(item).strip()]
+        primary = _work_format_phrase(work_formats[0]) if work_formats else "удобный формат"
+        secondary = _work_format_phrase(work_formats[1]) if len(work_formats) > 1 else primary
+        replies = [
+            f"Рассматриваю и {primary}, и {secondary}; оба варианта для меня рабочие.",
+            f"По формату открыт к двум вариантам: {primary} или {secondary}.",
+            f"Мне подходят оба формата: {primary} и {secondary}.",
+        ]
+        return replies[(variant_index - 1) % len(replies)]
+
+    if scenario_type == "format_preferred_with_fallback":
+        secondary_work_format = str(spec.get("secondary_work_format") or "").strip().lower()
+        replies = [
+            f"Предпочтительно {_work_format_phrase(candidate_work_format)}, но {_work_format_short(secondary_work_format)} тоже могу обсуждать.",
+            f"В приоритете {_work_format_phrase(candidate_work_format)}, хотя {_work_format_short(secondary_work_format)} не исключаю.",
+            f"Для меня комфортнее {_work_format_phrase(candidate_work_format)}, но к {_work_format_short(secondary_work_format)} тоже открыт.",
+        ]
+        return replies[(variant_index - 1) % len(replies)]
+
+    return ""
+
+
 def _filter_regression_pool(
     cdm_records: List[Dict[str, Any]],
     spec: Dict[str, Any],
@@ -896,8 +1022,8 @@ def _build_regression_dialogue(
     candidate = cdm.get("candidate") or {}
     recruiter_name = str(candidate.get("recruiter_name") or "Рекрутер")
     candidate_name = str(candidate.get("candidate_name") or "Кандидат")
-    title = str(vacancy.get("title") or "позиции")
-    company = str(vacancy.get("company_name") or "компании")
+    title = str(vacancy.get("title") or "РїРѕР·РёС†РёРё")
+    company = str(vacancy.get("company_name") or "РєРѕРјРїР°РЅРёРё")
 
     _, non_format_questions = _question_pools(vacancy)
     fallback_questions = _fallback_non_format_questions(vacancy)
@@ -942,74 +1068,9 @@ def _build_regression_dialogue(
     ]
 
     scenario_type = str(spec.get("scenario_type") or "")
-    if scenario_type == "hybrid_explicit":
-        turns.extend(
-            [
-                {
-                    "speaker": "recruiter",
-                    "text": f"{recruiter_context_reply} И ещё уточню: {_build_hybrid_question(vacancy, variant_index)} {technical_q1}",
-                },
-                {
-                    "speaker": "candidate",
-                    "text": (
-                        "Да, гибрид мне подходит, спокойно рассматриваю 1-2 дня в офисе. "
-                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
-                    ),
-                },
-            ]
-        )
-    elif scenario_type == "remote_explicit":
-        turns.extend(
-            [
-                {
-                    "speaker": "recruiter",
-                    "text": (
-                        f"{recruiter_context_reply} И ещё уточню: "
-                        f"{_build_work_format_question(vacancy, variant_index, 'remote')} {technical_q1}"
-                    ),
-                },
-                {
-                    "speaker": "candidate",
-                    "text": (
-                        f"{_candidate_work_format_answer('remote', variant_index)} "
-                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
-                    ),
-                },
-            ]
-        )
-    elif scenario_type == "office_explicit":
-        turns.extend(
-            [
-                {
-                    "speaker": "recruiter",
-                    "text": (
-                        f"{recruiter_context_reply} И ещё уточню: "
-                        f"{_build_work_format_question(vacancy, variant_index, 'office')} {technical_q1}"
-                    ),
-                },
-                {
-                    "speaker": "candidate",
-                    "text": (
-                        f"{_candidate_work_format_answer('office', variant_index)} "
-                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
-                    ),
-                },
-            ]
-        )
-    elif scenario_type == "hybrid_ignored":
-        turns.extend(
-            [
-                {
-                    "speaker": "recruiter",
-                    "text": f"{recruiter_context_reply} И ещё уточню: {_build_hybrid_question(vacancy, variant_index)} {technical_q1}",
-                },
-                {
-                    "speaker": "candidate",
-                    "text": f"{technical_answer_1} И ещё хотел бы уточнить: {candidate_question_2}",
-                },
-            ]
-        )
-    else:
+    mentioned_work_format = str(spec.get("mentioned_work_format") or "").strip().lower()
+    work_format_response = _candidate_work_format_response(spec, variant_index)
+    if scenario_type == "format_silent":
         turns.extend(
             [
                 {
@@ -1018,7 +1079,31 @@ def _build_regression_dialogue(
                 },
                 {
                     "speaker": "candidate",
-                    "text": f"{technical_answer_1} {technical_answer_2} И ещё хотел бы понять: {candidate_question_2}",
+                    "text": _join_text_parts(
+                        technical_answer_1,
+                        technical_answer_2,
+                        f"И ещё хотел бы понять: {candidate_question_2}",
+                    ),
+                },
+            ]
+        )
+    else:
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": (
+                        f"{recruiter_context_reply} И ещё уточню: "
+                        f"{_build_work_format_question(vacancy, variant_index, mentioned_work_format or 'hybrid')} {technical_q1}"
+                    ),
+                },
+                {
+                    "speaker": "candidate",
+                    "text": _join_text_parts(
+                        work_format_response,
+                        technical_answer_1,
+                        f"И ещё хотел бы уточнить: {candidate_question_2}",
+                    ),
                 },
             ]
         )
