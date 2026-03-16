@@ -28,6 +28,8 @@ DEFAULT_CDM_COUNT = None
 DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
 DIALOGUE_GEN_MAX_RETRIES = 1
 DEFAULT_REGRESSION_VARIANTS_PER_CASE = 1
+DEFAULT_FLATTEN_LIKE_PROD = True
+DEFAULT_INCLUDE_REGRESSION_CASES = True
 
 REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
     {
@@ -36,6 +38,20 @@ REGRESSION_CASE_SPECS: List[Dict[str, Any]] = [
         "scenario_type": "hybrid_explicit",
         "expected_json": {"work_format": "hybrid"},
         "preferred_work_formats": ["hybrid"],
+    },
+    {
+        "name": "wf_remote_explicit_candidate",
+        "description": "РљР°РЅРґРёРґР°С‚ СЏРІРЅРѕ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚ remote, Рё prompt РґРѕР»Р¶РµРЅ РёР·РІР»РµРєР°С‚СЊ РёРјРµРЅРЅРѕ remote.",
+        "scenario_type": "remote_explicit",
+        "expected_json": {"work_format": "remote"},
+        "preferred_work_formats": ["remote"],
+    },
+    {
+        "name": "wf_office_explicit_candidate",
+        "description": "РљР°РЅРґРёРґР°С‚ СЏРІРЅРѕ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚ office, Рё prompt РґРѕР»Р¶РµРЅ РёР·РІР»РµРєР°С‚СЊ РёРјРµРЅРЅРѕ office.",
+        "scenario_type": "office_explicit",
+        "expected_json": {"work_format": "office"},
+        "preferred_work_formats": ["office"],
     },
     {
         "name": "wf_empty_when_candidate_silent",
@@ -806,6 +822,55 @@ def _build_hybrid_question(vacancy: Dict[str, Any], variant_index: int) -> str:
     city = _extract_city_from_location(str(vacancy.get("location") or ""), variant_index - 1)
     return f"Насколько вам подходит гибридный формат с 1-2 днями в офисе в {city}?"
 
+def _work_format_aliases(work_format: str) -> List[str]:
+    normalized = str(work_format or "").strip().lower()
+    if normalized == "remote":
+        return ["удален", "удалён", "дистанцион", "remote"]
+    if normalized == "office":
+        return ["офис", "очный", "очно"]
+    if normalized == "hybrid":
+        return ["гибрид", "смешан"]
+    return [normalized] if normalized else []
+
+
+def _build_work_format_question(vacancy: Dict[str, Any], variant_index: int, work_format: str) -> str:
+    format_questions, _ = _question_pools(vacancy)
+    aliases = _work_format_aliases(work_format)
+    if format_questions:
+        for question in format_questions:
+            q_lower = question.lower()
+            if any(alias and alias in q_lower for alias in aliases):
+                return question
+    city = _extract_city_from_location(str(vacancy.get("location") or ""), variant_index - 1)
+    if str(work_format or "").strip().lower() == "remote":
+        return "Насколько вам подходит полностью удалённый формат работы без привязки к офису?"
+    if str(work_format or "").strip().lower() == "office":
+        return f"Насколько вам комфортен офисный формат работы в {city}?"
+    return f"Насколько вам подходит гибридный формат с 1-2 днями в офисе в {city}?"
+
+
+def _candidate_work_format_answer(work_format: str, variant_index: int) -> str:
+    normalized = str(work_format or "").strip().lower()
+    replies_map: Dict[str, List[str]] = {
+        "hybrid": [
+            "Да, гибрид мне подходит, спокойно рассматриваю 1-2 дня в офисе.",
+            "Да, рассматриваю гибридный формат, приезжать в офис несколько дней в неделю ок.",
+            "Гибрид для меня комфортен, могу сочетать удалёнку и присутствие в офисе.",
+        ],
+        "remote": [
+            "Да, для себя рассматриваю полностью удалённый формат, remote мне подходит.",
+            "Удалённая работа для меня комфортна, без необходимости регулярных офисных дней.",
+            "Да, приоритетно рассматриваю удалённый формат и спокойно работаю в distributed-команде.",
+        ],
+        "office": [
+            "Да, офисный формат мне подходит, спокойно готов работать на площадке full-time.",
+            "Работа из офиса для меня комфортна, очный режим рассматриваю нормально.",
+            "Да, могу работать в офисе на постоянной основе, это для меня не ограничение.",
+        ],
+    }
+    replies = replies_map.get(normalized) or replies_map["hybrid"]
+    return replies[(variant_index - 1) % len(replies)]
+
 
 def _filter_regression_pool(
     cdm_records: List[Dict[str, Any]],
@@ -888,6 +953,44 @@ def _build_regression_dialogue(
                     "speaker": "candidate",
                     "text": (
                         "Да, гибрид мне подходит, спокойно рассматриваю 1-2 дня в офисе. "
+                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
+                    ),
+                },
+            ]
+        )
+    elif scenario_type == "remote_explicit":
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": (
+                        f"{recruiter_context_reply} И ещё уточню: "
+                        f"{_build_work_format_question(vacancy, variant_index, 'remote')} {technical_q1}"
+                    ),
+                },
+                {
+                    "speaker": "candidate",
+                    "text": (
+                        f"{_candidate_work_format_answer('remote', variant_index)} "
+                        f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
+                    ),
+                },
+            ]
+        )
+    elif scenario_type == "office_explicit":
+        turns.extend(
+            [
+                {
+                    "speaker": "recruiter",
+                    "text": (
+                        f"{recruiter_context_reply} И ещё уточню: "
+                        f"{_build_work_format_question(vacancy, variant_index, 'office')} {technical_q1}"
+                    ),
+                },
+                {
+                    "speaker": "candidate",
+                    "text": (
+                        f"{_candidate_work_format_answer('office', variant_index)} "
                         f"{technical_answer_1} И ещё хотел бы понять: {candidate_question_2}"
                     ),
                 },
@@ -1186,6 +1289,22 @@ def _collect_errors(*error_groups: Optional[List[str]], exc: Optional[str] = Non
     return out
 
 
+def _split_case_issues(
+    case_source: Optional[str],
+    expected_json: Optional[Dict[str, Any]],
+    schema_errors: Optional[List[str]],
+    semantic_errors: Optional[List[str]],
+    expectation_errors: Optional[List[str]],
+    error: Optional[str],
+) -> Tuple[List[str], List[str]]:
+    is_targeted_regression = case_source == "regression" and isinstance(expected_json, dict)
+    if is_targeted_regression:
+        blocking = _collect_errors(schema_errors, expectation_errors, exc=error)
+        warnings = [str(item) for item in (semantic_errors or []) if str(item)]
+        return blocking, warnings
+    return _collect_errors(schema_errors, semantic_errors, expectation_errors, exc=error), []
+
+
 def _case_id(result: Dict[str, Any]) -> str:
     source = str(result.get("case_source") or "case")
     name = str(result.get("case_name") or "unnamed")
@@ -1204,7 +1323,7 @@ def _work_format_from_payload(payload: Any) -> Optional[str]:
     return str(value)
 
 
-def _compact_case_record(result: Dict[str, Any], issues: List[str]) -> Dict[str, Any]:
+def _compact_case_record(result: Dict[str, Any], issues: List[str], warnings: List[str]) -> Dict[str, Any]:
     parsed_json = result.get("parsed_json")
     expected_json = result.get("expected_json")
     return {
@@ -1219,10 +1338,12 @@ def _compact_case_record(result: Dict[str, Any], issues: List[str]) -> Dict[str,
         "expected_work_format": _work_format_from_payload(expected_json),
         "actual_work_format": _work_format_from_payload(parsed_json),
         "issues": issues,
+        "warnings": warnings,
+        "dialogue": result.get("dialogue"),
     }
 
 
-def _mismatch_record(result: Dict[str, Any], issues: List[str]) -> Dict[str, Any]:
+def _mismatch_record(result: Dict[str, Any], issues: List[str], warnings: List[str]) -> Dict[str, Any]:
     return {
         "case_id": _case_id(result),
         "source": result.get("case_source"),
@@ -1234,6 +1355,7 @@ def _mismatch_record(result: Dict[str, Any], issues: List[str]) -> Dict[str, Any
         "expected": result.get("expected_json"),
         "observed": result.get("parsed_json"),
         "issues": issues,
+        "warnings": warnings,
         "dialogue": result.get("dialogue"),
     }
 
@@ -1250,7 +1372,7 @@ def run_autofill_from_cdm(
     flatten_like_prod: bool,
     seed: Optional[int],
     quiet: bool,
-    include_regression_cases: bool = False,
+    include_regression_cases: bool = DEFAULT_INCLUDE_REGRESSION_CASES,
     regression_only: bool = False,
     regression_case_names: Optional[Set[str]] = None,
     regression_variants_per_case: int = DEFAULT_REGRESSION_VARIANTS_PER_CASE,
@@ -1328,6 +1450,7 @@ def run_autofill_from_cdm(
 
     results: List[Dict[str, Any]] = []
     issue_counts: Counter[str] = Counter()
+    warning_counts: Counter[str] = Counter()
 
     passed = 0
     failed = 0
@@ -1401,16 +1524,18 @@ def run_autofill_from_cdm(
                 expectation_errors = evaluated["expectation_errors"]
                 error = evaluated["error"]
 
-                combined_errors = _collect_errors(
-                    schema_errors,
-                    semantic_errors,
-                    expectation_errors,
-                    exc=error,
+                blocking_issues, warning_issues = _split_case_issues(
+                    case_source="cdm",
+                    expected_json=None,
+                    schema_errors=schema_errors,
+                    semantic_errors=semantic_errors,
+                    expectation_errors=expectation_errors,
+                    error=error,
                 )
 
-                if combined_errors:
+                if blocking_issues:
                     failed += 1
-                    for ce in combined_errors:
+                    for ce in blocking_issues:
                         issue_counts[ce] += 1
 
                     if error is not None:
@@ -1423,7 +1548,12 @@ def run_autofill_from_cdm(
                         _log(quiet, f"    [fail] semantic_errors={semantic_errors}")
                 else:
                     passed += 1
-                    _log(quiet, "    [ok] semantic_errors=[]")
+                    if warning_issues:
+                        for warning in warning_issues:
+                            warning_counts[warning] += 1
+                        _log(quiet, f"    [ok-with-warnings] warnings={warning_issues}")
+                    else:
+                        _log(quiet, "    [ok] semantic_errors=[]")
 
                 results.append(
                     {
@@ -1440,6 +1570,8 @@ def run_autofill_from_cdm(
                         "schema_errors": schema_errors,
                         "semantic_errors": semantic_errors,
                         "expectation_errors": expectation_errors,
+                        "blocking_issues": blocking_issues,
+                        "warning_issues": warning_issues,
                         "error": error,
                     }
                 )
@@ -1475,16 +1607,18 @@ def run_autofill_from_cdm(
                 semantic_errors = evaluated["semantic_errors"]
                 expectation_errors = evaluated["expectation_errors"]
                 error = evaluated["error"]
-                combined_errors = _collect_errors(
-                    schema_errors,
-                    semantic_errors,
-                    expectation_errors,
-                    exc=error,
+                blocking_issues, warning_issues = _split_case_issues(
+                    case_source="regression",
+                    expected_json=built_case.get("expected_json") if isinstance(built_case.get("expected_json"), dict) else None,
+                    schema_errors=schema_errors,
+                    semantic_errors=semantic_errors,
+                    expectation_errors=expectation_errors,
+                    error=error,
                 )
 
-                if combined_errors:
+                if blocking_issues:
                     failed += 1
-                    for ce in combined_errors:
+                    for ce in blocking_issues:
                         issue_counts[ce] += 1
                     if error is not None:
                         _log(quiet, f"    [fail] {case_name} v{variant_index} error={error}")
@@ -1496,7 +1630,12 @@ def run_autofill_from_cdm(
                         _log(quiet, f"    [fail] {case_name} v{variant_index} semantic_errors={semantic_errors}")
                 else:
                     passed += 1
-                    _log(quiet, f"    [ok] {case_name} v{variant_index}")
+                    if warning_issues:
+                        for warning in warning_issues:
+                            warning_counts[warning] += 1
+                        _log(quiet, f"    [ok-with-warnings] {case_name} v{variant_index} warnings={warning_issues}")
+                    else:
+                        _log(quiet, f"    [ok] {case_name} v{variant_index}")
 
                 results.append(
                     {
@@ -1506,6 +1645,8 @@ def run_autofill_from_cdm(
                         "schema_errors": schema_errors,
                         "semantic_errors": semantic_errors,
                         "expectation_errors": expectation_errors,
+                        "blocking_issues": blocking_issues,
+                        "warning_issues": warning_issues,
                         "error": error,
                     }
                 )
@@ -1518,14 +1659,21 @@ def run_autofill_from_cdm(
     mismatches: List[Dict[str, Any]] = []
 
     for r in results:
-        schema_errors = r.get("schema_errors") or []
-        semantic_errors = r.get("semantic_errors") or []
-        expectation_errors = r.get("expectation_errors") or []
-        exc = r.get("error")
-        combined = _collect_errors(schema_errors, semantic_errors, expectation_errors, exc=exc)
-        cases.append(_compact_case_record(r, combined))
-        if combined:
-            mismatches.append(_mismatch_record(r, combined))
+        if "blocking_issues" in r or "warning_issues" in r:
+            blocking = list(r.get("blocking_issues") or [])
+            warnings = list(r.get("warning_issues") or [])
+        else:
+            blocking, warnings = _split_case_issues(
+                case_source=r.get("case_source"),
+                expected_json=r.get("expected_json") if isinstance(r.get("expected_json"), dict) else None,
+                schema_errors=r.get("schema_errors") or [],
+                semantic_errors=r.get("semantic_errors") or [],
+                expectation_errors=r.get("expectation_errors") or [],
+                error=r.get("error"),
+            )
+        cases.append(_compact_case_record(r, blocking, warnings))
+        if blocking:
+            mismatches.append(_mismatch_record(r, blocking, warnings))
 
     summary = {
         "total_cases": len(results),
@@ -1535,28 +1683,42 @@ def run_autofill_from_cdm(
         "mismatches_count": len(mismatches),
         "source_counts": source_counts,
         "issue_counts": dict(issue_counts),
+        "warning_counts": dict(warning_counts),
         "token_usage_total": token_usage_total,
     }
+
+    mode: Dict[str, Any] = {
+        "generated_from_cdm": run_generated_cases,
+        "regression": run_regression_cases,
+        "cdm_source_count": len(cdm_records),
+        "flatten_like_prod": flatten_like_prod,
+        "seed": seed,
+    }
+    if run_generated_cases:
+        mode.update(
+            {
+                "variants_per_cdm": variants_per_cdm,
+                "noise_level": noise_level,
+                "allow_two_questions": allow_two_questions,
+                "dialogue_gen_model": final_gen_model,
+                "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES,
+            }
+        )
+    if run_regression_cases:
+        mode.update(
+            {
+                "regression_variants_per_case": regression_variants_per_case,
+                "regression_cases_selected": [case.get("name") for case in selected_regression_specs],
+            }
+        )
+        if regression_case_names:
+            mode["regression_case_names"] = sorted(regression_case_names)
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
-        "mode": {
-            "generated_from_cdm": run_generated_cases,
-            "regression": run_regression_cases,
-            "cdm_source_count": len(cdm_records),
-            "variants_per_cdm": variants_per_cdm if run_generated_cases else 0,
-            "regression_variants_per_case": regression_variants_per_case if run_regression_cases else 0,
-            "noise_level": noise_level,
-            "allow_two_questions": allow_two_questions,
-            "flatten_like_prod": flatten_like_prod,
-            "seed": seed,
-            "dialogue_gen_model": final_gen_model if run_generated_cases else None,
-            "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES if run_generated_cases else 0,
-            "regression_case_names": sorted(regression_case_names) if regression_case_names else None,
-            "regression_cases_selected": [case.get("name") for case in selected_regression_specs],
-        },
+        "mode": mode,
         "summary": summary,
         "cases": cases,
         "mismatches": mismatches,
@@ -1615,8 +1777,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--flatten-like-prod",
-        action="store_true",
-        help="Flatten dialogue to one line with spaces, similar to production wrap-up.",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_FLATTEN_LIKE_PROD,
+        help=f"Flatten dialogue to one line with spaces, similar to production wrap-up (default: {DEFAULT_FLATTEN_LIKE_PROD}).",
     )
     parser.add_argument(
         "--seed",
@@ -1649,8 +1812,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--include-regression-cases",
-        action="store_true",
-        help="Also run built-in deterministic regression dialogues for work_format extraction.",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_INCLUDE_REGRESSION_CASES,
+        help=(
+            "Also run built-in deterministic regression dialogues for work_format extraction "
+            f"(default: {DEFAULT_INCLUDE_REGRESSION_CASES})."
+        ),
     )
     parser.add_argument(
         "--regression-only",

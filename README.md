@@ -226,7 +226,7 @@ python -m app.telegram_generator_runner --limit 5 --require-question
 ### `app/screening_autofill_runner.py` — тест `screening_autofill`
 Как работает:
 - Генерирует диалоги на основе CDM (несколько вариантов на вакансию).
-- Опционально прогоняет deterministic regression-кейсы для `work_format`, которые теперь строятся из реальных вакансий `tests/fixtures/cdm/*`.
+- По умолчанию также прогоняет deterministic regression-кейсы для `work_format`, которые строятся из реальных вакансий `tests/fixtures/cdm/*`.
 - Прогоняет диалоги через `screening_autofill` и парсит JSON.
 - Валидирует схему, семантику и точечные ожидаемые поля для regression-кейсов.
 - `prompt_id` берется из CLI/env/model.yaml, без него запуск невозможен.
@@ -237,6 +237,9 @@ python -m app.screening_autofill_runner --cdm-count 5 --variants-per-cdm 3
 
 # Только regression-кейсы по реальным CDM
 python -m app.screening_autofill_runner --regression-only --regression-variants-per-case 3
+
+# Обычный запуск без regression-кейсов и без flatten-like-prod
+python -m app.screening_autofill_runner --no-include-regression-cases --no-flatten-like-prod
 
 # Несколько выбранных regression-сценариев, по 2 варианта на каждый
 python -m app.screening_autofill_runner \
@@ -251,11 +254,11 @@ python -m app.screening_autofill_runner \
 - `--variants-per-cdm` — число диалогов на CDM.
 - `--noise-level` — 0..2, уровень шума в ответах.
 - `--allow-two-questions` — разрешить два вопроса в реплике рекрутера.
-- `--flatten-like-prod` — преобразовать диалог в одну строку (как в проде).
+- `--flatten-like-prod` / `--no-flatten-like-prod` — преобразовать диалог в одну строку (по умолчанию включено).
 - `--seed` — сид для вариативности.
 - `--dialogue-gen-model` — модель генерации диалогов.
 - `--prompt-id`, `--prompt-version` — переопределить промпт.
-- `--include-regression-cases` — добавить встроенные regression-кейсы к обычному CDM-прогону.
+- `--include-regression-cases` / `--no-include-regression-cases` — добавлять встроенные regression-кейсы к обычному CDM-прогону (по умолчанию включено).
 - `--regression-only` — запускать только regression-кейсы, без обычной генерации диалогов.
 - `--regression-case-names` — список имён regression-кейсов через запятую для точечного прогона.
 - `--regression-variants-per-case` — сколько вариантов диалога строить на каждый regression-кейс.
