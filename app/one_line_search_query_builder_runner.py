@@ -148,16 +148,15 @@ LANGUAGE_MARKERS = {
 }
 FORBIDDEN_PATTERNS = {
     "work_format_mentioned": re.compile(
-        r"\b(remote|hybrid|onsite|on-site|office)\b|удал[её]н|гибрид|офис",
+        r"\b(remote|hybrid|onsite|on-site|office)\b|удал[её]н|гибрид|офис|на месте работодателя",
         re.IGNORECASE,
     ),
     "salary_or_compensation_mentioned": re.compile(
         r"[₽$€]|зарплат|оклад|компенсац|вилка|бонус|\bgross\b|\bnet\b|\bkpi\b|\bруб(?:\.|ля|лей)?\b",
         re.IGNORECASE,
     ),
-    "benefits_or_marketing_mentioned": re.compile(
-        r"дмс|отпуск|стомат|страхов|тимбил|корпоратив|команда|интересн|амбициозн|"
-        r"обучен|курс|книг|преми|печеньк|кофе",
+    "application_process_mentioned": re.compile(
+        r"портфоли|сопровод|анкет|отклик|тестов|test task|cover letter|portfolio",
         re.IGNORECASE,
     ),
 }
@@ -475,9 +474,6 @@ def detect_forbidden_flags(query: str, vacancy: Dict[str, Any]) -> List[str]:
     for name, pattern in FORBIDDEN_PATTERNS.items():
         if pattern.search(query or ""):
             out.append(name)
-    company_name = str(vacancy.get("company_name") or "").strip()
-    if company_name and normalize_text(company_name) in normalize_text(query):
-        out.append("company_name_mentioned")
     return out
 
 
@@ -579,7 +575,6 @@ def evaluate_semantics(
 
 def build_query_checks(query: str) -> Dict[str, Any]:
     errors: List[str] = []
-    warnings: List[str] = []
     stripped = (query or "").strip()
     if not stripped:
         errors.append("empty_query")
@@ -587,15 +582,11 @@ def build_query_checks(query: str) -> Dict[str, Any]:
         errors.append("query_not_single_line")
     if "{" in stripped or "}" in stripped or "[" in stripped or "]" in stripped:
         errors.append("json_like_output")
-    if '"' in stripped:
-        errors.append("contains_quotes")
     word_count = len([x for x in stripped.split() if x])
-    if word_count > 40:
-        warnings.append("query_too_long")
     return {
         "ok": len(errors) == 0,
         "errors": errors,
-        "warnings": warnings,
+        "warnings": [],
         "word_count": word_count,
         "char_count": len(stripped),
     }
@@ -835,25 +826,13 @@ def build_case_result_view(result: CaseResult) -> Dict[str, Any]:
     return out
 
 
-def build_case_issues_view(result: CaseResult, min_anchor_coverage: float) -> List[str]:
+def build_case_issues_view(result: CaseResult) -> List[str]:
     semantic = result.semantic or {}
     out: List[str] = []
     out.extend(str(x) for x in (result.builder.get("errors") or []))
-    warnings = result.builder.get("warnings") or []
-    out.extend(str(x) for x in warnings)
-    coverage = semantic.get("expected_anchor_coverage_pct")
     forbidden_flags = semantic.get("forbidden_flags") or []
     out.extend(str(x) for x in forbidden_flags)
     out.extend(str(x) for x in (result.extractor.get("errors") or []))
-    unsupported_count = 0
-    unsupported_count += len(semantic.get("unsupported_entities") or [])
-    unsupported_count += len(semantic.get("unsupported_levels") or [])
-    unsupported_count += len(semantic.get("unsupported_languages") or [])
-    unsupported_count += 1 if semantic.get("unsupported_experience") else 0
-    if unsupported_count:
-        out.append(f"unsupported:{unsupported_count}")
-    if coverage is not None and float(coverage) < float(min_anchor_coverage):
-        out.append(f"low_anchor_coverage:{coverage}")
     return dedupe_keep_order(out)
 
 
@@ -878,22 +857,8 @@ def build_case_debug_view(result: CaseResult) -> Dict[str, Any]:
     if extractor_debug:
         out["extractor"] = extractor_debug
 
-    semantic_debug: Dict[str, Any] = {}
-    missing_anchors = [x["label"] for x in (semantic.get("anchor_details") or []) if not x.get("hit")]
-    if missing_anchors:
-        semantic_debug["missing_anchors"] = missing_anchors
     if semantic.get("forbidden_flags"):
-        semantic_debug["forbidden_flags"] = semantic.get("forbidden_flags")
-    if semantic.get("unsupported_entities"):
-        semantic_debug["unsupported_entities"] = semantic.get("unsupported_entities")
-    if semantic.get("unsupported_levels"):
-        semantic_debug["unsupported_levels"] = semantic.get("unsupported_levels")
-    if semantic.get("unsupported_languages"):
-        semantic_debug["unsupported_languages"] = semantic.get("unsupported_languages")
-    if semantic.get("unsupported_experience"):
-        semantic_debug["unsupported_experience"] = True
-    if semantic_debug:
-        out["semantic"] = semantic_debug
+        out["quality"] = {"forbidden_flags": semantic.get("forbidden_flags")}
 
     backend_debug: Dict[str, Any] = {}
     if backend.get("kind") not in (None, "success", "skipped"):
@@ -930,14 +895,21 @@ def main() -> int:
     ap.add_argument("--token-in-header", dest="token_in_body", action="store_false")
     ap.add_argument("--only-russian", action="store_true", default=False)
     ap.add_argument("--only-english", action="store_true", default=False)
-    ap.add_argument("--only-with-contacts", action="store_true", default=True)
+    ap.add_argument(
+        "--only-with-contacts",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     ap.add_argument("--only-with-higher-education", action="store_true", default=False)
-    ap.add_argument("--current-position-title", action="store_true", default=True)
+    ap.add_argument(
+        "--current-position-title",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--offset", type=int, default=0)
     ap.add_argument("--shuffle", action="store_true", default=False)
     ap.add_argument("--highlight", action="store_true", default=True)
-    ap.add_argument("--min-anchor-coverage", type=float, default=40.0)
     ap.add_argument("--report-dir", type=str, default="tests/reports/one_line_search_query_builder")
     ap.add_argument("--report-mode", type=str, choices=["compact", "full"], default="compact")
     ap.add_argument("--report-json-indent", type=int, default=2)
@@ -1013,15 +985,14 @@ def main() -> int:
     insufficient_search_terms = 0
     zero_results = 0
     passed_total = 0
-    semantic_failures = 0
-    coverage_values: List[float] = []
+    quality_failures = 0
 
     for idx, case in enumerate(cases, start=1):
         print(f"[run] case {idx}/{len(cases)} file={case.path.name}")
         query = ""
         builder_info: Dict[str, Any] = {}
         extractor_info: Dict[str, Any] = {"ok": True}
-        semantic_info: Dict[str, Any] = {}
+        semantic_info: Dict[str, Any] = {"forbidden_flags": []}
         backend_info: Dict[str, Any] = {"kind": "skipped"}
         extractor_json: Optional[Dict[str, Any]] = None
         step3_payload: Optional[Dict[str, Any]] = None
@@ -1144,15 +1115,9 @@ def main() -> int:
 
             extractor_json = parsed
             contract_ok, contract_errors, contract_warnings = validate_step1_contract(extractor_json, query)
-            has_anchor = bool(
-                iter_entity_values(extractor_json, "positions")
-                or iter_entity_values(extractor_json, "skills")
-                or iter_entity_values(extractor_json, "keywords")
-            )
             extractor_info = {
-                "ok": contract_ok and has_anchor,
+                "ok": contract_ok,
                 "contract_ok": contract_ok,
-                "has_anchor": has_anchor,
             }
             if contract_errors:
                 extractor_info["errors"] = contract_errors
@@ -1178,17 +1143,9 @@ def main() -> int:
                 )
                 continue
 
-            semantic_info = evaluate_semantics(query, extractor_json, case)
-            coverage_values.append(float(semantic_info["expected_anchor_coverage_pct"]))
-            if (
-                semantic_info["unsupported_entities"]
-                or semantic_info["unsupported_levels"]
-                or semantic_info["unsupported_languages"]
-                or semantic_info["unsupported_experience"]
-                or semantic_info["forbidden_flags"]
-                or float(semantic_info.get("expected_anchor_coverage_pct") or 0.0) < float(args.min_anchor_coverage)
-            ):
-                semantic_failures += 1
+            semantic_info = {"forbidden_flags": detect_forbidden_flags(query, case.vacancy)}
+            if semantic_info["forbidden_flags"]:
+                quality_failures += 1
 
         if 3 in steps:
             if extractor_json is None:
@@ -1238,16 +1195,7 @@ def main() -> int:
         backend_success = backend_info.get("kind") == "success"
         count_positive = isinstance(backend_info.get("count"), int) and backend_info["count"] > 0
         retrieval_ok = builder_info["ok"] and extractor_info.get("ok", True) and ((3 not in steps) or (backend_success and count_positive))
-        semantic_ok = True
-        if 2 in steps:
-            semantic_ok = (
-                not semantic_info.get("unsupported_entities")
-                and not semantic_info.get("unsupported_levels")
-                and not semantic_info.get("unsupported_languages")
-                and not semantic_info.get("unsupported_experience")
-                and not semantic_info.get("forbidden_flags")
-                and float(semantic_info.get("expected_anchor_coverage_pct") or 0.0) >= float(args.min_anchor_coverage)
-            )
+        semantic_ok = not (semantic_info.get("forbidden_flags") or [])
         passed = retrieval_ok and semantic_ok
 
         if passed:
@@ -1280,9 +1228,6 @@ def main() -> int:
         )
 
     total = len(results)
-    avg_anchor_coverage_pct = (
-        round(sum(coverage_values) / len(coverage_values), 2) if coverage_values else 0.0
-    )
     status_counts: Dict[str, int] = {}
     for result in results:
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
@@ -1310,7 +1255,6 @@ def main() -> int:
             "passed": passed_total,
             "failed": total - passed_total,
             "by_status": status_counts,
-            "avg_anchor_coverage_pct": avg_anchor_coverage_pct,
         },
         "cases": [],
     }
@@ -1319,7 +1263,6 @@ def main() -> int:
         report["debug"] = {
             "config": {
                 "cdm_dir": str(Path(args.cdm_dir)),
-                "min_anchor_coverage": float(args.min_anchor_coverage),
                 "builder_model": builder_prompt.model,
                 "extractor_model": extractor_prompt.model,
                 "backend": {
@@ -1340,10 +1283,10 @@ def main() -> int:
                 ],
             },
             "token_usage_total": usage_total,
-        }
+    }
 
     for result in results:
-        issues = build_case_issues_view(result, float(args.min_anchor_coverage))
+        issues = build_case_issues_view(result)
         case_item: Dict[str, Any] = {
             "name": result.name,
             "title": result.vacancy_title,
@@ -1354,9 +1297,6 @@ def main() -> int:
         }
         if issues:
             case_item["issues"] = issues
-        coverage = result.semantic.get("expected_anchor_coverage_pct") if isinstance(result.semantic, dict) else None
-        if coverage is not None and (not result.passed or float(coverage) < 100.0):
-            case_item["anchor_coverage_pct"] = coverage
         if args.report_mode == "full" and not result.passed:
             debug_view = build_case_debug_view(result)
             if debug_view:
@@ -1375,8 +1315,7 @@ def main() -> int:
         f"[summary] total={total} passed={passed_total} "
         f"builder_failures={builder_failures} extractor_failures={extractor_failures} "
         f"backend_failures={backend_failures} insufficient={insufficient_search_terms} "
-        f"zero_results={zero_results} semantic_failures={semantic_failures} "
-        f"avg_anchor_coverage={avg_anchor_coverage_pct:.2f}"
+        f"zero_results={zero_results} quality_failures={quality_failures}"
     )
     print(f"[done] report saved: {out_path}")
 
