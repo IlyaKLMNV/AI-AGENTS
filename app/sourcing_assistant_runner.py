@@ -500,6 +500,88 @@ def _run_case_strict(requirements: List[str], expected_passed: List[int], predic
     return len(reasons) == 0, reasons, {"per_item": per_item}
 
 
+def _run_case_contract(requirements: List[str], expected_passed: List[int], predicted: List[Dict[str, Any]]) -> Tuple[bool, List[str], Dict[str, Any]]:
+    issues: List[str] = []
+    failed_items: List[Dict[str, Any]] = []
+    checks: Dict[str, Any] = {
+        "requirements_count": len(requirements),
+        "output_count": len(predicted),
+        "missing_items_count": max(0, len(requirements) - len(predicted)),
+        "extra_items_count": max(0, len(predicted) - len(requirements)),
+        "failed_items_count": 0,
+        "shape_fail_count": 0,
+        "requirement_not_exact_count": 0,
+        "passed_mismatch_count": 0,
+        "comment_contract_fail_count": 0,
+    }
+
+    if len(predicted) != len(requirements):
+        issues.append("length_mismatch")
+
+    n = min(len(predicted), len(requirements))
+    for i in range(n):
+        item = predicted[i]
+        exp_req = requirements[i]
+        exp_pass = expected_passed[i]
+
+        if not isinstance(item, dict):
+            checks["shape_fail_count"] += 1
+            failed_items.append(
+                {
+                    "index": i,
+                    "expected_requirement": exp_req,
+                    "actual_requirement": None,
+                    "expected_passed": exp_pass,
+                    "actual_passed": None,
+                    "issues": ["item_not_object"],
+                }
+            )
+            continue
+
+        item_issues = _validate_output_item_shape(item)
+        if item_issues:
+            checks["shape_fail_count"] += 1
+
+        if isinstance(item.get("requirement"), str) and item["requirement"] != exp_req:
+            item_issues.append("requirement_not_exact")
+            checks["requirement_not_exact_count"] += 1
+
+        if item.get("passed") != exp_pass:
+            item_issues.append("passed_mismatch")
+            checks["passed_mismatch_count"] += 1
+
+        if exp_pass == 0:
+            comment = item.get("comment")
+            if not isinstance(comment, str) or "в резюме не указано" not in comment.lower():
+                item_issues.append('missing_phrase_required("в резюме не указано")')
+                checks["comment_contract_fail_count"] += 1
+
+        if item_issues:
+            failed_items.append(
+                {
+                    "index": i,
+                    "expected_requirement": exp_req,
+                    "actual_requirement": item.get("requirement"),
+                    "expected_passed": exp_pass,
+                    "actual_passed": item.get("passed"),
+                    "issues": item_issues,
+                }
+            )
+
+    checks["failed_items_count"] = len(failed_items)
+
+    if checks["shape_fail_count"] > 0:
+        issues.append("output_shape_failed")
+    if checks["requirement_not_exact_count"] > 0:
+        issues.append("requirement_not_exact")
+    if checks["passed_mismatch_count"] > 0:
+        issues.append("passed_mismatch")
+    if checks["comment_contract_fail_count"] > 0:
+        issues.append("comment_contract_failed")
+
+    return len(issues) == 0, issues, {"checks": checks, "failed_items": failed_items}
+
+
 def run_sourcing_assistant_dataset(
     cdm_dir: pathlib.Path,
     cdm_count: Optional[int],
@@ -663,7 +745,7 @@ def run_sourcing_assistant_dataset(
             _log(quiet, f"[err] cdm={cdm_path.name} title={v_title} company={v_company} error={raw_error}")
             continue
 
-        strict_passed, strict_fail_reasons, strict_details = _run_case_strict(
+        strict_passed, strict_fail_reasons, strict_details = _run_case_contract(
             requirements=requirements,
             expected_passed=expected_passed,
             predicted=predicted,
@@ -674,20 +756,22 @@ def run_sourcing_assistant_dataset(
             "vacancy_title": v_title,
             "vacancy_company": v_company,
             "candidate_name": c_name,
-            "requirements": requirements if report_verbosity in {"standard", "full"} else None,
-            "expected_passed": expected_passed if report_verbosity in {"standard", "full"} else None,
             "passed": strict_passed,
-            "strict_fail_reasons": strict_fail_reasons,
+            "issues": strict_fail_reasons,
+            "checks": strict_details["checks"],
         }
 
         if report_verbosity in {"standard", "full"}:
+            case_rec["requirements"] = requirements
+            if not strict_passed or report_verbosity == "full":
+                case_rec["failed_items"] = strict_details["failed_items"]
+
+        if report_verbosity == "full":
+            case_rec["expected_passed"] = expected_passed
             case_rec["predicted"] = predicted
-            case_rec["strict_details"] = strict_details
             case_rec["raw_sourcing_assistant_output"] = raw_sa_output
             if raw_req_output is not None:
                 case_rec["raw_requirements_parser_output"] = raw_req_output
-
-        if report_verbosity == "full":
             case_rec["profile_used"] = profile
             if vacancy_text is not None:
                 case_rec["vacancy_text_used_for_requirements"] = vacancy_text
@@ -702,16 +786,24 @@ def run_sourcing_assistant_dataset(
             f"candidate={c_name} "
             f"reqs={len(requirements)} "
             f"passed={strict_passed} "
-            f"reasons={strict_fail_reasons}",
+            f"issues={strict_fail_reasons}",
         )
 
     total = len(cases)
     passed_n = sum(1 for c in cases if c.get("passed"))
+    failed_n = total - passed_n
     pass_rate = round((passed_n / total * 100.0), 2) if total else 0.0
 
-    fail_reasons_counter = Counter(
-        reason for c in cases for reason in (c.get("strict_fail_reasons") or [])
+    issue_counter = Counter(
+        reason for c in cases for reason in (c.get("issues") or [])
     )
+    item_issue_totals = {
+        "output_shape_failed": sum(int((c.get("checks") or {}).get("shape_fail_count", 0)) for c in cases),
+        "requirement_not_exact": sum(int((c.get("checks") or {}).get("requirement_not_exact_count", 0)) for c in cases),
+        "passed_mismatch": sum(int((c.get("checks") or {}).get("passed_mismatch_count", 0)) for c in cases),
+        "comment_contract_failed": sum(int((c.get("checks") or {}).get("comment_contract_fail_count", 0)) for c in cases),
+        "failed_items_total": sum(int((c.get("checks") or {}).get("failed_items_count", 0)) for c in cases),
+    }
 
     report: Dict[str, Any] = {
         "run_id": run_id,
@@ -728,9 +820,11 @@ def run_sourcing_assistant_dataset(
         "summary": {
             "total_cases": total,
             "passed": passed_n,
+            "failed": failed_n,
             "pass_rate_pct": pass_rate,
             "errors_count": len(errors),
-            "fail_reasons": dict(fail_reasons_counter),
+            "by_issue": dict(issue_counter),
+            "item_issue_totals": item_issue_totals,
         },
         "cases": cases,
         "errors": errors,

@@ -30,7 +30,7 @@ extractor_agent:
 
 one_line_search_query_builder:
   prompt_id: pmpt_69b1d2d4b9b88190af8d87f47a7617480c7e69c59e9f656e
-  prompt_version: 1
+  prompt_version: 9
   seed: 1234
 
 responsibilities_parser:

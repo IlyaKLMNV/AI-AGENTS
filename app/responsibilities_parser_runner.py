@@ -26,11 +26,6 @@ DEFAULT_VACANCY_GEN_MODEL = "gpt-4.1-mini"
 VACANCY_GEN_MAX_RETRIES = 1
 DEFAULT_PASS_SCORE_THRESHOLD = 70.0
 REPORT_VERBOSITY_VALUES = ("compact", "standard", "full")
-SCORE_WEIGHTS = {
-    "precision": 0.45,
-    "recall": 0.35,
-    "grounding": 0.20,
-}
 
 
 def _log(quiet: bool, msg: str) -> None:
@@ -434,176 +429,122 @@ class VacancyKeywordsRunner:
         return items, raw
 
 
-def _case_metrics(
+def _find_duplicate_items(items: List[str]) -> List[str]:
+    seen: set[str] = set()
+    duplicates: List[str] = []
+    for item in items:
+        key = _norm_key(item)
+        if not key:
+            continue
+        if key in seen:
+            duplicates.append(item)
+            continue
+        seen.add(key)
+    return duplicates
+
+
+def _evaluate_case_contract(
     predicted: List[str],
     vacancy_text: str,
     expected_stack: List[str],
     expected_skills: List[str],
-) -> Dict[str, Any]:
-    expected_all = list(dict.fromkeys(expected_stack + expected_skills))  # stable unique
-    matched_stack: List[str] = []
-    matched_skills: List[str] = []
-    matched_any: List[str] = []
-
-    format_ok = True
-    format_errors: Dict[str, List[str]] = {}
-    not_in_text: List[str] = []
-
-    # Validate predicted list size
-    list_ok = True
-    list_errors: List[str] = []
-    if not (1 <= len(predicted) <= 5):
-        list_ok = False
-        list_errors.append(f"len={len(predicted)} (expected 1..5)")
-
-    # Per-item checks
-    for it in predicted:
-        ok, errs = _validate_item_format(it)
-        if not ok:
-            format_ok = False
-            format_errors[it] = errs
-
-        if not _contains_in_text(it, vacancy_text):
-            not_in_text.append(it)
-
-        m_stack = _match_to_expected(it, expected_stack)
-        if m_stack:
-            matched_stack.append(m_stack)
-
-        m_skills = _match_to_expected(it, expected_skills)
-        if m_skills:
-            matched_skills.append(m_skills)
-
-        m_any = _match_to_expected(it, expected_all)
-        if m_any:
-            matched_any.append(m_any)
-
-    # Unique matches
-    matched_stack_u = list(dict.fromkeys(matched_stack))
-    matched_any_u = list(dict.fromkeys(matched_any))
-    in_text_ok = len(not_in_text) == 0
-
-    precision = 0.0
-    if predicted:
-        precision = round(len(matched_any_u) / len(predicted) * 100.0, 2)
-
-    expected_total_count = len(expected_all)
-    recall = 0.0
-    if expected_total_count:
-        recall = len(matched_any_u) / expected_total_count
-
-    not_in_text_count = len(not_in_text)
-    grounding = 1.0 - (not_in_text_count / max(1, len(predicted)))
-    score_norm = (
-        SCORE_WEIGHTS["precision"] * (precision / 100.0)
-        + SCORE_WEIGHTS["recall"] * recall
-        + SCORE_WEIGHTS["grounding"] * grounding
-    )
-    final_score = round(score_norm * 100.0, 2)
-
-    if final_score >= 85.0:
-        quality_level = "strong_pass"
-    elif final_score >= 70.0:
-        quality_level = "pass"
-    elif final_score >= 55.0:
-        quality_level = "borderline"
-    else:
-        quality_level = "fail"
-
-    return {
-        "list_ok": list_ok,
-        "list_errors": list_errors,
-        "format_ok": format_ok,
-        "format_errors": format_errors,
-        "in_text_ok": in_text_ok,
-        "not_in_text": not_in_text,
-        "not_in_text_count": not_in_text_count,
-        "expected_stack": expected_stack,
-        "expected_skills": expected_skills,
-        "expected_total": expected_all,
-        "expected_total_count": expected_total_count,
-        "matched_stack": matched_stack_u,
-        "matched_total": matched_any_u,
-        "stack_matches_count": len(matched_stack_u),
-        "total_matches_count": len(matched_any_u),
-        "precision_pct": precision,
-        "recall_pct": round(recall * 100.0, 2),
-        "grounding_pct": round(grounding * 100.0, 2),
-        "final_score_pct": final_score,
-        "quality_level": quality_level,
-    }
-
-
-def _strict_fail_reasons(
-    metrics: Dict[str, Any],
     min_total_matches: int,
     min_stack_matches: int,
     require_all_in_text: bool,
-) -> List[str]:
-    reasons: List[str] = []
-    if not metrics["list_ok"]:
-        reasons.append("list_constraints_failed")
-    if not metrics["format_ok"]:
-        reasons.append("item_format_failed")
-    if require_all_in_text and not metrics["in_text_ok"]:
-        reasons.append("predicted_not_found_in_text")
-    if metrics["total_matches_count"] < min_total_matches:
-        reasons.append(f"total_matches<{min_total_matches}")
-    if metrics["stack_matches_count"] < min_stack_matches:
-        reasons.append(f"stack_matches<{min_stack_matches}")
-    return reasons
+) -> Tuple[bool, List[str], Dict[str, Any], Dict[str, Any]]:
+    expected_all = list(dict.fromkeys(expected_stack + expected_skills))
+    list_errors: List[str] = []
+    if not (1 <= len(predicted) <= 5):
+        list_errors.append(f"len={len(predicted)} (expected 1..5)")
 
+    format_errors: Dict[str, List[str]] = {}
+    not_in_text: List[str] = []
+    matched_stack: List[str] = []
+    matched_expected: List[str] = []
+    duplicates = _find_duplicate_items(predicted)
 
-def _project_metrics_for_report(metrics: Dict[str, Any], report_verbosity: str) -> Dict[str, Any]:
-    out: Dict[str, Any] = {
-        "list_ok": metrics["list_ok"],
-        "format_ok": metrics["format_ok"],
-        "in_text_ok": metrics["in_text_ok"],
-        "not_in_text": metrics["not_in_text"],
-        "not_in_text_count": metrics["not_in_text_count"],
-        "stack_matches_count": metrics["stack_matches_count"],
-        "total_matches_count": metrics["total_matches_count"],
-        "precision_pct": metrics["precision_pct"],
-        "recall_pct": metrics["recall_pct"],
-        "grounding_pct": metrics["grounding_pct"],
-        "final_score_pct": metrics["final_score_pct"],
-        "quality_level": metrics["quality_level"],
+    for item in predicted:
+        ok, errs = _validate_item_format(item)
+        if not ok:
+            format_errors[item] = errs
+
+        if not _contains_in_text(item, vacancy_text):
+            not_in_text.append(item)
+
+        stack_match = _match_to_expected(item, expected_stack)
+        if stack_match:
+            matched_stack.append(stack_match)
+
+        expected_match = _match_to_expected(item, expected_all)
+        if expected_match:
+            matched_expected.append(expected_match)
+
+    matched_stack_u = list(dict.fromkeys(matched_stack))
+    matched_expected_u = list(dict.fromkeys(matched_expected))
+
+    issues: List[str] = []
+    if list_errors:
+        issues.append("list_constraints_failed")
+    if format_errors:
+        issues.append("item_format_failed")
+    if duplicates:
+        issues.append("duplicate_keywords")
+    if require_all_in_text and not_in_text:
+        issues.append("predicted_not_found_in_text")
+    if len(matched_expected_u) < min_total_matches:
+        issues.append(f"expected_matches<{min_total_matches}")
+    if len(matched_stack_u) < min_stack_matches:
+        issues.append(f"stack_matches<{min_stack_matches}")
+
+    checks = {
+        "keywords_count": len(predicted),
+        "matched_expected_count": len(matched_expected_u),
+        "matched_stack_count": len(matched_stack_u),
+        "not_in_text_count": len(not_in_text),
+        "duplicate_count": len(duplicates),
+    }
+    details = {
+        "list_errors": list_errors,
+        "format_errors": format_errors,
+        "not_in_text": not_in_text,
+        "duplicates": duplicates,
+        "matched_expected": matched_expected_u,
+        "matched_stack": matched_stack_u,
+        "expected_stack": expected_stack,
+        "expected_skills": expected_skills,
     }
 
-    if not metrics["list_ok"]:
-        out["list_errors"] = metrics["list_errors"]
-    if not metrics["format_ok"]:
-        out["format_errors"] = metrics["format_errors"]
-
-    if report_verbosity in {"standard", "full"}:
-        out["matched_stack"] = metrics["matched_stack"]
-        out["matched_total"] = metrics["matched_total"]
-
-    if report_verbosity == "full":
-        out["expected_stack"] = metrics["expected_stack"]
-        out["expected_skills"] = metrics["expected_skills"]
-        out["expected_total"] = metrics["expected_total"]
-
-    return out
+    return len(issues) == 0, issues, checks, details
 
 
-def _project_case_for_report(case: Dict[str, Any], report_verbosity: str) -> Dict[str, Any]:
+def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "cdm_file": case["cdm_file"],
         "vacancy_title": case["vacancy_title"],
         "vacancy_company": case["vacancy_company"],
         "predicted_keywords": case["predicted_keywords"],
         "passed": case["passed"],
-        "strict_passed": case["strict_passed"],
-        "strict_fail_reasons": case["strict_fail_reasons"],
-        "metrics": _project_metrics_for_report(case["metrics"], report_verbosity=report_verbosity),
+        "issues": case["issues"],
+        "checks": case["checks"],
     }
 
-    if report_verbosity in {"standard", "full"}:
-        out["raw_extractor_output"] = case["raw_extractor_output"]
+    if report_verbosity in {"standard", "full"} and (case["issues"] or report_verbosity == "full"):
+        out["details"] = {
+            "not_in_text": case["details"]["not_in_text"],
+            "duplicates": case["details"]["duplicates"],
+            "matched_expected": case["details"]["matched_expected"],
+            "matched_stack": case["details"]["matched_stack"],
+            "list_errors": case["details"]["list_errors"],
+            "format_errors": case["details"]["format_errors"],
+        }
 
     if report_verbosity == "full":
+        out["raw_extractor_output"] = case["raw_extractor_output"]
         out["vacancy_text"] = case["vacancy_text"]
+        out["expected_terms"] = {
+            "stack": case["details"]["expected_stack"],
+            "skills": case["details"]["expected_skills"],
+        }
 
     return out
 
@@ -683,7 +624,6 @@ def run_vacancy_keywords_dataset(
         f"min_total_matches={min_total_matches} "
         f"min_stack_matches={min_stack_matches} "
         f"require_all_in_text={require_all_in_text} "
-        f"pass_score_threshold={pass_score_threshold} "
         f"report_verbosity={report_verbosity}",
     )
     _log(quiet, f"[init] prompt_id={final_pid} prompt_version={final_pver}")
@@ -735,25 +675,14 @@ def run_vacancy_keywords_dataset(
             _log(quiet, f"[err] cdm={cdm_path.name} title={v_title} company={v_company} error={raw_error}")
             continue
 
-        metrics = _case_metrics(
+        passed, issues, checks, details = _evaluate_case_contract(
             predicted=predicted,
             vacancy_text=vacancy_text,
             expected_stack=expected_stack,
             expected_skills=expected_skills,
-        )
-
-        strict_fail_reasons = _strict_fail_reasons(
-            metrics=metrics,
             min_total_matches=min_total_matches,
             min_stack_matches=min_stack_matches,
             require_all_in_text=require_all_in_text,
-        )
-        strict_passed = len(strict_fail_reasons) == 0
-
-        passed = bool(
-            metrics["list_ok"]
-            and metrics["format_ok"]
-            and float(metrics["final_score_pct"]) >= float(pass_score_threshold)
         )
 
         case = {
@@ -764,9 +693,9 @@ def run_vacancy_keywords_dataset(
             "predicted_keywords": predicted,
             "raw_extractor_output": raw_output,
             "passed": passed,
-            "strict_passed": strict_passed,
-            "strict_fail_reasons": strict_fail_reasons,
-            "metrics": metrics,
+            "issues": issues,
+            "checks": checks,
+            "details": details,
         }
         cases.append(case)
 
@@ -777,68 +706,22 @@ def run_vacancy_keywords_dataset(
             f"title={v_title} "
             f"company={v_company} "
             f"passed={passed} "
-            f"strict_passed={strict_passed} "
-            f"score={metrics['final_score_pct']} "
-            f"matches={metrics['total_matches_count']} "
-            f"stack_matches={metrics['stack_matches_count']} "
-            f"precision={metrics['precision_pct']}% "
-            f"in_text_ok={metrics['in_text_ok']}",
+            f"issues={issues} "
+            f"matches={checks['matched_expected_count']} "
+            f"stack_matches={checks['matched_stack_count']} "
+            f"not_in_text={checks['not_in_text_count']}",
         )
 
     total = len(cases)
     passed_n = sum(1 for c in cases if c.get("passed"))
+    failed_n = total - passed_n
     pass_rate = round((passed_n / total * 100.0), 2) if total else 0.0
-    strict_passed_n = sum(1 for c in cases if c.get("strict_passed"))
-    strict_pass_rate = round((strict_passed_n / total * 100.0), 2) if total else 0.0
+    avg_keywords = round(sum(int(c["checks"]["keywords_count"]) for c in cases) / total, 2) if total else 0.0
+    avg_expected_matches = round(sum(int(c["checks"]["matched_expected_count"]) for c in cases) / total, 2) if total else 0.0
+    avg_stack_matches = round(sum(int(c["checks"]["matched_stack_count"]) for c in cases) / total, 2) if total else 0.0
+    issue_counter = Counter(issue for c in cases for issue in (c.get("issues") or []))
 
-    avg_score = round(sum(float(c["metrics"]["final_score_pct"]) for c in cases) / total, 2) if total else 0.0
-    avg_precision = round(sum(float(c["metrics"]["precision_pct"]) for c in cases) / total, 2) if total else 0.0
-    avg_recall = round(sum(float(c["metrics"]["recall_pct"]) for c in cases) / total, 2) if total else 0.0
-    avg_grounding = round(sum(float(c["metrics"]["grounding_pct"]) for c in cases) / total, 2) if total else 0.0
-    avg_total_matches = (
-        round(sum(int(c["metrics"]["total_matches_count"]) for c in cases) / total, 3) if total else 0.0
-    )
-    avg_stack_matches = (
-        round(sum(int(c["metrics"]["stack_matches_count"]) for c in cases) / total, 3) if total else 0.0
-    )
-
-    format_bad = sum(1 for c in cases if not c["metrics"]["format_ok"])
-    list_bad = sum(1 for c in cases if not c["metrics"]["list_ok"])
-    in_text_bad = sum(1 for c in cases if not c["metrics"]["in_text_ok"])
-    quality_levels = Counter((c["metrics"]["quality_level"] or "").strip() for c in cases)
-
-    strict_only_in_text_fail_count = sum(
-        1
-        for c in cases
-        if (
-            not c["strict_passed"]
-            and c["metrics"]["list_ok"]
-            and c["metrics"]["format_ok"]
-            and c["metrics"]["total_matches_count"] >= min_total_matches
-            and c["metrics"]["stack_matches_count"] >= min_stack_matches
-            and (require_all_in_text and not c["metrics"]["in_text_ok"])
-        )
-    )
-
-    failed_cases = [
-        {
-            "cdm_file": c["cdm_file"],
-            "vacancy_title": c["vacancy_title"],
-            "vacancy_company": c["vacancy_company"],
-            "predicted_keywords": c["predicted_keywords"],
-            "strict_fail_reasons": c["strict_fail_reasons"],
-            "final_score_pct": c["metrics"]["final_score_pct"],
-            "quality_level": c["metrics"]["quality_level"],
-            "not_in_text": c["metrics"]["not_in_text"],
-        }
-        for c in cases
-        if not c.get("passed")
-    ]
-
-    cases_for_report = [_project_case_for_report(case=c, report_verbosity=report_verbosity) for c in cases]
-
-    counts_by_company = Counter((c.get("vacancy_company") or "").strip() for c in cases)
-    counts_by_title = Counter((c.get("vacancy_title") or "").strip() for c in cases)
+    cases_for_report = [_project_contract_case(case=c, report_verbosity=report_verbosity) for c in cases]
 
     report: Dict[str, Any] = {
         "run_id": run_id,
@@ -857,42 +740,20 @@ def run_vacancy_keywords_dataset(
             "min_total_matches": min_total_matches,
             "min_stack_matches": min_stack_matches,
             "require_all_in_text": require_all_in_text,
-            "pass_score_threshold": pass_score_threshold,
-        },
-        "scoring": {
-            "weights": SCORE_WEIGHTS,
-            "quality_levels": {
-                "strong_pass": "score >= 85",
-                "pass": "70 <= score < 85",
-                "borderline": "55 <= score < 70",
-                "fail": "score < 55",
-            },
         },
         "token_usage_total": token_usage_total,
         "summary": {
             "total_cases": total,
             "passed": passed_n,
+            "failed": failed_n,
             "pass_rate_pct": pass_rate,
-            "strict_passed": strict_passed_n,
-            "strict_pass_rate_pct": strict_pass_rate,
-            "avg_final_score_pct": avg_score,
-            "avg_precision_pct": avg_precision,
-            "avg_recall_pct": avg_recall,
-            "avg_grounding_pct": avg_grounding,
-            "avg_total_matches": avg_total_matches,
+            "avg_keywords_per_case": avg_keywords,
+            "avg_expected_matches": avg_expected_matches,
             "avg_stack_matches": avg_stack_matches,
-            "list_bad_count": list_bad,
-            "format_bad_count": format_bad,
-            "in_text_bad_count": in_text_bad,
-            "strict_only_in_text_fail_count": strict_only_in_text_fail_count,
             "errors_count": len(errors),
-            "failed_cases_count": len(failed_cases),
-            "quality_levels": dict(quality_levels),
-            "counts_by_company": dict(counts_by_company),
-            "counts_by_title": dict(counts_by_title),
+            "by_issue": dict(issue_counter),
         },
         "cases": cases_for_report,
-        "failed_cases": failed_cases,
         "errors": errors,
     }
 
@@ -905,12 +766,9 @@ def run_vacancy_keywords_dataset(
         f"total_cases={total} "
         f"passed={passed_n} "
         f"pass_rate={pass_rate:.2f}% "
-        f"strict_passed={strict_passed_n} "
-        f"strict_pass_rate={strict_pass_rate:.2f}% "
-        f"avg_score={avg_score:.2f} "
+        f"avg_expected_matches={avg_expected_matches:.2f} "
         f"errors={len(errors)} "
-        f"format_bad={format_bad} "
-        f"in_text_bad={in_text_bad} "
+        f"issues={dict(issue_counter)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
     )
     _log(quiet, "[done] report saved: " + str(out_path))
@@ -920,7 +778,7 @@ def run_vacancy_keywords_dataset(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build detailed vacancy texts from CDM fixtures, run vacancy_keywords prompt, and report quality metrics."
+        description="Run responsibilities_parser over CDM fixtures and report prompt-contract checks."
     )
     parser.add_argument(
         "--cdm-dir",
@@ -950,13 +808,13 @@ def main() -> None:
         "--prompt-id",
         type=str,
         default=None,
-        help="Override vacancy_keywords prompt id (otherwise from cfg/env).",
+        help="Override responsibilities_parser prompt id (otherwise from cfg/env).",
     )
     parser.add_argument(
         "--prompt-version",
         type=str,
         default=None,
-        help="Override vacancy_keywords prompt version (otherwise from cfg/env).",
+        help="Override responsibilities_parser prompt version (otherwise from cfg/env).",
     )
     parser.add_argument(
         "--use-llm-vacancy-gen",
@@ -984,16 +842,13 @@ def main() -> None:
     parser.add_argument(
         "--no-require-all-in-text",
         action="store_true",
-        help="Disable strict check that every predicted keyword must appear in vacancy text (strict_passed only).",
+        help="Disable the check that every predicted keyword must appear in vacancy text.",
     )
     parser.add_argument(
         "--pass-score-threshold",
         type=float,
         default=DEFAULT_PASS_SCORE_THRESHOLD,
-        help=(
-            "Main pass threshold for score-based evaluation [0..100]. "
-            "Case passes when list/format are valid and final_score >= threshold."
-        ),
+        help="Deprecated, ignored. Kept only for backward compatibility.",
     )
     parser.add_argument(
         "--report-verbosity",
