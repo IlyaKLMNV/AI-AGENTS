@@ -25,7 +25,7 @@ verdict_classifier:
 
 extractor_agent:
   prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
-  prompt_version: 27
+  prompt_version: 30
   seed: 1234
 
 one_line_search_query_builder:

@@ -9,6 +9,7 @@ cases/
 fixtures/
 !tests/fixtures/
 tests/fixtures/*
+!tests/fixtures/screening_scenarios.csv
 !tests/fixtures/cdm/
 !tests/fixtures/cdm/**
 tests/fixtures/dialogs_parsed/

@@ -446,6 +446,49 @@ KW_NO_RELEVANT_PROFILE_EXPLICIT = [
     "таким не занимаюсь",
 ]
 
+KW_DEATH_LOSS = [
+    "умер",
+    "умерла",
+    "покойн",
+    "скончался",
+    "скончалась",
+    "после смерти",
+    "похорон",
+    "утрат",
+    "не стало",
+]
+
+KW_WORK_FORMAT_READY = [
+    "готов",
+    "подходит",
+    "устраивает",
+    "могу ездить",
+    "могу в офис",
+    "готов в офис",
+    "готов на гибрид",
+]
+
+KW_WORK_FORMAT_NOT_READY = [
+    "не готов",
+    "не готова",
+    "офис не подходит",
+    "гибрид не подходит",
+    "не готов в офис",
+    "не готова в офис",
+    "не готов на гибрид",
+    "не готова на гибрид",
+    "не готов ездить",
+    "не готова ездить",
+    "переезд не рассматриваю",
+    "не рассматриваю переезд",
+]
+
+S10_RF_ONLY_SCRIPT = (
+    "Спасибо за информацию. В настоящий момент рассматриваются только кандидаты, "
+    "проживающие на территории РФ. Прошу прощения за беспокойство. END"
+)
+S38_DEATH_LOSS_SCRIPT = "Прошу прощения за беспокойство. END"
+
 SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
     7: [
         "Откуда у вас мои данные?",
@@ -455,9 +498,9 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Подтвердите легитимность, пожалуйста.",
     ],
     10: [
-        "Я живу вне РФ, переезд не рассматриваю и рассматриваю только удаленную работу.",
-        "Сейчас живу вне РФ, работаю только в своем часовом поясе и переезд не рассматриваю.",
-        "Я живу за границей, интересует только удаленная работа и только свой часовой пояс.",
+        "Я сейчас живу не в РФ.",
+        "Сейчас нахожусь за границей, не в России.",
+        "Я живу за пределами РФ.",
     ],
     17: [
         "Вы уже писали мне по этой вакансии, повторно это не актуально.",
@@ -483,6 +526,53 @@ def _contains_salary_ultimatum(text: str) -> bool:
     return _has_any(text or "", SALARY_ULTIMATUM_MARKERS)
 
 
+def _canonical_work_format(work_format: str) -> str:
+    low = (work_format or "").strip().lower()
+    if "office" in low or "офис" in low:
+        return "office"
+    if "hybrid" in low or "гибрид" in low:
+        return "hybrid"
+    if "remote" in low or "удал" in low:
+        return "remote"
+    return low
+
+
+def _is_office_or_hybrid_work_format(work_format: str) -> bool:
+    return _canonical_work_format(work_format) in {"office", "hybrid"}
+
+
+def _work_format_label(work_format: str) -> str:
+    canonical = _canonical_work_format(work_format)
+    if canonical == "office":
+        return "Офис"
+    if canonical == "hybrid":
+        return "Гибрид"
+    if canonical == "remote":
+        return "Удаленно"
+    return str(work_format or "").strip()
+
+
+def _work_format_phrase(work_format: str) -> str:
+    canonical = _canonical_work_format(work_format)
+    if canonical == "office":
+        return "в офисе"
+    if canonical == "hybrid":
+        return "в гибридном формате"
+    return str(work_format or "").strip()
+
+
+def _has_work_format_ready_marker(text: str) -> bool:
+    return _has_any((text or "").lower(), KW_WORK_FORMAT_READY)
+
+
+def _has_work_format_negative_marker(text: str) -> bool:
+    return _has_any((text or "").lower(), KW_WORK_FORMAT_NOT_READY)
+
+
+def _has_death_loss_marker(text: str) -> bool:
+    return _has_any((text or "").lower(), KW_DEATH_LOSS)
+
+
 def _scenario_example_override(scenario: Scenario) -> Optional[List[str]]:
     if scenario.index == 4:
         # Для S4 не используем CSV-примеры: сообщения должны генерироваться моделью с нуля.
@@ -503,13 +593,7 @@ def _is_foreign_language_message(text: str) -> bool:
 
 def _matches_geo_restriction_trigger(text: str) -> bool:
     normalized = _normalize_text(text).lower()
-    has_outside_rf = _has_any(normalized, KW_GEO_OUTSIDE_RF)
-    has_hard_limit = (
-        _has_any(normalized, KW_GEO_TIMEZONE_ONLY)
-        or _has_any(normalized, KW_GEO_NO_RELOCATION)
-        or _has_any(normalized, KW_GEO_REMOTE_ONLY)
-    )
-    return has_outside_rf and has_hard_limit
+    return _has_any(normalized, KW_GEO_OUTSIDE_RF)
 
 
 def _scenario_chain_key(s: Scenario) -> Optional[str]:
@@ -551,6 +635,42 @@ class CdmFixture:
     file_name: str
     vacancy_info: Dict[str, Any]
     names: Dict[str, str]
+
+
+def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
+    wanted = set(indices)
+    return any(s.index in wanted for s in group.scenarios)
+
+
+def _fixture_matches_group_requirements(
+    fixture: CdmFixture,
+    group: ScenarioGroup,
+) -> bool:
+    vacancy_info = fixture.vacancy_info or {}
+    work_format = str(vacancy_info.get("work_format") or "").strip()
+    location = str(vacancy_info.get("location") or "").strip().lower()
+
+    if _group_has_any_scenario(group, [34, 35, 36, 37]):
+        if not _is_office_or_hybrid_work_format(work_format):
+            return False
+
+    if _group_has_any_scenario(group, [35]):
+        return "моск" in location
+
+    if _group_has_any_scenario(group, [36]):
+        return bool(location) and "моск" not in location and "удал" not in location
+
+    return True
+
+
+def _select_cdm_fixture_for_group(
+    cdm_fixtures: List[CdmFixture],
+    group: ScenarioGroup,
+    case_position: int,
+) -> CdmFixture:
+    eligible = [f for f in cdm_fixtures if _fixture_matches_group_requirements(f, group)]
+    pool = eligible or cdm_fixtures
+    return pool[(case_position - 1) % len(pool)]
 
 
 def build_scenario_groups(scenarios: List[Scenario]) -> List[ScenarioGroup]:
@@ -1102,7 +1222,7 @@ def _trigger_requirement_text(s: Scenario) -> str:
     if idx == 10 or "географические ограничения" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен ЯВНО сказать, что живет вне РФ.\n"
-            "И дополнительно должен ЯВНО указать хотя бы одно жесткое ограничение: «только свой часовой пояс», «переезд не рассматриваю» или «только удаленка».\n"
+            "Достаточно прямой формулировки: «живу не в РФ», «нахожусь за границей», «живу за пределами РФ».\n"
             "Не используй мягкие и двусмысленные формулировки.\n"
         )
 
@@ -1117,6 +1237,36 @@ def _trigger_requirement_text(s: Scenario) -> str:
     if idx == 33:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, он уже в городе вакансии ИЛИ готов переехать в город вакансии\n"
+        )
+
+    if idx == 34:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии.\n"
+            "При этом кандидат НЕ должен подтверждать готовность к офису/гибриду: это должен уточнить ассистент.\n"
+        )
+
+    if idx == 35:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве.\n"
+            "Это допустимый пригород/ближняя локация, и кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
+        )
+
+    if idx == 36:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с городом вакансии, но не в самом городе, "
+            "в пределах допустимого радиуса до 50 км.\n"
+            "Кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
+        )
+
+    if idx == 37:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно писать, что не готов работать в формате офис/гибрид "
+            "и не готов к переезду.\n"
+        )
+
+    if idx == 38:
+        return (
+            "В КАЖДОЙ реплике кандидат должен явно упоминать смерть, утрату, похороны или покойного человека.\n"
         )
 
     if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
@@ -1184,7 +1334,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     if idx == 10 or "географические ограничения" in name:
         parts.append(
             "- В КАЖДОЙ реплике ЯВНО скажи, что кандидат живет вне РФ.\n"
-            "- Дополнительно в той же реплике укажи хотя бы одно жесткое ограничение: «только свой часовой пояс», «переезд не рассматриваю», «только удаленка»."
+            "- Достаточно прямой формулировки: «живу не в РФ», «нахожусь за границей», «живу за пределами РФ»."
         )
 
     # 12. Спрашивает про зарплату
@@ -1257,6 +1407,46 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Кандидат явно подтверждает, что локация подходит: он в городе вакансии ИЛИ готов переехать в город вакансии."
         )
 
+    if idx == 34:
+        parts.append(
+            "- Кандидат уже находится в городе вакансии, но не подтверждает отдельно готовность к формату офис/гибрид."
+        )
+        parts.append(
+            "- Формулировка должна оставить ассистенту необходимость отдельно спросить, подходит ли такой формат работы."
+        )
+
+    if idx == 35:
+        parts.append(
+            "- Кандидат живет рядом с Москвой, но не в самой Москве: используй формулировки уровня «в Королеве/Химках/Подольске, это рядом с Москвой»."
+        )
+        parts.append(
+            "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
+        )
+
+    if idx == 36:
+        parts.append(
+            "- Кандидат живет рядом с городом вакансии, но не в нем: явно укажи допустимую близость вроде «примерно в 30 км» или «рядом с городом вакансии»."
+        )
+        parts.append(
+            "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
+        )
+
+    if idx == 37:
+        parts.append(
+            "- Кандидат явно пишет, что не готов работать в формате офис/гибрид и не готов к переезду."
+        )
+        parts.append(
+            "- Это должно звучать как прямой стоп-фактор, а не как мягкое сомнение."
+        )
+
+    if idx == 38:
+        parts.append(
+            "- Кандидат прямо упоминает смерть, похороны, покойного человека или утрату."
+        )
+        parts.append(
+            "- Не смешивай это с другими триггерами: основной смысл реплики должен быть именно про утрату."
+        )
+
     if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
         parts.append(
             "- Это именно триггер про повторный контакт: используй формулировки «вы уже писали», «мы уже общались», «повторно это не актуально», «не нужно снова писать»."
@@ -1318,6 +1508,7 @@ def _validate_trigger(
     dialog_context_meta = dialog_context_meta or {}
     min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
     expected_location = str(dialog_context_meta.get("location") or "").strip().lower()
+    work_format = str(dialog_context_meta.get("work_format") or "").strip()
 
     # 32 - кандидат называет ожидания по зарплате (конкретная сумма, ниже/комфортно)
     if idx == 32:
@@ -1352,6 +1543,36 @@ def _validate_trigger(
             if keywords and not any(k in m for k in keywords):
                 return False
         return has_city and has_positive_location_intent
+
+    if idx == 34:
+        if not expected_location:
+            return False
+        keywords = _location_keywords(expected_location)
+        has_city = bool(keywords) and any(k in m for k in keywords)
+        return has_city and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
+
+    if idx == 35:
+        nearby_moscow_markers = ["моск", "королев", "королёв", "химк", "подольск", "рядом", "пригород"]
+        return all(marker_condition for marker_condition in [
+            any(marker in m for marker in nearby_moscow_markers),
+            "моск" in m,
+            not _has_work_format_ready_marker(m),
+            not _has_work_format_negative_marker(m),
+        ])
+
+    if idx == 36:
+        if not expected_location:
+            return False
+        keywords = _location_keywords(expected_location)
+        has_location = bool(keywords) and any(k in m for k in keywords)
+        has_nearby = "рядом" in m or "км" in m or "килом" in m
+        return has_location and has_nearby and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
+
+    if idx == 37:
+        return _is_office_or_hybrid_work_format(work_format) and _has_work_format_negative_marker(m)
+
+    if idx == 38:
+        return _has_death_loss_marker(m)
 
     # зарплата
     if idx == 12:
@@ -1411,6 +1632,7 @@ def _fallback_messages(
     min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
     max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
     expected_location = str(dialog_context_meta.get("location") or "").strip() or "город вакансии"
+    work_format = str(dialog_context_meta.get("work_format") or "").strip()
 
     if idx == 1 or "полит" in name or "национ" in name:
         pool = [
@@ -1440,9 +1662,9 @@ def _fallback_messages(
 
     if idx == 10 or "географические ограничения" in name:
         pool = [
-            "Я живу вне РФ, переезд не рассматриваю и рассматриваю только удаленную работу.",
-            "Сейчас живу вне РФ, работаю только в своем часовом поясе и переезд не рассматриваю.",
-            "Я живу за границей, интересует только удаленная работа и только свой часовой пояс.",
+            "Я сейчас живу не в РФ.",
+            "Сейчас нахожусь за границей, не в России.",
+            "Я живу за пределами РФ.",
         ]
         return pool[:n]
 
@@ -1536,6 +1758,50 @@ def _fallback_messages(
             ]
         return pool[:n]
 
+    if idx == 34:
+        city = expected_location.strip() or "город вакансии"
+        pool = [
+            f"Я сейчас в {city}.",
+            f"Мой текущий город — {city}.",
+            f"Нахожусь в {city}.",
+        ]
+        return pool[:n]
+
+    if idx == 35:
+        pool = [
+            "Я сейчас в Королеве, это рядом с Москвой.",
+            "Живу в Химках, это рядом с Москвой.",
+            "Я в Подольске, по сути рядом с Москвой.",
+        ]
+        return pool[:n]
+
+    if idx == 36:
+        city = expected_location.strip() or "город вакансии"
+        pool = [
+            f"Я рядом с городом вакансии — {city}, живу примерно в 30 км.",
+            f"Живу недалеко от {city}, около 25 км.",
+            f"Я не в самом {city}, но рядом, примерно в 40 км.",
+        ]
+        return pool[:n]
+
+    if idx == 37:
+        city = expected_location.strip() or "город вакансии"
+        fmt_phrase = _work_format_phrase(work_format) or "в таком формате"
+        pool = [
+            f"Я рядом с {city}, но работать {fmt_phrase} не готов и переезд не рассматриваю.",
+            f"Локация в целом рядом, но {fmt_phrase} мне не подходит и переезжать не планирую.",
+            f"Живу недалеко от {city}, но на такой формат не готов и к переезду тоже не готов.",
+        ]
+        return pool[:n]
+
+    if idx == 38:
+        pool = [
+            "После смерти близкого человека сейчас не готов обсуждать работу.",
+            "У меня недавно были похороны, пожалуйста, не беспокойте.",
+            "После утраты сейчас совсем не до смены работы.",
+        ]
+        return pool[:n]
+
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
         if idx == 23:
             pool = [
@@ -1622,6 +1888,7 @@ def generate_candidate_messages_for_scenario(
     min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
     max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
     expected_location = str(dialog_context_meta.get("location") or "").strip()
+    work_format = str(dialog_context_meta.get("work_format") or "").strip()
 
     runtime_context_lines: List[str] = []
     if scenario.index == 32:
@@ -1645,6 +1912,27 @@ def generate_candidate_messages_for_scenario(
         )
         runtime_context_lines.append(
             f"- ВАЖНО: в каждой реплике явно укажи {expected_location} или готовность переехать в {expected_location}."
+        )
+    if scenario.index in (34, 35, 36, 37):
+        if expected_location:
+            runtime_context_lines.append(
+                f"- Локация вакансии для этого прогона: {expected_location}."
+            )
+        if work_format:
+            runtime_context_lines.append(
+                f"- Формат работы для этого прогона: {_work_format_label(work_format)}."
+            )
+    if scenario.index == 35:
+        runtime_context_lines.append(
+            "- ВАЖНО: кандидат должен быть рядом с Москвой, но не в самой Москве."
+        )
+    if scenario.index == 36 and expected_location:
+        runtime_context_lines.append(
+            f"- ВАЖНО: кандидат должен быть рядом с {expected_location}, но не в самом городе, в пределах 50 км."
+        )
+    if scenario.index == 37 and work_format:
+        runtime_context_lines.append(
+            f"- ВАЖНО: кандидат должен явно отказаться работать в формате {_work_format_label(work_format)} и отказаться от переезда."
         )
     runtime_context_text = "\n".join(runtime_context_lines).strip()
 
@@ -1707,11 +1995,12 @@ def generate_candidate_messages_for_scenario(
     }
     if examples:
         payload_obj["candidate_examples"] = examples
-    if scenario.index in (32, 33):
+    if scenario.index in (32, 33, 34, 35, 36, 37):
         payload_obj["vacancy_context_for_generation"] = {
             "location": expected_location,
             "min_salary": min_salary,
             "max_salary": max_salary,
+            "work_format": work_format,
         }
 
     def _do_gen(strong: bool) -> List[str]:
@@ -2038,6 +2327,100 @@ def _is_apology_end_reply(reply: str) -> bool:
     )
 
 
+def _normalize_reply_for_compare(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized)
+    return normalized.lower()
+
+
+def _reply_matches_exact_script(reply: str, expected: str) -> bool:
+    return _normalize_reply_for_compare(reply) == _normalize_reply_for_compare(expected)
+
+
+def _asks_work_format_readiness(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    if not low.strip() or _reply_has_end_marker(reply):
+        return False
+
+    readiness_markers = [
+        "подходит",
+        "готов",
+        "готовы",
+        "сможете",
+        "удобно",
+        "комфортно",
+        "такой формат",
+        "формат работы",
+    ]
+    format_markers = [
+        "офис",
+        "office",
+        "гибрид",
+        "hybrid",
+        "формат",
+    ]
+    hard_stop_markers = [
+        "к сожалению",
+        "не подойд",
+        "не подход",
+        "вынужден",
+        "вынуждены",
+        "фиксированная локация",
+        "важно находиться",
+    ]
+    work_format = str(dialog_context_meta.get("work_format") or "").strip()
+    canonical = _canonical_work_format(work_format)
+    if canonical == "office":
+        format_markers.append("офисный")
+    if canonical == "hybrid":
+        format_markers.append("гибридный")
+
+    return (
+        "?" in (reply or "")
+        and _contains_any_substring(low, readiness_markers)
+        and _contains_any_substring(low, format_markers)
+        and not _contains_any_substring(low, hard_stop_markers)
+    )
+
+
+def _is_location_or_format_refusal_reply(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
+        return False
+
+    reason_markers = [
+        "к сожалению",
+        "важно находиться",
+        "фиксированная локация",
+        "предполагается",
+        "спасибо за уделенное время",
+        "спасибо за уделённое время",
+    ]
+    format_markers = [
+        "формат",
+        "локац",
+        "переезд",
+        "офис",
+        "office",
+        "гибрид",
+        "hybrid",
+    ]
+    work_format = str(dialog_context_meta.get("work_format") or "").strip()
+    canonical = _canonical_work_format(work_format)
+    if canonical == "office":
+        format_markers.append("офисный")
+    if canonical == "hybrid":
+        format_markers.append("гибридный")
+
+    return _contains_any_substring(low, reason_markers) and _contains_any_substring(low, format_markers)
+
+
 def _is_salary_expectation_question_reply(
     reply: str,
     dialog_context_meta: Dict[str, Any],
@@ -2213,6 +2596,11 @@ def enforce_prompt_v2_turn_rules(
             return 1, "Prompt v2 schedule rule passed: assistant refuses scheduling and stays in screening flow."
         return 0, "Prompt v2 schedule rule failed: assistant should refuse scheduling instead of promising a call."
 
+    if idx == 10:
+        if _reply_matches_exact_script(assistant_reply, S10_RF_ONLY_SCRIPT):
+            return 1, "Prompt v2 geo rule passed: outside-RF scenario uses the exact updated script."
+        return 0, "Prompt v2 geo rule failed: scenario 10 must use the exact updated outside-RF script."
+
     if idx in (23, 24) and bool(dialog_context_meta.get("company_hidden", False)):
         if _is_hidden_company_reply_valid(assistant_reply, dialog_context_meta):
             return 1, "Prompt v2 hidden-company rule passed: assistant keeps the search hidden and continues the dialogue."
@@ -2229,6 +2617,21 @@ def enforce_prompt_v2_turn_rules(
         if _is_open_company_reply_valid(assistant_reply, dialog_context_meta):
             return 1, "Prompt v2 vacancy-info rule passed: open company info is shared and the dialogue continues."
         return 0, "Prompt v2 vacancy-info rule failed: scenario 28 should provide open company/vacancy info and continue."
+
+    if idx in (34, 35, 36):
+        if _asks_work_format_readiness(assistant_reply, dialog_context_meta):
+            return 1, f"Prompt v2 office/hybrid rule passed: scenario {idx} asks about readiness for the work format."
+        return 0, f"Prompt v2 office/hybrid rule failed: scenario {idx} must continue and explicitly ask about readiness for office/hybrid format."
+
+    if idx == 37:
+        if _is_location_or_format_refusal_reply(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 office/hybrid KO rule passed: assistant rejects due to incompatible office/hybrid format."
+        return 0, "Prompt v2 office/hybrid KO rule failed: scenario 37 must end with a location/work-format refusal and END."
+
+    if idx == 38:
+        if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT):
+            return 1, "Prompt v2 death/loss rule passed: assistant uses the exact apology END script."
+        return 0, "Prompt v2 death/loss rule failed: scenario 38 must use the exact apology END script."
 
     return score, comment
 
@@ -2648,7 +3051,7 @@ def run_scenarios(
 
     for gidx, group in enumerate(groups, start=1):
         print(f"\n[case {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
-        fixture = cdm_fixtures[(gidx - 1) % len(cdm_fixtures)]
+        fixture = _select_cdm_fixture_for_group(cdm_fixtures, group, gidx)
         hide_company = _group_requires_hidden_company(group)
         dialog_context, dialog_context_meta = build_dialog_context(
             fixture=fixture,
