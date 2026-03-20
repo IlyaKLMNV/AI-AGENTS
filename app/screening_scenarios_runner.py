@@ -828,7 +828,10 @@ def build_dialog_context(
     original_company_name = str(vacancy_info.get("company_name") or "").strip()
     company_name = "СКРЫТО" if hide_company else original_company_name
     responsibilities = str(vacancy_info.get("responsibilities") or "").strip()
-    work_format = str(vacancy_info.get("work_format") or "").strip()
+    raw_work_format = str(vacancy_info.get("work_format") or "").strip()
+    # Keep prompt-facing context aligned with the real backend payload:
+    # work_format comes as office/hybrid/remote and should be passed through as-is.
+    work_format = raw_work_format
     location = str(vacancy_info.get("location") or "").strip()
     min_salary = str(vacancy_info.get("min_salary") or "").strip()
     max_salary = str(vacancy_info.get("max_salary") or "").strip()
@@ -887,6 +890,7 @@ def build_dialog_context(
         "original_company_name": original_company_name,
         "responsibilities": responsibilities,
         "work_format": work_format,
+        "work_format_raw": raw_work_format,
         "location": location,
         "min_salary": min_salary,
         "max_salary": max_salary,
@@ -1248,6 +1252,7 @@ def _trigger_requirement_text(s: Scenario) -> str:
     if idx == 35:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве.\n"
+            "Явно добавляй близость в тексте: например «примерно в 20-40 км от Москвы», «в ближнем пригороде Москвы», «недалеко от Москвы».\n"
             "Это допустимый пригород/ближняя локация, и кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
@@ -1417,7 +1422,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
 
     if idx == 35:
         parts.append(
-            "- Кандидат живет рядом с Москвой, но не в самой Москве: используй формулировки уровня «в Королеве/Химках/Подольске, это рядом с Москвой»."
+            "- Кандидат живет рядом с Москвой, но не в самой Москве: используй формулировки уровня «в Королеве, примерно в 25 км от Москвы» или «в ближнем пригороде Москвы, около 20 км»."
         )
         parts.append(
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
@@ -1552,13 +1557,36 @@ def _validate_trigger(
         return has_city and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
 
     if idx == 35:
-        nearby_moscow_markers = ["моск", "королев", "королёв", "химк", "подольск", "рядом", "пригород"]
-        return all(marker_condition for marker_condition in [
-            any(marker in m for marker in nearby_moscow_markers),
-            "моск" in m,
-            not _has_work_format_ready_marker(m),
-            not _has_work_format_negative_marker(m),
-        ])
+        suburb_markers = ["королев", "королёв", "химк", "подольск"]
+        proximity_markers = [
+            "рядом",
+            "пригород",
+            "недалеко",
+            "около",
+            "км",
+            "килом",
+            "не в самой москве",
+            "не в москве",
+        ]
+        exact_moscow_only_markers = [
+            "я в москве",
+            "живу в москве",
+            "нахожусь в москве",
+            "сейчас в москве",
+            "проживаю в москве",
+        ]
+        has_moscow = "моск" in m
+        has_nearby = any(marker in m for marker in suburb_markers) or any(marker in m for marker in proximity_markers)
+        is_exact_moscow_only = any(marker in m for marker in exact_moscow_only_markers) and not any(
+            marker in m for marker in suburb_markers + proximity_markers
+        )
+        return (
+            has_moscow
+            and has_nearby
+            and not is_exact_moscow_only
+            and not _has_work_format_ready_marker(m)
+            and not _has_work_format_negative_marker(m)
+        )
 
     if idx == 36:
         if not expected_location:
@@ -1769,9 +1797,9 @@ def _fallback_messages(
 
     if idx == 35:
         pool = [
-            "Я сейчас в Королеве, это рядом с Москвой.",
-            "Живу в Химках, это рядом с Москвой.",
-            "Я в Подольске, по сути рядом с Москвой.",
+            "Я сейчас в Королеве, это рядом с Москвой, примерно в 25 км.",
+            "Живу в Химках, это ближний пригород Москвы, около 20 км.",
+            "Я в Подольске, это недалеко от Москвы, примерно в 35 км.",
         ]
         return pool[:n]
 
@@ -1925,6 +1953,9 @@ def generate_candidate_messages_for_scenario(
     if scenario.index == 35:
         runtime_context_lines.append(
             "- ВАЖНО: кандидат должен быть рядом с Москвой, но не в самой Москве."
+        )
+        runtime_context_lines.append(
+            "- Явно укажи близость к Москве в самой реплике: например «примерно в 20-40 км от Москвы» или «в ближнем пригороде Москвы»."
         )
     if scenario.index == 36 and expected_location:
         runtime_context_lines.append(
