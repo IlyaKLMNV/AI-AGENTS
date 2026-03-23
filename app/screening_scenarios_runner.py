@@ -526,6 +526,64 @@ def _contains_salary_ultimatum(text: str) -> bool:
     return _has_any(text or "", SALARY_ULTIMATUM_MARKERS)
 
 
+def _safe_salary_expectation_value(dialog_context_meta: Optional[Dict[str, Any]] = None) -> int:
+    dialog_context_meta = dialog_context_meta or {}
+    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
+    max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
+
+    if min_salary is not None and max_salary is not None:
+        value = int((min_salary + max_salary) / 2)
+    elif max_salary is not None:
+        value = int(max_salary * 0.8)
+    elif min_salary is not None:
+        value = min_salary
+    else:
+        value = 250_000
+
+    value = max(50_000, int(round(value / 5_000) * 5_000))
+    if max_salary is not None:
+        value = min(value, max_salary)
+    return value
+
+
+def _has_salary_expectation_not_above_budget(
+    text: str,
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    dialog_context_meta = dialog_context_meta or {}
+    m = _normalize_text(text).lower()
+    max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
+
+    expectation_markers = [
+        "зарплат",
+        "по зарплате",
+        "по деньгам",
+        "по компенсации",
+        "компенсац",
+        "ориентир",
+        "ожидан",
+        "на руки",
+        "рассчитываю",
+    ]
+    if not _contains_any_substring(m, expectation_markers):
+        return False
+
+    numbers = re.findall(r"\b\d{2,3}(?:[ \u00A0]?\d{3})?\b", m)
+    numeric_values: List[int] = []
+    for token in numbers:
+        parsed = _parse_int_value(token)
+        if parsed is not None:
+            numeric_values.append(parsed)
+
+    if not numeric_values:
+        return False
+
+    if max_salary is not None and any(value > max_salary for value in numeric_values):
+        return False
+
+    return True
+
+
 def _canonical_work_format(work_format: str) -> str:
     low = (work_format or "").strip().lower()
     if "office" in low or "офис" in low:
@@ -807,6 +865,42 @@ def _location_keywords(location: str) -> List[str]:
     return [loc]
 
 
+def _nearby_city_variants(location: str) -> List[Dict[str, Any]]:
+    loc = (location or "").strip().lower()
+    if not loc:
+        return []
+    if "моск" in loc:
+        return [
+            {"name": "Королев", "markers": ["королев", "королёв"], "message": "Живу в Королеве"},
+            {"name": "Химки", "markers": ["химки", "химк"], "message": "Я в Химках"},
+            {"name": "Подольск", "markers": ["подольск"], "message": "Я из Подольска"},
+        ]
+    if "новосибир" in loc:
+        return [
+            {"name": "Бердск", "markers": ["бердск"], "message": "Живу в Бердске"},
+            {"name": "Обь", "markers": ["обь", "оби"], "message": "Я из Оби"},
+            {"name": "Краснообск", "markers": ["краснообск"], "message": "Я в Краснообске"},
+        ]
+    if "санкт" in loc or "петербург" in loc:
+        return [
+            {"name": "Мурино", "markers": ["мурино"], "message": "Живу в Мурино"},
+            {"name": "Кудрово", "markers": ["кудрово"], "message": "Я из Кудрово"},
+            {"name": "Пушкин", "markers": ["пушкин", "пушкине"], "message": "Я в Пушкине"},
+        ]
+    return []
+
+
+def _nearby_city_markers(location: str) -> List[str]:
+    markers: List[str] = []
+    for item in _nearby_city_variants(location):
+        markers.extend([str(marker).lower() for marker in item.get("markers", [])])
+    return markers
+
+
+def _nearby_city_names(location: str) -> List[str]:
+    return [str(item.get("name") or "").strip() for item in _nearby_city_variants(location) if str(item.get("name") or "").strip()]
+
+
 def _is_hidden_company_scenario(s: Scenario) -> bool:
     return s.index in (23, 24)
 
@@ -911,6 +1005,8 @@ def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
         "title": str(dialog_context_meta.get("title") or "").strip(),
         "company": company,
         "vacancy_url": str(dialog_context_meta.get("vacancy_url") or "").strip(),
+        "location": str(dialog_context_meta.get("location") or "").strip(),
+        "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
     }
 
 
@@ -1245,21 +1341,21 @@ def _trigger_requirement_text(s: Scenario) -> str:
 
     if idx == 34:
         return (
-            "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии.\n"
+            "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "При этом кандидат НЕ должен подтверждать готовность к офису/гибриду: это должен уточнить ассистент.\n"
         )
 
     if idx == 35:
         return (
-            "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве.\n"
-            "Явно добавляй близость в тексте: например «примерно в 20-40 км от Москвы», «в ближнем пригороде Москвы», «недалеко от Москвы».\n"
+            "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве, и сразу назвать зарплатные ожидания в рублях на руки.\n"
+            "Кандидат должен назвать конкретный город рядом с Москвой, без упоминания километров и без подтверждения готовности к офису/гибриду.\n"
             "Это допустимый пригород/ближняя локация, и кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
     if idx == 36:
         return (
-            "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с городом вакансии, но не в самом городе, "
-            "в пределах допустимого радиуса до 50 км.\n"
+            "В КАЖДОЙ реплике кандидат должен назвать конкретный город рядом с городом вакансии, но не сам город вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
+            "Не указывай километры и не пиши общими словами «рядом с городом вакансии».\n"
             "Кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
@@ -1417,12 +1513,21 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Кандидат уже находится в городе вакансии, но не подтверждает отдельно готовность к формату офис/гибрид."
         )
         parts.append(
+            "- Кандидат в этой же реплике уже отвечает и про зарплату: укажи конкретную сумму в рублях на руки, не выше верхней границы вилки вакансии."
+        )
+        parts.append(
             "- Формулировка должна оставить ассистенту необходимость отдельно спросить, подходит ли такой формат работы."
         )
 
     if idx == 35:
         parts.append(
-            "- Кандидат живет рядом с Москвой, но не в самой Москве: используй формулировки уровня «в Королеве, примерно в 25 км от Москвы» или «в ближнем пригороде Москвы, около 20 км»."
+            "- Кандидат должен назвать конкретный город рядом с Москвой: используй формулировки уровня «Живу в Королеве», «Я в Химках», «Я из Подольска»."
+        )
+        parts.append(
+            "- Кандидат в этой же реплике уже отвечает и про зарплату: укажи конкретную сумму в рублях на руки, не выше верхней границы вилки вакансии."
+        )
+        parts.append(
+            "- Не добавляй километры и не объясняй, что это рядом с Москвой: ассистент должен сам сделать этот вывод."
         )
         parts.append(
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
@@ -1430,7 +1535,13 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
 
     if idx == 36:
         parts.append(
-            "- Кандидат живет рядом с городом вакансии, но не в нем: явно укажи допустимую близость вроде «примерно в 30 км» или «рядом с городом вакансии»."
+            "- Кандидат должен назвать конкретный соседний город рядом с городом вакансии, но не сам город вакансии."
+        )
+        parts.append(
+            "- Кандидат в этой же реплике уже отвечает и про зарплату: укажи конкретную сумму в рублях на руки, не выше верхней границы вилки вакансии."
+        )
+        parts.append(
+            "- Не добавляй километры и не пиши общими словами «рядом с городом вакансии»: нужна именно конкретная локация кандидата."
         )
         parts.append(
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
@@ -1554,36 +1665,16 @@ def _validate_trigger(
             return False
         keywords = _location_keywords(expected_location)
         has_city = bool(keywords) and any(k in m for k in keywords)
-        return has_city and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
+        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
+        return has_city and has_salary and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
 
     if idx == 35:
-        suburb_markers = ["королев", "королёв", "химк", "подольск"]
-        proximity_markers = [
-            "рядом",
-            "пригород",
-            "недалеко",
-            "около",
-            "км",
-            "килом",
-            "не в самой москве",
-            "не в москве",
-        ]
-        exact_moscow_only_markers = [
-            "я в москве",
-            "живу в москве",
-            "нахожусь в москве",
-            "сейчас в москве",
-            "проживаю в москве",
-        ]
-        has_moscow = "моск" in m
-        has_nearby = any(marker in m for marker in suburb_markers) or any(marker in m for marker in proximity_markers)
-        is_exact_moscow_only = any(marker in m for marker in exact_moscow_only_markers) and not any(
-            marker in m for marker in suburb_markers + proximity_markers
-        )
+        suburb_markers = _nearby_city_markers("Москва")
+        has_nearby_city = any(marker in m for marker in suburb_markers)
+        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
         return (
-            has_moscow
-            and has_nearby
-            and not is_exact_moscow_only
+            has_nearby_city
+            and has_salary
             and not _has_work_format_ready_marker(m)
             and not _has_work_format_negative_marker(m)
         )
@@ -1591,10 +1682,15 @@ def _validate_trigger(
     if idx == 36:
         if not expected_location:
             return False
-        keywords = _location_keywords(expected_location)
-        has_location = bool(keywords) and any(k in m for k in keywords)
-        has_nearby = "рядом" in m or "км" in m or "килом" in m
-        return has_location and has_nearby and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
+        nearby_markers = _nearby_city_markers(expected_location)
+        has_nearby_city = bool(nearby_markers) and any(marker in m for marker in nearby_markers)
+        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
+        return (
+            has_nearby_city
+            and has_salary
+            and not _has_work_format_ready_marker(m)
+            and not _has_work_format_negative_marker(m)
+        )
 
     if idx == 37:
         return _is_office_or_hybrid_work_format(work_format) and _has_work_format_negative_marker(m)
@@ -1788,27 +1884,50 @@ def _fallback_messages(
 
     if idx == 34:
         city = expected_location.strip() or "город вакансии"
+        salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
         pool = [
-            f"Я сейчас в {city}.",
-            f"Мой текущий город — {city}.",
-            f"Нахожусь в {city}.",
+            f"Мой текущий город — {city}, по зарплате ориентируюсь на {salary_text} рублей на руки.",
+            f"По локации подхожу: текущий город {city}, по деньгам рассматриваю около {salary_text} на руки.",
+            f"Текущая локация — {city}, по компенсации ориентируюсь на {salary_text} рублей.",
         ]
         return pool[:n]
 
     if idx == 35:
+        salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
+        variants = _nearby_city_variants("Москва")
+        default_messages = [
+            "Живу в Королеве",
+            "Я в Химках",
+            "Я из Подольска",
+        ]
+        city_messages = [str(item.get("message") or "").strip() for item in variants if str(item.get("message") or "").strip()] or default_messages
         pool = [
-            "Я сейчас в Королеве, это рядом с Москвой, примерно в 25 км.",
-            "Живу в Химках, это ближний пригород Москвы, около 20 км.",
-            "Я в Подольске, это недалеко от Москвы, примерно в 35 км.",
+            f"{city_messages[0]}, по зарплате ориентируюсь на {salary_text} рублей на руки.",
+            f"{city_messages[1]}, по деньгам рассматриваю {salary_text} на руки.",
+            f"{city_messages[2]}, по компенсации ориентируюсь на {salary_text} рублей.",
         ]
         return pool[:n]
 
     if idx == 36:
         city = expected_location.strip() or "город вакансии"
+        salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
+        variants = _nearby_city_variants(expected_location)
+        fallback_variants = [
+            {"message": f"Живу в городе рядом с {city}"},
+            {"message": f"Я из соседнего города рядом с {city}"},
+            {"message": f"Моя локация — пригород рядом с {city}"},
+        ]
+        city_messages = [
+            str(item.get("message") or "").strip()
+            for item in (variants or fallback_variants)
+            if str(item.get("message") or "").strip()
+        ]
+        while len(city_messages) < 3:
+            city_messages.append(city_messages[-1])
         pool = [
-            f"Я рядом с городом вакансии — {city}, живу примерно в 30 км.",
-            f"Живу недалеко от {city}, около 25 км.",
-            f"Я не в самом {city}, но рядом, примерно в 40 км.",
+            f"{city_messages[0]}, по зарплате ориентируюсь на {salary_text} рублей на руки.",
+            f"{city_messages[1]}, по деньгам рассматриваю {salary_text} на руки.",
+            f"{city_messages[2]}, по компенсации ориентируюсь на {salary_text} рублей.",
         ]
         return pool[:n]
 
@@ -1950,17 +2069,29 @@ def generate_candidate_messages_for_scenario(
             runtime_context_lines.append(
                 f"- Формат работы для этого прогона: {_work_format_label(work_format)}."
             )
+    if scenario.index in (34, 35, 36):
+        target_salary = _safe_salary_expectation_value(dialog_context_meta)
+        runtime_context_lines.append(
+            f"- ВАЖНО: кандидат в этой же реплике уже отвечает и про зарплату: назови около {_format_int_with_spaces(target_salary)} рублей на руки, не выше верхней границы вилки."
+        )
     if scenario.index == 35:
+        nearby_names = _nearby_city_names("Москва")
         runtime_context_lines.append(
-            "- ВАЖНО: кандидат должен быть рядом с Москвой, но не в самой Москве."
+            "- ВАЖНО: кандидат должен назвать конкретный город рядом с Москвой, но не Москву."
         )
-        runtime_context_lines.append(
-            "- Явно укажи близость к Москве в самой реплике: например «примерно в 20-40 км от Москвы» или «в ближнем пригороде Москвы»."
-        )
+        if nearby_names:
+            runtime_context_lines.append(
+                f"- Используй один из конкретных городов: {', '.join(nearby_names)}. Не указывай километры."
+            )
     if scenario.index == 36 and expected_location:
+        nearby_names = _nearby_city_names(expected_location)
         runtime_context_lines.append(
-            f"- ВАЖНО: кандидат должен быть рядом с {expected_location}, но не в самом городе, в пределах 50 км."
+            f"- ВАЖНО: кандидат должен назвать конкретный город рядом с {expected_location}, но не сам {expected_location}."
         )
+        if nearby_names:
+            runtime_context_lines.append(
+                f"- Используй один из конкретных городов: {', '.join(nearby_names)}. Не указывай километры."
+            )
     if scenario.index == 37 and work_format:
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат должен явно отказаться работать в формате {_work_format_label(work_format)} и отказаться от переезда."
