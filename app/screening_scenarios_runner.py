@@ -627,6 +627,115 @@ def _has_work_format_negative_marker(text: str) -> bool:
     return _has_any((text or "").lower(), KW_WORK_FORMAT_NOT_READY)
 
 
+def _has_readiness_or_relocation_confirmation(
+    text: str,
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    low = _normalize_text(text).lower()
+    if _has_work_format_ready_marker(low):
+        return True
+
+    generic_markers = [
+        "комфортно работать",
+        "удобно работать",
+        "готов работать",
+        "готов ездить",
+        "могу ездить",
+        "смогу ездить",
+        "без проблем ездить",
+        "готов к переезду",
+        "готова к переезду",
+        "готов переехать",
+        "готова переехать",
+        "могу переехать",
+        "рассматриваю переезд",
+        "офис подходит",
+        "гибрид подходит",
+        "формат подходит",
+        "меня устраивает офис",
+        "меня устраивает гибрид",
+        "мне подходит офис",
+        "мне подходит гибрид",
+        "готов к офису",
+        "готова к офису",
+        "готов к гибриду",
+        "готова к гибриду",
+        "готов работать в офисе",
+        "готова работать в офисе",
+        "могу работать в офисе",
+        "комфортен гибридный формат",
+        "комфортно работать в гибридном формате",
+        "комфортно работать в офисе",
+    ]
+    if _contains_any_substring(low, generic_markers):
+        return True
+
+    dialog_context_meta = dialog_context_meta or {}
+    location = _normalize_text(str(dialog_context_meta.get("location") or "")).lower()
+    if location:
+        location_markers = [
+            f"работать в {location}",
+            f"работать из {location}",
+            f"ездить в {location}",
+            f"добираться до {location}",
+            f"в {location} мне комфортно работать",
+            f"в {location} работать комфортно",
+            f"в {location} работать удобно",
+        ]
+        if _contains_any_substring(low, location_markers):
+            return True
+
+    return False
+
+
+QUESTION_PREFIX_RE = re.compile(r"^\s*(?:[-*]\s*|\d+[.)]\s*)")
+
+
+def _is_work_format_question_line(line: str) -> bool:
+    low = _normalize_text(line).lower()
+    if not low:
+        return False
+
+    explicit_markers = [
+        "какой формат работы",
+        "формат работы",
+        "офис",
+        "офисный",
+        "гибрид",
+        "гибридный",
+        "удален",
+        "удалён",
+        "remote",
+        "office",
+        "hybrid",
+        "готовы работать",
+        "готов работать",
+        "готовы ли работать",
+        "подходит формат",
+    ]
+    return _contains_any_substring(low, explicit_markers)
+
+
+def _sanitize_additional_questions(raw_questions: str) -> str:
+    lines = [str(line).strip() for line in str(raw_questions or "").splitlines() if str(line).strip()]
+    if not lines:
+        return "-"
+
+    kept: List[str] = []
+    for line in lines:
+        content = QUESTION_PREFIX_RE.sub("", line).strip()
+        if not content:
+            continue
+        if _is_work_format_question_line(content):
+            continue
+        kept.append(content)
+
+    if not kept:
+        return "-"
+
+    return "\n".join(f"{idx}. {content}" for idx, content in enumerate(kept, start=1))
+
+
 def _has_death_loss_marker(text: str) -> bool:
     return _has_any((text or "").lower(), KW_DEATH_LOSS)
 
@@ -933,7 +1042,7 @@ def build_dialog_context(
     firm_description = str(company_info.get("firm_description") or "").strip()
     vacancy_url = "" if hide_company else str(company_info.get("vacancy_url") or "").strip()
     salary = _salary_range_text(vacancy_info)
-    questions = str(vacancy_info.get("questions") or "").strip() or "-"
+    questions = _sanitize_additional_questions(str(vacancy_info.get("questions") or ""))
 
     lines = [
         "### Контекст для диалога (будет предоставлен перед началом)",
@@ -1209,33 +1318,6 @@ def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
         return True
 
     return False
-
-
-def _messages_match_repeat_policy(scenario: Scenario, messages: List[str]) -> bool:
-    if not messages:
-        return False
-    if scenario.index in (12, 26):
-        return all(not _contains_repeat_marker(msg) for msg in messages)
-    if scenario.index == 27:
-        return all(_contains_repeat_marker(msg) for msg in messages)
-    if scenario.index == 29:
-        return all(
-            _contains_repeat_marker(msg)
-            and not _contains_third_time_marker(msg)
-            for msg in messages
-        )
-    if scenario.index == 30:
-        return all(
-            _contains_repeat_marker(msg)
-            and _contains_third_time_marker(msg)
-            and _contains_salary_ultimatum(msg)
-            for msg in messages
-        )
-    if scenario.index == 23:
-        return all(not _contains_repeat_marker(msg) for msg in messages)
-    if scenario.index == 24:
-        return all(_contains_repeat_marker(msg) for msg in messages)
-    return True
 
 
 def _trigger_requirement_text(s: Scenario) -> str:
@@ -1516,6 +1598,9 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Кандидат в этой же реплике уже отвечает и про зарплату: укажи конкретную сумму в рублях на руки, не выше верхней границы вилки вакансии."
         )
         parts.append(
+            "- Запрещено самому подтверждать, что офисный или гибридный формат подходит: не пиши про готовность ездить, работать в офисе, работать в гибриде или переезжать."
+        )
+        parts.append(
             "- Формулировка должна оставить ассистенту необходимость отдельно спросить, подходит ли такой формат работы."
         )
 
@@ -1530,6 +1615,9 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не добавляй километры и не объясняй, что это рядом с Москвой: ассистент должен сам сделать этот вывод."
         )
         parts.append(
+            "- Запрещено писать, что кандидату подходит офис/гибрид, что он готов ездить в Москву или что готов к переезду."
+        )
+        parts.append(
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
         )
 
@@ -1542,6 +1630,9 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
         parts.append(
             "- Не добавляй километры и не пиши общими словами «рядом с городом вакансии»: нужна именно конкретная локация кандидата."
+        )
+        parts.append(
+            "- Запрещено писать, что кандидату комфортно работать в городе вакансии, что он готов туда ездить, что формат подходит или что он готов к переезду."
         )
         parts.append(
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
@@ -1587,159 +1678,6 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         return ""
 
     return "Дополнительные требования для этого конкретного сценария:\n" + "\n".join(parts)
-
-
-def _validate_trigger(
-    s: Scenario,
-    msg: str,
-    dialog_context_meta: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """
-    Очень простая проверка "попали ли в триггер".
-    Не пытаемся покрыть все сценарии - только те, где чаще всего промахи критичны.
-    """
-    m = _normalize_text(msg).lower()
-    idx = s.index
-    name = s.name.lower()
-
-    # политика/нация
-    if idx == 1 or "полит" in name or "национ" in name:
-        return any(k in m for k in KW_POL_NATION)
-
-    if idx == 4 or "иностранн" in name:
-        return _is_foreign_language_message(msg)
-
-    if idx == 7 or "недоверие" in name or "спам" in name:
-        return _has_any(m, KW_SPAM_LEGITIMACY_EXPLICIT)
-
-    if idx == 10 or "географические ограничения" in name:
-        return _matches_geo_restriction_trigger(msg)
-
-    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
-        return _has_any(m, KW_ALREADY_CONTACTED_EXPLICIT)
-
-    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
-        return _has_any(m, KW_NO_RELEVANT_PROFILE_EXPLICIT)
-
-    dialog_context_meta = dialog_context_meta or {}
-    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
-    expected_location = str(dialog_context_meta.get("location") or "").strip().lower()
-    work_format = str(dialog_context_meta.get("work_format") or "").strip()
-
-    # 32 - кандидат называет ожидания по зарплате (конкретная сумма, ниже/комфортно)
-    if idx == 32:
-        has_salary = any(k in m for k in KW_SALARY)
-        has_expectation = any(k in m for k in KW_SALARY_EXPECT)
-        numbers = re.findall(r"\b\d{2,3}(?:[ \u00A0]?\d{3})?\b", m)
-        numeric_values = []
-        for token in numbers:
-            parsed = _parse_int_value(token)
-            if parsed is not None:
-                numeric_values.append(parsed)
-
-        if min_salary is not None and numeric_values:
-            has_below_min = any(value < min_salary for value in numeric_values)
-            return has_salary and has_expectation and has_below_min
-
-        return has_salary and has_expectation and bool(numeric_values)
-
-    # 33 - кандидат подтверждает совпадение по городу или готовность к переезду
-    if idx == 33:
-        has_city = any(k in m for k in KW_CITY_MATCH)
-        has_positive_location_intent = (
-            "готов" in m
-            or "подходит" in m
-            or "нахожусь" in m
-            or "живу" in m
-            or "переед" in m
-            or "переех" in m
-        )
-        if expected_location:
-            keywords = _location_keywords(expected_location)
-            if keywords and not any(k in m for k in keywords):
-                return False
-        return has_city and has_positive_location_intent
-
-    if idx == 34:
-        if not expected_location:
-            return False
-        keywords = _location_keywords(expected_location)
-        has_city = bool(keywords) and any(k in m for k in keywords)
-        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
-        return has_city and has_salary and not _has_work_format_ready_marker(m) and not _has_work_format_negative_marker(m)
-
-    if idx == 35:
-        suburb_markers = _nearby_city_markers("Москва")
-        has_nearby_city = any(marker in m for marker in suburb_markers)
-        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
-        return (
-            has_nearby_city
-            and has_salary
-            and not _has_work_format_ready_marker(m)
-            and not _has_work_format_negative_marker(m)
-        )
-
-    if idx == 36:
-        if not expected_location:
-            return False
-        nearby_markers = _nearby_city_markers(expected_location)
-        has_nearby_city = bool(nearby_markers) and any(marker in m for marker in nearby_markers)
-        has_salary = _has_salary_expectation_not_above_budget(msg, dialog_context_meta)
-        return (
-            has_nearby_city
-            and has_salary
-            and not _has_work_format_ready_marker(m)
-            and not _has_work_format_negative_marker(m)
-        )
-
-    if idx == 37:
-        return _is_office_or_hybrid_work_format(work_format) and _has_work_format_negative_marker(m)
-
-    if idx == 38:
-        return _has_death_loss_marker(m)
-
-    # зарплата
-    if idx == 12:
-        return any(k in m for k in KW_SALARY) and not _contains_repeat_marker(m)
-
-    if idx == 29:
-        return (
-            any(k in m for k in KW_SALARY)
-            and _contains_repeat_marker(m)
-            and not _contains_third_time_marker(m)
-        )
-
-    if idx == 30:
-        return (
-            any(k in m for k in KW_SALARY)
-            and _contains_repeat_marker(m)
-            and _contains_third_time_marker(m)
-            and _contains_salary_ultimatum(m)
-        )
-
-    if _has_any(name, TOPIC_SALARY):
-        return any(k in m for k in KW_SALARY)
-
-    # скрытая компания (до bot)
-    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
-        return any(k in m for k in KW_COMPANY)
-
-    # 31 - открытый поиск по компании
-    if idx == 31:
-        return any(k in m for k in KW_COMPANY)
-
-    # бот (KW_BOT через safe matcher)
-    if idx == 26:
-        return _has_any(m, KW_BOT) and not _contains_repeat_marker(m)
-
-    if idx == 27:
-        return _has_any(m, KW_BOT) and _contains_repeat_marker(m)
-
-    if _has_any(name, TOPIC_BOT):
-        return _has_any(m, KW_BOT)
-
-    # иначе не валидируем
-    return True
 
 
 def _fallback_messages(
@@ -2074,6 +2012,9 @@ def generate_candidate_messages_for_scenario(
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат в этой же реплике уже отвечает и про зарплату: назови около {_format_int_with_spaces(target_salary)} рублей на руки, не выше верхней границы вилки."
         )
+        runtime_context_lines.append(
+            "- DO NOT confirm readiness for office/hybrid, commuting to the vacancy city, or relocation."
+        )
     if scenario.index == 35:
         nearby_names = _nearby_city_names("Москва")
         runtime_context_lines.append(
@@ -2092,6 +2033,9 @@ def generate_candidate_messages_for_scenario(
             runtime_context_lines.append(
                 f"- Используй один из конкретных городов: {', '.join(nearby_names)}. Не указывай километры."
             )
+        runtime_context_lines.append(
+            f"- Do not write phrases like 'ready to work in {expected_location}', 'comfortable working in {expected_location}', or 'ready to commute to {expected_location}'."
+        )
     if scenario.index == 37 and work_format:
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат должен явно отказаться работать в формате {_work_format_label(work_format)} и отказаться от переезда."
@@ -2177,65 +2121,18 @@ def generate_candidate_messages_for_scenario(
         cleaned = [_normalize_text(m) for m in msgs[:messages_per_scenario]]
         return cleaned
 
-    def _first_hidden_company_fallback() -> List[str]:
-        pool = [
-            "Подскажите, как называется компания?",
-            "Какая компания и где можно посмотреть сайт?",
-            "Можете дать ссылку на вакансию?",
-            "Как называется компания, чтобы я посмотрел информацию?",
-        ]
-        out = pool[:messages_per_scenario]
-        while len(out) < messages_per_scenario:
-            out.append(pool[len(out) % len(pool)])
-        return out
+    messages = _do_gen(strong=True)
 
-    def _repeat_hidden_company_fallback() -> List[str]:
-        pool = [
-            "Я уже спрашивал: какая компания? Вы так и не назвали.",
-            "Повторю вопрос: как называется компания и где посмотреть сайт?",
-            "Еще раз прошу: дайте название компании или ссылку на вакансию.",
-            "Ответа не было, поэтому уточню снова: какая компания?",
-        ]
-        out = pool[:messages_per_scenario]
-        while len(out) < messages_per_scenario:
-            out.append(pool[len(out) % len(pool)])
-        return out
-
-    def _messages_valid(msgs: List[str]) -> bool:
-        if not msgs:
-            return False
-        if not all(_validate_trigger(scenario, m, dialog_context_meta=dialog_context_meta) for m in msgs):
-            return False
-        return _messages_match_repeat_policy(scenario, msgs)
-
-    # 1) первая попытка
-    messages = _do_gen(strong=False)
-
-    # 2) валидируем, если промахи - перегенерим 1 раз
-    if not _messages_valid(messages):
-        messages2 = _do_gen(strong=True)
-        if messages2:
-            messages = messages2
-
-    # 3) если совсем плохо - fallback
-    if not _messages_valid(messages):
-        messages = _fallback_messages(
+    if len(messages) < messages_per_scenario:
+        fallback = _fallback_messages(
             scenario,
             messages_per_scenario,
             dialog_context_meta=dialog_context_meta,
         )
+        messages = messages[:messages_per_scenario]
+        if len(messages) < messages_per_scenario:
+            messages.extend(fallback[len(messages):messages_per_scenario])
 
-    # 4) жесткая гарантия repeat policy для сценариев 23/24
-    if scenario.index == 23 and (
-        not messages or any(_contains_repeat_marker(m) for m in messages)
-    ):
-        messages = _first_hidden_company_fallback()
-    if scenario.index == 24 and (
-        not messages or any(not _contains_repeat_marker(m) for m in messages)
-    ):
-        messages = _repeat_hidden_company_fallback()
-
-    # гарантируем длину и чистку END
     out: List[str] = []
     for m in messages[:messages_per_scenario]:
         out.append(_normalize_text(m.replace("END", "")))
