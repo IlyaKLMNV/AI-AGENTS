@@ -82,21 +82,30 @@ python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
 
 ### `app/screening_scenarios_runner.py` — сценарии для `screening_assistant`
 Как работает:
-- Читает CSV со сценариями, группирует одиночные и цепочные сценарии.
-- Загружает вакансии из `tests/fixtures/cdm/*.json` и передает в prompt контекст вакансии (имя рекрутера/кандидата, роль, компания, обязанности, формат, описание, ссылка, salary, вопросы).
+- Читает `tests/fixtures/screening_scenarios.csv`, поддерживает одиночные сценарии и chain-сценарии.
+- Chain-группы зашиты в коде: `chain_salary_3x = [12,29,30]`, `chain_bot_check = [26,27]`, `chain_company_hidden = [23,24]`.
+- Загружает вакансии из `tests/fixtures/cdm/*.json` и распределяет их по кейсам в режиме `round_robin_by_case`.
+- Передает в prompt реальный контекст вакансии: `recruiter_name`, `candidate_name`, `title`, `company_name`, `responsibilities`, `work_format`, `location`, `firm_description`, `vacancy_url`, `salary`, `questions`.
+- `work_format` в контекст прокидывается как raw backend value: `office`, `hybrid`, `remote`.
+- Для сценариев `23/24` принудительно включается скрытый поиск: в контексте `Название компании: СКРЫТО`, `vacancy_url` очищается. Для открытого кейса `31` компания не скрывается.
+- Генерирует реплики кандидата по сценарию, получает ответы `screening_assistant` и валидирует их через LLM-судью и набор deterministic-checks для критичных кейсов.
 - CSV ожидает колонки: `Название сценария`, `Краткое описание сценария`, поле с ожидаемым поведением и поле с примерами диалогов.
-- Генерирует реплики кандидата и получает ответы `screening_assistant`.
-- Для сценариев `23/24` (скрытый поиск) принудительно подставляет `Компания: СКРЫТО` в передаваемый контекст.
-- Оценивает соответствие ожидаемому поведению через LLM-судью.
 
 Запуск:
 ```bash
 python -m app.screening_scenarios_runner \
   --csv-path tests/fixtures/screening_scenarios.csv \
   --cdm-dir tests/fixtures/cdm \
-  --scenario-indices 23,24 \
-  --messages-per-scenario 3 \
-  --max-scenarios 20
+  --messages-per-scenario 3
+```
+
+Точечный прогон:
+```bash
+python -m app.screening_scenarios_runner \
+  --csv-path tests/fixtures/screening_scenarios.csv \
+  --cdm-dir tests/fixtures/cdm \
+  --scenario-indices 23,24,31 \
+  --messages-per-scenario 3
 ```
 
 Параметры:
@@ -108,6 +117,9 @@ python -m app.screening_scenarios_runner \
 
 Отчеты:
 - `tests/reports/screening_scenarios/screening_scenarios_report_<timestamp>.json`
+- Структура отчета компактная: top-level `summary`, `cases`, `mismatches`.
+- `cases` хранит подробности по single/chain-кейсам, `mismatches` — только неуспешные кейсы/раны для быстрого просмотра.
+- Вместо полного dialog-context в отчет пишется сокращенный `vacancy_ref`: `title`, `company`, `vacancy_url`, `location`, `work_format`.
 
 ### `app/extractor_agent_runner.py` — тест пайплайна AI Search (`step1/2/3`)
 Как работает:
