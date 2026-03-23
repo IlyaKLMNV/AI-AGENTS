@@ -2401,7 +2401,7 @@ def _asks_work_format_readiness(
     dialog_context_meta: Dict[str, Any],
 ) -> bool:
     low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply):
+    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
         return False
 
     readiness_markers = [
@@ -2411,6 +2411,19 @@ def _asks_work_format_readiness(
         "сможете",
         "удобно",
         "комфортно",
+        "рассматриваете",
+        "рассматриваете ли",
+        "рассмотреть",
+        "есть ли возможность",
+        "есть возможность",
+        "возможность ездить",
+        "возможность бывать",
+        "возможность присутствовать",
+        "частичное присутствие",
+        "частичным присутствием",
+        "бывать в офисе",
+        "ездить в офис",
+        "присутствовать в офисе",
         "такой формат",
         "формат работы",
     ]
@@ -2430,6 +2443,16 @@ def _asks_work_format_readiness(
         "фиксированная локация",
         "важно находиться",
     ]
+    readiness_context_markers = [
+        "работу в",
+        "работать в",
+        "работы",
+        "в офисе",
+        "в офис",
+        "в гибридном формате",
+        "гибридном формате",
+        "присутствием в офисе",
+    ]
     work_format = str(dialog_context_meta.get("work_format") or "").strip()
     canonical = _canonical_work_format(work_format)
     if canonical == "office":
@@ -2438,9 +2461,9 @@ def _asks_work_format_readiness(
         format_markers.append("гибридный")
 
     return (
-        "?" in (reply or "")
-        and _contains_any_substring(low, readiness_markers)
+        _contains_any_substring(low, readiness_markers)
         and _contains_any_substring(low, format_markers)
+        and _contains_any_substring(low, readiness_context_markers)
         and not _contains_any_substring(low, hard_stop_markers)
     )
 
