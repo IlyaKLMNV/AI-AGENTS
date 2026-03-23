@@ -817,7 +817,7 @@ def _fixture_matches_group_requirements(
     work_format = str(vacancy_info.get("work_format") or "").strip()
     location = str(vacancy_info.get("location") or "").strip().lower()
 
-    if _group_has_any_scenario(group, [34, 35, 36, 37]):
+    if _group_has_any_scenario(group, [34, 35, 36, 37, 39]):
         if not _is_office_or_hybrid_work_format(work_format):
             return False
 
@@ -1008,6 +1008,39 @@ def _nearby_city_markers(location: str) -> List[str]:
 
 def _nearby_city_names(location: str) -> List[str]:
     return [str(item.get("name") or "").strip() for item in _nearby_city_variants(location) if str(item.get("name") or "").strip()]
+
+
+def _far_city_variants(location: str) -> List[Dict[str, Any]]:
+    loc = (location or "").strip().lower()
+    if not loc:
+        return []
+    if "моск" in loc:
+        return [
+            {"name": "Новосибирск", "message": "Я сейчас в Новосибирске"},
+            {"name": "Екатеринбург", "message": "Живу в Екатеринбурге"},
+            {"name": "Казань", "message": "Я из Казани"},
+        ]
+    if "новосибир" in loc:
+        return [
+            {"name": "Москва", "message": "Я сейчас в Москве"},
+            {"name": "Санкт-Петербург", "message": "Живу в Санкт-Петербурге"},
+            {"name": "Казань", "message": "Я из Казани"},
+        ]
+    if "санкт" in loc or "петербург" in loc:
+        return [
+            {"name": "Новосибирск", "message": "Я сейчас в Новосибирске"},
+            {"name": "Екатеринбург", "message": "Живу в Екатеринбурге"},
+            {"name": "Казань", "message": "Я из Казани"},
+        ]
+    return [
+        {"name": "Москва", "message": "Я сейчас в Москве"},
+        {"name": "Санкт-Петербург", "message": "Живу в Санкт-Петербурге"},
+        {"name": "Новосибирск", "message": "Я из Новосибирска"},
+    ]
+
+
+def _far_city_names(location: str) -> List[str]:
+    return [str(item.get("name") or "").strip() for item in _far_city_variants(location) if str(item.get("name") or "").strip()]
 
 
 def _is_hidden_company_scenario(s: Scenario) -> bool:
@@ -1452,6 +1485,11 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "В КАЖДОЙ реплике кандидат должен явно упоминать смерть, утрату, похороны или покойного человека.\n"
         )
 
+    if idx == 39:
+        return (
+            "В КАЖДОЙ реплике кандидат должен назвать конкретный город, который явно далеко от города вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
+        )
+
     if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен явно показать, что профиль не подходит целиком, а не что не хватает одной узкой технологии.\n"
@@ -1652,6 +1690,17 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
         parts.append(
             "- Не смешивай это с другими триггерами: основной смысл реплики должен быть именно про утрату."
+        )
+
+    if idx == 39:
+        parts.append(
+            "- Кандидат должен назвать конкретный город, который явно далеко от города вакансии."
+        )
+        parts.append(
+            "- Кандидат в этой же реплике уже отвечает и про зарплату: укажи конкретную сумму в рублях на руки, не выше верхней границы вилки вакансии."
+        )
+        parts.append(
+            "- Никаких дополнительных пояснений не добавляй: только текущий город кандидата и зарплатные ожидания."
         )
 
     if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
@@ -1887,6 +1936,19 @@ def _fallback_messages(
         ]
         return pool[:n]
 
+    if idx == 39:
+        salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
+        variants = _far_city_variants(expected_location)
+        city_messages = [str(item.get("message") or "").strip() for item in variants if str(item.get("message") or "").strip()]
+        while len(city_messages) < 3:
+            city_messages.append(city_messages[-1] if city_messages else "Я сейчас в другом городе")
+        pool = [
+            f"{city_messages[0]}, по зарплате ориентируюсь на {salary_text} рублей на руки.",
+            f"{city_messages[1]}, по деньгам рассматриваю {salary_text} на руки.",
+            f"{city_messages[2]}, по компенсации ориентируюсь на {salary_text} рублей.",
+        ]
+        return pool[:n]
+
     if idx in (23, 24) or ("скрытом" in name and "компан" in name):
         if idx == 23:
             pool = [
@@ -1998,7 +2060,7 @@ def generate_candidate_messages_for_scenario(
         runtime_context_lines.append(
             f"- ВАЖНО: в каждой реплике явно укажи {expected_location} или готовность переехать в {expected_location}."
         )
-    if scenario.index in (34, 35, 36, 37):
+    if scenario.index in (34, 35, 36, 37, 39):
         if expected_location:
             runtime_context_lines.append(
                 f"- Локация вакансии для этого прогона: {expected_location}."
@@ -2007,7 +2069,7 @@ def generate_candidate_messages_for_scenario(
             runtime_context_lines.append(
                 f"- Формат работы для этого прогона: {_work_format_label(work_format)}."
             )
-    if scenario.index in (34, 35, 36):
+    if scenario.index in (34, 35, 36, 39):
         target_salary = _safe_salary_expectation_value(dialog_context_meta)
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат в этой же реплике уже отвечает и про зарплату: назови около {_format_int_with_spaces(target_salary)} рублей на руки, не выше верхней границы вилки."
@@ -2035,6 +2097,18 @@ def generate_candidate_messages_for_scenario(
             )
         runtime_context_lines.append(
             f"- Do not write phrases like 'ready to work in {expected_location}', 'comfortable working in {expected_location}', or 'ready to commute to {expected_location}'."
+        )
+    if scenario.index == 39 and expected_location:
+        far_names = _far_city_names(expected_location)
+        runtime_context_lines.append(
+            f"- ВАЖНО: кандидат должен назвать конкретный город, который явно далеко от {expected_location}."
+        )
+        if far_names:
+            runtime_context_lines.append(
+                f"- Используй один из конкретных городов: {', '.join(far_names)}."
+            )
+        runtime_context_lines.append(
+            "- Keep the reply minimal: only the current city and salary expectations."
         )
     if scenario.index == 37 and work_format:
         runtime_context_lines.append(
@@ -2101,7 +2175,7 @@ def generate_candidate_messages_for_scenario(
     }
     if examples:
         payload_obj["candidate_examples"] = examples
-    if scenario.index in (32, 33, 34, 35, 36, 37):
+    if scenario.index in (32, 33, 34, 35, 36, 37, 39):
         payload_obj["vacancy_context_for_generation"] = {
             "location": expected_location,
             "min_salary": min_salary,
@@ -2705,10 +2779,10 @@ def enforce_prompt_v2_turn_rules(
             return 1, f"Prompt v2 office/hybrid rule passed: scenario {idx} asks about readiness for the work format."
         return 0, f"Prompt v2 office/hybrid rule failed: scenario {idx} must continue and explicitly ask about readiness for office/hybrid format."
 
-    if idx == 37:
+    if idx in (37, 39):
         if _is_location_or_format_refusal_reply(assistant_reply, dialog_context_meta):
-            return 1, "Prompt v2 office/hybrid KO rule passed: assistant rejects due to incompatible office/hybrid format."
-        return 0, "Prompt v2 office/hybrid KO rule failed: scenario 37 must end with a location/work-format refusal and END."
+            return 1, f"Prompt v2 office/hybrid KO rule passed: scenario {idx} rejects due to incompatible location/work format."
+        return 0, f"Prompt v2 office/hybrid KO rule failed: scenario {idx} must end with a location/work-format refusal and END."
 
     if idx == 38:
         if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT):
