@@ -1392,10 +1392,22 @@ def _trigger_requirement_text(s: Scenario) -> str:
         )
 
     # 12/29/30 - про зарплату
-    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
+    if idx == 12 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
-            "Если это повтор/третий раз - явно укажи, что кандидат уже спрашивал и ответа не получил.\n"
+            "Это ПЕРВЫЙ запрос: запрещены маркеры повторности вроде «я уже спрашивал», «повторяю вопрос», «вы так и не ответили».\n"
+        )
+
+    if idx == 29 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
+        return (
+            "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
+            "Это ПОВТОРНЫЙ запрос: обязательно укажи, что кандидат уже спрашивал и ответа не получил.\n"
+        )
+
+    if idx == 30 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
+        return (
+            "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
+            "Это ТРЕТИЙ запрос: обязательно укажи, что кандидат уже несколько раз спрашивал и ответа не было.\n"
         )
 
     # 31 - компания при открытом поиске
@@ -2586,16 +2598,6 @@ def _asks_relocation_and_office_visit(
         "присутств",
         "выходить",
     ]
-    hard_stop_markers = [
-        "к сожалению",
-        "не подойд",
-        "не подход",
-        "вынужден",
-        "вынуждены",
-        "фиксированная локация",
-        "важно находиться",
-    ]
-
     has_location = True if not location_markers else _contains_any_substring(low, location_markers)
 
     return (
@@ -2603,7 +2605,6 @@ def _asks_relocation_and_office_visit(
         and _contains_any_substring(low, relocation_markers)
         and _contains_any_substring(low, readiness_markers)
         and _contains_any_substring(low, office_markers)
-        and not _contains_any_substring(low, hard_stop_markers)
     )
 
 
@@ -2724,6 +2725,8 @@ def _is_hidden_company_reply_valid(
     vacancy_url = str(dialog_context_meta.get("vacancy_url") or "").strip().lower()
     hidden_markers = [
         "\u0441\u043a\u0440\u044b\u0442\u044b\u0439 \u043f\u043e\u0438\u0441\u043a",
+        "\u043d\u0435 \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0441\u044f",
+        "\u043d\u0435 \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430",
         "\u043d\u0435 \u043c\u043e\u0433\u0443 \u0440\u0430\u0441\u043a\u0440\u044b\u0442\u044c",
         "\u043d\u0435 \u043c\u043e\u0433\u0443 \u043d\u0430\u0437\u0432\u0430\u0442\u044c",
         "\u043d\u0435 \u043c\u043e\u0433\u0443 \u043f\u0440\u0435\u0434\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443",
@@ -2748,8 +2751,10 @@ def _is_hidden_company_reply_valid(
 def _is_open_company_reply_valid(
     reply: str,
     dialog_context_meta: Dict[str, Any],
+    candidate_message: str = "",
 ) -> bool:
     low = (reply or "").lower()
+    candidate_low = (candidate_message or "").lower()
     company_name = (
         str(dialog_context_meta.get("original_company_name") or "").strip()
         or str(dialog_context_meta.get("company_name") or "").strip()
@@ -2757,12 +2762,33 @@ def _is_open_company_reply_valid(
     title = str(dialog_context_meta.get("title") or "").strip().lower()
     work_format = str(dialog_context_meta.get("work_format") or "").strip().lower()
     vacancy_url = str(dialog_context_meta.get("vacancy_url") or "").strip().lower()
+    location = str(dialog_context_meta.get("location") or "").strip().lower()
+    location_markers = _location_keywords(location)
+    canonical = _canonical_work_format(work_format)
+    company_requested = _contains_any_substring(
+        candidate_low,
+        ["компан", "работодател", "фирм", "кто вы", "название компании"],
+    )
+    hidden_search_markers = [
+        "скрытый поиск",
+        "компания не раскрывается",
+        "не могу раскрыть компанию",
+        "не могу назвать компанию",
+    ]
 
     has_company = bool(company_name and company_name in low)
-    has_title = bool(title and title in low) or "\u043f\u043e\u0437\u0438\u0446\u0438\u044f:" in low
-    has_work_format = bool(work_format and work_format in low) or "\u0444\u043e\u0440\u043c\u0430\u0442 \u0440\u0430\u0431\u043e\u0442\u044b:" in low
-    has_tasks = "\u043a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u0437\u0430\u0434\u0430\u0447\u0438:" in low
-    has_url = not vacancy_url or vacancy_url in low or "\u043f\u043e\u0434\u0440\u043e\u0431\u043d\u0435\u0435:" in low
+    has_title = bool(title and title in low) or _contains_any_substring(low, ["позици", "ваканси", "роль"])
+    if canonical == "office":
+        has_work_format = _contains_any_substring(low, ["офис", "office", "офисный"])
+    elif canonical == "hybrid":
+        has_work_format = _contains_any_substring(low, ["гибрид", "hybrid", "гибридный"])
+    elif canonical == "remote":
+        has_work_format = _contains_any_substring(low, ["удален", "удалён", "remote"])
+    else:
+        has_work_format = bool(work_format and work_format in low)
+    has_location = True if not location_markers else _contains_any_substring(low, location_markers)
+    has_tasks = _contains_any_substring(low, ["основные задачи", "ключевые задачи", "задачи", "обязанност", "требован"])
+    has_url = bool(vacancy_url and vacancy_url in low)
     continues = "?" in (reply or "") or _contains_any_substring(
         low,
         [
@@ -2771,8 +2797,15 @@ def _is_open_company_reply_valid(
             "\u0432 \u043a\u0430\u043a\u043e\u043c \u0433\u043e\u0440\u043e\u0434\u0435",
         ],
     )
+    fact_count = sum(int(flag) for flag in [has_company, has_title, has_work_format, has_location, has_tasks, has_url])
 
-    return has_company and has_title and has_work_format and has_tasks and has_url and continues
+    return (
+        not _reply_has_end_marker(reply)
+        and not _contains_any_substring(low, hidden_search_markers)
+        and continues
+        and fact_count >= 2
+        and (not company_requested or has_company)
+    )
 
 
 def enforce_prompt_v2_turn_rules(
@@ -2835,7 +2868,7 @@ def enforce_prompt_v2_turn_rules(
         return 0, "Prompt v2 vacancy-info rule failed: compensation/conditions question should not force the old company-info script."
 
     if idx == 28:
-        if _is_open_company_reply_valid(assistant_reply, dialog_context_meta):
+        if _is_open_company_reply_valid(assistant_reply, dialog_context_meta, candidate_message):
             return 1, "Prompt v2 vacancy-info rule passed: open company info is shared and the dialogue continues."
         return 0, "Prompt v2 vacancy-info rule failed: scenario 28 should provide open company/vacancy info and continue."
 
