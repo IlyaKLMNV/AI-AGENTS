@@ -2542,6 +2542,71 @@ def _asks_work_format_readiness(
     )
 
 
+def _asks_relocation_and_office_visit(
+    reply: str,
+    dialog_context_meta: Dict[str, Any],
+) -> bool:
+    low = (reply or "").lower()
+    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
+        return False
+
+    location = str(dialog_context_meta.get("location") or "").strip()
+    location_markers = _location_keywords(location)
+    relocation_markers = [
+        "переезд",
+        "переезду",
+        "переехать",
+        "переехать в",
+        "релокац",
+        "перебраться",
+    ]
+    readiness_markers = [
+        "готов",
+        "готовы",
+        "сможете",
+        "рассматриваете",
+        "рассматриваете ли",
+        "есть ли возможность",
+        "есть возможность",
+        "возможность",
+        "получится",
+        "получится ли",
+        "удобно",
+        "комфортно",
+    ]
+    office_markers = [
+        "офис",
+        "office",
+        "в офис",
+        "в офисе",
+        "офисный",
+        "посещ",
+        "ездить",
+        "бывать",
+        "присутств",
+        "выходить",
+    ]
+    hard_stop_markers = [
+        "к сожалению",
+        "не подойд",
+        "не подход",
+        "вынужден",
+        "вынуждены",
+        "фиксированная локация",
+        "важно находиться",
+    ]
+
+    has_location = True if not location_markers else _contains_any_substring(low, location_markers)
+
+    return (
+        has_location
+        and _contains_any_substring(low, relocation_markers)
+        and _contains_any_substring(low, readiness_markers)
+        and _contains_any_substring(low, office_markers)
+        and not _contains_any_substring(low, hard_stop_markers)
+    )
+
+
 def _is_location_or_format_refusal_reply(
     reply: str,
     dialog_context_meta: Dict[str, Any],
@@ -2779,10 +2844,15 @@ def enforce_prompt_v2_turn_rules(
             return 1, f"Prompt v2 office/hybrid rule passed: scenario {idx} asks about readiness for the work format."
         return 0, f"Prompt v2 office/hybrid rule failed: scenario {idx} must continue and explicitly ask about readiness for office/hybrid format."
 
-    if idx in (37, 39):
+    if idx == 39:
+        if _asks_relocation_and_office_visit(assistant_reply, dialog_context_meta):
+            return 1, "Prompt v2 office/hybrid rule passed: scenario 39 asks about relocation to the vacancy city and office attendance."
+        return 0, "Prompt v2 office/hybrid rule failed: scenario 39 must continue and ask about relocation to the vacancy city and office attendance."
+
+    if idx == 37:
         if _is_location_or_format_refusal_reply(assistant_reply, dialog_context_meta):
-            return 1, f"Prompt v2 office/hybrid KO rule passed: scenario {idx} rejects due to incompatible location/work format."
-        return 0, f"Prompt v2 office/hybrid KO rule failed: scenario {idx} must end with a location/work-format refusal and END."
+            return 1, "Prompt v2 office/hybrid KO rule passed: scenario 37 rejects due to incompatible location/work format."
+        return 0, "Prompt v2 office/hybrid KO rule failed: scenario 37 must end with a location/work-format refusal and END."
 
     if idx == 38:
         if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT):
