@@ -129,6 +129,21 @@ def _split_list_like(s: Optional[str]) -> List[str]:
     return out
 
 
+def _report_path(path: pathlib.Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def _extract_raw_vacancy_title(raw_vacancy: str) -> Optional[str]:
+    for line in str(raw_vacancy or "").splitlines():
+        title = line.strip()
+        if title:
+            return title
+    return None
+
+
 def _norm_key(s: str) -> str:
     """
     Normalization for matching. Makes CI/CD and cicd comparable, ignores punctuation.
@@ -143,9 +158,87 @@ def _norm_key(s: str) -> str:
     return t
 
 
+def _soft_word_key(word: str) -> str:
+    t = (word or "").strip().lower()
+    if not t:
+        return ""
+    t = t.replace("ё", "е")
+    t = t.replace("–", "-").replace("—", "-")
+    t = re.sub(r"[^a-z0-9а-я]+", "", t, flags=re.IGNORECASE)
+    if not t:
+        return ""
+
+    english_suffixes = ("ings", "ing", "ers", "ies", "es", "s")
+    russian_suffixes = (
+        "иями",
+        "ями",
+        "ами",
+        "ого",
+        "ему",
+        "ому",
+        "ыми",
+        "ими",
+        "его",
+        "ией",
+        "ий",
+        "ый",
+        "ой",
+        "ая",
+        "яя",
+        "ое",
+        "ее",
+        "ые",
+        "ие",
+        "ых",
+        "их",
+        "ую",
+        "юю",
+        "ов",
+        "ев",
+        "ей",
+        "ам",
+        "ям",
+        "ах",
+        "ях",
+        "ом",
+        "ем",
+        "а",
+        "я",
+        "ы",
+        "и",
+        "у",
+        "ю",
+        "е",
+        "о",
+    )
+
+    for suffix in english_suffixes:
+        if len(t) > len(suffix) + 2 and t.endswith(suffix):
+            t = t[: -len(suffix)]
+            break
+
+    for suffix in russian_suffixes:
+        if len(t) > len(suffix) + 2 and t.endswith(suffix):
+            t = t[: -len(suffix)]
+            break
+
+    return t
+
+
+def _soft_tokens(s: str) -> List[str]:
+    tokens = re.findall(r"[A-Za-z0-9А-Яа-я#+]+", str(s or ""))
+    out: List[str] = []
+    for token in tokens:
+        key = _soft_word_key(token)
+        if key:
+            out.append(key)
+    return out
+
+
 def _contains_in_text(item: str, text: str) -> bool:
     """
-    Checks if item appears in text (case-insensitive) with light normalization.
+    Checks if item appears in text with progressively softer matching:
+    exact substring, normalized substring, then token-level soft stems.
     """
     if not item or not text:
         return False
@@ -159,6 +252,13 @@ def _contains_in_text(item: str, text: str) -> bool:
     tx2 = _norm_key(text)
     if it2 and it2 in tx2:
         return True
+
+    item_tokens = _soft_tokens(item)
+    text_tokens = _soft_tokens(text)
+    if item_tokens and text_tokens:
+        text_token_set = set(text_tokens)
+        if all(token in text_token_set for token in item_tokens):
+            return True
     return False
 
 
@@ -193,7 +293,7 @@ def _validate_item_format(item: str) -> Tuple[bool, List[str]]:
     """
     Enforces prompt format rules:
     - 1-3 words (spaces)
-    - no digits
+    - no standalone numeric tokens
     - no commas/semicolons
     - looks like a term (no trailing punctuation)
     """
@@ -202,8 +302,9 @@ def _validate_item_format(item: str) -> Tuple[bool, List[str]]:
     if not t:
         return False, ["empty item"]
 
-    if re.search(r"\d", t):
-        errors.append("contains digits")
+    digit_tokens = [token for token in re.split(r"\s+", t) if re.search(r"\d", token)]
+    if any(re.search(r"\d", token) and not re.search(r"[A-Za-zА-Яа-я]", token) for token in digit_tokens):
+        errors.append("contains standalone numeric token")
 
     if "," in t or ";" in t:
         errors.append("contains comma/semicolon")
@@ -325,21 +426,27 @@ def _evaluate_case_contract(
 
     matched_expected_u = list(dict.fromkeys(matched_expected))
 
-    issues: List[str] = []
+    contract_issues: List[str] = []
     if list_errors:
-        issues.append("list_constraints_failed")
+        contract_issues.append("list_constraints_failed")
     if format_errors:
-        issues.append("item_format_failed")
+        contract_issues.append("item_format_failed")
     if duplicates:
-        issues.append("duplicate_keywords")
+        contract_issues.append("duplicate_keywords")
     if require_all_in_text and not_in_text:
-        issues.append("predicted_not_found_in_text")
+        contract_issues.append("predicted_not_found_in_text")
     if len(matched_expected_u) < min_total_matches:
-        issues.append(f"expected_matches<{min_total_matches}")
+        contract_issues.append("expected_matches_below_threshold")
 
     checks = {
         "keywords_count": len(predicted),
+        "list_ok": not list_errors,
+        "format_ok": not format_errors,
+        "duplicates_ok": not duplicates,
+        "in_text_ok": not not_in_text,
         "matched_expected_count": len(matched_expected_u),
+        "expected_matches_threshold": min_total_matches,
+        "expected_matches_ok": len(matched_expected_u) >= min_total_matches,
         "not_in_text_count": len(not_in_text),
         "duplicate_count": len(duplicates),
     }
@@ -352,28 +459,32 @@ def _evaluate_case_contract(
         "expected_terms": expected_terms,
     }
 
-    return len(issues) == 0, issues, checks, details
+    return len(contract_issues) == 0, contract_issues, checks, details
 
 
 def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "cdm_file": case["cdm_file"],
-        "vacancy_title": case["vacancy_title"],
-        "vacancy_company": case["vacancy_company"],
+        "structured_vacancy_title": case["structured_vacancy_title"],
+        "structured_vacancy_company": case["structured_vacancy_company"],
+        "raw_vacancy_title": case["raw_vacancy_title"],
         "predicted_keywords": case["predicted_keywords"],
         "passed": case["passed"],
-        "issues": case["issues"],
+        "contract_issues": case["contract_issues"],
         "checks": case["checks"],
     }
 
-    if report_verbosity in {"standard", "full"} and (case["issues"] or report_verbosity == "full"):
-        out["details"] = {
-            "not_in_text": case["details"]["not_in_text"],
-            "duplicates": case["details"]["duplicates"],
-            "matched_expected": case["details"]["matched_expected"],
-            "list_errors": case["details"]["list_errors"],
+    include_details = report_verbosity in {"standard", "full"} or not case["passed"]
+    if include_details:
+        details: Dict[str, Any] = {
             "format_errors": case["details"]["format_errors"],
+            "not_in_text": case["details"]["not_in_text"],
+            "matched_expected": case["details"]["matched_expected"],
         }
+        if report_verbosity in {"standard", "full"}:
+            details["duplicates"] = case["details"]["duplicates"]
+            details["list_errors"] = case["details"]["list_errors"]
+        out["details"] = details
 
     if report_verbosity == "full":
         out["raw_extractor_output"] = case["raw_extractor_output"]
@@ -457,25 +568,27 @@ def run_vacancy_keywords_dataset(
 
     token_usage_total = _blank_usage()
     cases: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
+    execution_errors: List[Dict[str, Any]] = []
 
     for cdm_path in cdm_paths:
         cdm = load_json(cdm_path)
         vacancy = cdm.get("vacancy") or {}
-        v_title = vacancy.get("title")
-        v_company = vacancy.get("company_name")
+        structured_vacancy_title = vacancy.get("title")
+        structured_vacancy_company = vacancy.get("company_name")
 
         expected_stack = _split_list_like(vacancy.get("vacancy_stack") or vacancy.get("stack") or "")
         expected_skills = _split_list_like(vacancy.get("vacancy_skills") or "")
         expected_terms = list(dict.fromkeys(expected_stack + expected_skills))
 
         raw_vacancy = ""
+        raw_vacancy_title: Optional[str] = None
         raw_output = ""
         predicted: List[str] = []
         raw_error: Optional[str] = None
 
         try:
             raw_vacancy = _get_raw_vacancy_text(cdm=cdm, vacancy=vacancy)
+            raw_vacancy_title = _extract_raw_vacancy_title(raw_vacancy)
             predicted, raw_output = runner.extract(raw_vacancy)
             _accumulate_usage(token_usage_total, runner.last_usage)
 
@@ -483,18 +596,23 @@ def run_vacancy_keywords_dataset(
             raw_error = repr(e)
 
         if raw_error is not None:
-            errors.append(
+            execution_errors.append(
                 {
-                    "cdm_file": str(cdm_path),
-                    "vacancy_title": v_title,
-                    "vacancy_company": v_company,
-                    "error": raw_error,
+                    "cdm_file": _report_path(cdm_path),
+                    "structured_vacancy_title": structured_vacancy_title,
+                    "structured_vacancy_company": structured_vacancy_company,
+                    "raw_vacancy_title": raw_vacancy_title,
+                    "execution_error": raw_error,
                 }
             )
-            _log(quiet, f"[err] cdm={cdm_path.name} title={v_title} company={v_company} error={raw_error}")
+            _log(
+                quiet,
+                f"[err] cdm={cdm_path.name} title={structured_vacancy_title} "
+                f"company={structured_vacancy_company} error={raw_error}",
+            )
             continue
 
-        passed, issues, checks, details = _evaluate_case_contract(
+        passed, contract_issues, checks, details = _evaluate_case_contract(
             predicted=predicted,
             vacancy_text=raw_vacancy,
             expected_terms=expected_terms,
@@ -503,14 +621,15 @@ def run_vacancy_keywords_dataset(
         )
 
         case = {
-            "cdm_file": str(cdm_path),
-            "vacancy_title": v_title,
-            "vacancy_company": v_company,
+            "cdm_file": _report_path(cdm_path),
+            "structured_vacancy_title": structured_vacancy_title,
+            "structured_vacancy_company": structured_vacancy_company,
+            "raw_vacancy_title": raw_vacancy_title,
             "raw_vacancy": raw_vacancy,
             "predicted_keywords": predicted,
             "raw_extractor_output": raw_output,
             "passed": passed,
-            "issues": issues,
+            "contract_issues": contract_issues,
             "checks": checks,
             "details": details,
         }
@@ -523,10 +642,10 @@ def run_vacancy_keywords_dataset(
             quiet,
             "[case] "
             f"cdm={cdm_path.name} "
-            f"title={v_title} "
-            f"company={v_company} "
+            f"title={structured_vacancy_title} "
+            f"company={structured_vacancy_company} "
             f"passed={passed} "
-            f"issues={issues} "
+            f"issues={contract_issues} "
             f"matches={checks['matched_expected_count']} "
             f"not_in_text={checks['not_in_text_count']}",
         )
@@ -537,14 +656,14 @@ def run_vacancy_keywords_dataset(
     pass_rate = round((passed_n / total * 100.0), 2) if total else 0.0
     avg_keywords = round(sum(int(c["checks"]["keywords_count"]) for c in cases) / total, 2) if total else 0.0
     avg_expected_matches = round(sum(int(c["checks"]["matched_expected_count"]) for c in cases) / total, 2) if total else 0.0
-    issue_counter = Counter(issue for c in cases for issue in (c.get("issues") or []))
+    issue_counter = Counter(issue for c in cases for issue in (c.get("contract_issues") or []))
 
     cases_for_report = [_project_contract_case(case=c, report_verbosity=report_verbosity) for c in cases]
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
-        "cdm_dir": str(cdm_dir),
+        "cdm_dir": _report_path(cdm_dir),
         "cdm_count": cdm_count,
         "cases_count": len(cdm_paths),
         "cases_count_requested": cases_count,
@@ -563,11 +682,11 @@ def run_vacancy_keywords_dataset(
             "pass_rate_pct": pass_rate,
             "avg_keywords_per_case": avg_keywords,
             "avg_expected_matches": avg_expected_matches,
-            "errors_count": len(errors),
-            "by_issue": dict(issue_counter),
+            "execution_errors_count": len(execution_errors),
+            "issue_occurrences": dict(issue_counter),
         },
         "cases": cases_for_report,
-        "errors": errors,
+        "execution_errors": execution_errors,
     }
 
     out_path = REPORTS_DIR / f"responsibilities_parser_report_{run_id}.json"
@@ -580,7 +699,7 @@ def run_vacancy_keywords_dataset(
         f"passed={passed_n} "
         f"pass_rate={pass_rate:.2f}% "
         f"avg_expected_matches={avg_expected_matches:.2f} "
-        f"errors={len(errors)} "
+        f"execution_errors={len(execution_errors)} "
         f"issues={dict(issue_counter)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
     )

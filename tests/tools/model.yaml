@@ -35,7 +35,7 @@ one_line_search_query_builder:
 
 responsibilities_parser:
   prompt_id: pmpt_68e66b5d57c08194959b45d5b2acc0810ab2792039e4f59b
-  prompt_version: 3
+  prompt_version: 4
   seed: 1234
 
 sourcing_assistant:
