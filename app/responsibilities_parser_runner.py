@@ -22,9 +22,6 @@ CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
 REPORTS_DIR = ROOT / "tests" / "reports" / "responsibilities_parser"
 
-DEFAULT_VACANCY_GEN_MODEL = "gpt-4.1-mini"
-VACANCY_GEN_MAX_RETRIES = 1
-DEFAULT_PASS_SCORE_THRESHOLD = 70.0
 REPORT_VERBOSITY_VALUES = ("compact", "standard", "full")
 
 
@@ -114,15 +111,6 @@ def _resolve_prompt_from_cfg(cfg: Dict[str, Any]) -> Tuple[Optional[str], Option
     return (str(pid) if pid else None, str(pver) if pver else None, int(seed) if seed is not None else None)
 
 
-def _resolve_vacancy_gen_model_from_cfg(cfg: Dict[str, Any]) -> Optional[str]:
-    # Optional in tests/tools/model.yaml:
-    # responsibilities_parser:
-    #   vacancy_gen_model: gpt-4.1-mini
-    block = cfg.get("responsibilities_parser") or {}
-    m = block.get("vacancy_gen_model")
-    return str(m) if m else None
-
-
 def _split_list_like(s: Optional[str]) -> List[str]:
     """
     Splits a comma/semicolon/newline-separated skills string into a clean list.
@@ -181,13 +169,9 @@ def _parse_json_array_strict(raw: str) -> List[str]:
     if not raw:
         raise ValueError("empty output")
 
-    # Some models may wrap JSON in text. Try to extract the first [...] block.
     s = raw.strip()
-    if not s.startswith("["):
-        m = re.search(r"\[\s*(?:.|\n)*\s*\]", s)
-        if not m:
-            raise ValueError(f"output is not a JSON array: {raw!r}")
-        s = m.group(0)
+    if not s.startswith("[") or not s.endswith("]"):
+        raise ValueError(f"output is not a strict JSON array: {raw!r}")
 
     try:
         obj = json.loads(s)
@@ -266,146 +250,6 @@ def _match_to_expected(pred: str, expected: List[str]) -> Optional[str]:
     return None
 
 
-class VacancyTextBuilder:
-    """
-    Deterministic generator of a "detailed vacancy text" from structured CDM vacancy fields.
-    This keeps the dataset stable and ensures required terms appear explicitly.
-    """
-
-    def build(self, vacancy: Dict[str, Any]) -> str:
-        title = vacancy.get("title") or "Вакансия"
-        company = vacancy.get("company_name") or "Компания"
-        industry = vacancy.get("company_industry") or ""
-        location = vacancy.get("location") or ""
-        work_format = vacancy.get("work_format") or ""
-        salary_from = vacancy.get("salary_range_from")
-        salary_to = vacancy.get("salary_range_to")
-        company_desc = vacancy.get("company_description") or vacancy.get("firm_description") or ""
-        responsibilities = vacancy.get("responsibilities") or ""
-        stack = vacancy.get("vacancy_stack") or vacancy.get("stack") or ""
-        skills = vacancy.get("vacancy_skills") or ""
-        questions = vacancy.get("questions") or ""
-
-        salary_line = ""
-        if salary_from is not None or salary_to is not None:
-            salary_line = f"Зарплата: {salary_from or ''} - {salary_to or ''}".strip(" -")
-
-        resp_items = _split_list_like(responsibilities)
-        resp_block = ""
-        if resp_items:
-            resp_block = "Задачи:\n" + "\n".join(f"- {x}" for x in resp_items)
-
-        # Make skills explicit in a "requirements" section.
-        stack_items = _split_list_like(stack)
-        skills_items = _split_list_like(skills)
-
-        req_lines: List[str] = []
-        if stack_items:
-            req_lines.append("Обязательные технологии/инструменты:")
-            req_lines.extend(f"- {x}" for x in stack_items)
-        if skills_items:
-            req_lines.append("Ключевые навыки:")
-            req_lines.extend(f"- {x}" for x in skills_items)
-
-        req_block = ""
-        if req_lines:
-            req_block = "Требования:\n" + "\n".join(req_lines)
-
-        meta_lines = [
-            f"Должность: {title}",
-            f"Компания: {company}",
-        ]
-        if industry:
-            meta_lines.append(f"Индустрия: {industry}")
-        if location:
-            meta_lines.append(f"Локация: {location}")
-        if work_format:
-            meta_lines.append(f"Формат: {work_format}")
-        if salary_line:
-            meta_lines.append(salary_line)
-
-        about = ""
-        if company_desc:
-            about = f"О компании:\n{company_desc}"
-
-        q_block = ""
-        if questions:
-            q_block = f"Вопросы на скрининг:\n{questions}".strip()
-
-        blocks = [("\n".join(meta_lines)).strip(), about.strip(), resp_block.strip(), req_block.strip(), q_block.strip()]
-        text = "\n\n".join([b for b in blocks if b]).strip()
-        return text
-
-
-class VacancyTextSynthesizerLLM:
-    """
-    Optional: expands structured vacancy fields into a more realistic job posting text using an LLM.
-    Important: to keep evaluation meaningful, we force the model to include stack/skills terms verbatim.
-    """
-
-    def __init__(self, model: str, seed: Optional[int]) -> None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise EnvironmentError("OPENAI_API_KEY is not set")
-        self.client = OpenAI(api_key=api_key)
-        self.model = model
-        self.seed = seed
-        self.last_usage: Any = None
-
-    def synthesize(self, vacancy: Dict[str, Any]) -> str:
-        title = vacancy.get("title")
-        company = vacancy.get("company_name")
-        company_desc = vacancy.get("company_description") or vacancy.get("firm_description")
-        industry = vacancy.get("company_industry")
-        location = vacancy.get("location")
-        work_format = vacancy.get("work_format")
-        salary_from = vacancy.get("salary_range_from")
-        salary_to = vacancy.get("salary_range_to")
-        responsibilities = vacancy.get("responsibilities")
-        stack_items = _split_list_like(vacancy.get("vacancy_stack") or vacancy.get("stack") or "")
-        skills_items = _split_list_like(vacancy.get("vacancy_skills") or "")
-        questions = vacancy.get("questions") or ""
-
-        ctx = {
-            "title": title,
-            "company_name": company,
-            "company_description": company_desc,
-            "industry": industry,
-            "location": location,
-            "work_format": work_format,
-            "salary_range_from": salary_from,
-            "salary_range_to": salary_to,
-            "responsibilities": responsibilities,
-            "stack_terms_verbatim": stack_items,
-            "skills_terms_verbatim": skills_items,
-            "screening_questions": questions,
-        }
-
-        instruction = (
-            "Сгенерируй подробный текст вакансии на русском языке.\n"
-            "Важно: термины из списков stack_terms_verbatim и skills_terms_verbatim должны быть вставлены ВЕРБАТИМ "
-            "(точно как в списках) в раздел 'Требования' (списком).\n"
-            "Не выдумывай новые технологии, навыки и требования.\n"
-            "Структура:\n"
-            "1) Кратко о компании\n"
-            "2) Чем предстоит заниматься\n"
-            "3) Требования (обязательно отдельным разделом со списком)\n"
-            "4) Вопросы на скрининг (если есть)\n"
-            "Верни только текст вакансии, без JSON и без markdown.\n"
-        )
-
-        resp = self.client.responses.create(
-            model=self.model,
-            input=instruction + "\n\nCONTEXT_JSON:\n" + json.dumps(ctx, ensure_ascii=False),
-            temperature=0.0,
-        )
-        self.last_usage = getattr(resp, "usage", None)
-        text = (getattr(resp, "output_text", "") or "").strip()
-        if not text:
-            raise ValueError("vacancy generator returned empty text")
-        return text
-
-
 class VacancyKeywordsRunner:
     def __init__(self, prompt_id: str, prompt_version: Optional[str]) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -429,6 +273,14 @@ class VacancyKeywordsRunner:
         return items, raw
 
 
+def _get_raw_vacancy_text(cdm: Dict[str, Any], vacancy: Dict[str, Any]) -> str:
+    raw_vacancy = vacancy.get("raw_vacancy") or cdm.get("raw_vacancy") or ""
+    text = str(raw_vacancy).strip()
+    if not text:
+        raise ValueError("raw_vacancy is empty or missing")
+    return text
+
+
 def _find_duplicate_items(items: List[str]) -> List[str]:
     seen: set[str] = set()
     duplicates: List[str] = []
@@ -446,20 +298,16 @@ def _find_duplicate_items(items: List[str]) -> List[str]:
 def _evaluate_case_contract(
     predicted: List[str],
     vacancy_text: str,
-    expected_stack: List[str],
-    expected_skills: List[str],
+    expected_terms: List[str],
     min_total_matches: int,
-    min_stack_matches: int,
     require_all_in_text: bool,
 ) -> Tuple[bool, List[str], Dict[str, Any], Dict[str, Any]]:
-    expected_all = list(dict.fromkeys(expected_stack + expected_skills))
     list_errors: List[str] = []
     if not (1 <= len(predicted) <= 5):
         list_errors.append(f"len={len(predicted)} (expected 1..5)")
 
     format_errors: Dict[str, List[str]] = {}
     not_in_text: List[str] = []
-    matched_stack: List[str] = []
     matched_expected: List[str] = []
     duplicates = _find_duplicate_items(predicted)
 
@@ -471,15 +319,10 @@ def _evaluate_case_contract(
         if not _contains_in_text(item, vacancy_text):
             not_in_text.append(item)
 
-        stack_match = _match_to_expected(item, expected_stack)
-        if stack_match:
-            matched_stack.append(stack_match)
-
-        expected_match = _match_to_expected(item, expected_all)
+        expected_match = _match_to_expected(item, expected_terms)
         if expected_match:
             matched_expected.append(expected_match)
 
-    matched_stack_u = list(dict.fromkeys(matched_stack))
     matched_expected_u = list(dict.fromkeys(matched_expected))
 
     issues: List[str] = []
@@ -493,13 +336,10 @@ def _evaluate_case_contract(
         issues.append("predicted_not_found_in_text")
     if len(matched_expected_u) < min_total_matches:
         issues.append(f"expected_matches<{min_total_matches}")
-    if len(matched_stack_u) < min_stack_matches:
-        issues.append(f"stack_matches<{min_stack_matches}")
 
     checks = {
         "keywords_count": len(predicted),
         "matched_expected_count": len(matched_expected_u),
-        "matched_stack_count": len(matched_stack_u),
         "not_in_text_count": len(not_in_text),
         "duplicate_count": len(duplicates),
     }
@@ -509,9 +349,7 @@ def _evaluate_case_contract(
         "not_in_text": not_in_text,
         "duplicates": duplicates,
         "matched_expected": matched_expected_u,
-        "matched_stack": matched_stack_u,
-        "expected_stack": expected_stack,
-        "expected_skills": expected_skills,
+        "expected_terms": expected_terms,
     }
 
     return len(issues) == 0, issues, checks, details
@@ -533,17 +371,17 @@ def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[
             "not_in_text": case["details"]["not_in_text"],
             "duplicates": case["details"]["duplicates"],
             "matched_expected": case["details"]["matched_expected"],
-            "matched_stack": case["details"]["matched_stack"],
             "list_errors": case["details"]["list_errors"],
             "format_errors": case["details"]["format_errors"],
         }
 
     if report_verbosity == "full":
         out["raw_extractor_output"] = case["raw_extractor_output"]
-        out["vacancy_text"] = case["vacancy_text"]
+        out["raw_vacancy"] = case["raw_vacancy"]
         out["expected_terms"] = {
-            "stack": case["details"]["expected_stack"],
-            "skills": case["details"]["expected_skills"],
+            "all": case["details"]["expected_terms"],
+            "stack": case["details"].get("expected_stack", []),
+            "skills": case["details"].get("expected_skills", []),
         }
 
     return out
@@ -556,21 +394,15 @@ def run_vacancy_keywords_dataset(
     prompt_id: Optional[str],
     prompt_version: Optional[str],
     seed: Optional[int],
-    vacancy_gen_model: Optional[str],
-    use_llm_vacancy_gen: bool,
     min_total_matches: int,
-    min_stack_matches: int,
     require_all_in_text: bool,
-    pass_score_threshold: float,
     report_verbosity: str,
     quiet: bool,
 ) -> pathlib.Path:
     ensure_dirs()
 
-    if min_total_matches < 0 or min_stack_matches < 0:
-        raise ValueError("--min-total-matches and --min-stack-matches must be >= 0")
-    if not (0.0 <= pass_score_threshold <= 100.0):
-        raise ValueError("--pass-score-threshold must be in [0, 100]")
+    if min_total_matches < 0:
+        raise ValueError("--min-total-matches must be >= 0")
     if report_verbosity not in REPORT_VERBOSITY_VALUES:
         raise ValueError(f"--report-verbosity must be one of: {', '.join(REPORT_VERBOSITY_VALUES)}")
 
@@ -585,8 +417,6 @@ def run_vacancy_keywords_dataset(
         _log(quiet, f"[init] cfg not found: {CFG_PATH} (ok, will use env/cli)")
 
     cfg_pid, cfg_pver, cfg_seed = _resolve_prompt_from_cfg(cfg)
-    cfg_vac_model = _resolve_vacancy_gen_model_from_cfg(cfg)
-
     env_pid = os.environ.get("RESPONSIBILITIES_PARSER_PROMPT_ID")
     env_pver = os.environ.get("RESPONSIBILITIES_PARSER_PROMPT_VERSION")
 
@@ -600,8 +430,6 @@ def run_vacancy_keywords_dataset(
 
     final_seed = seed if seed is not None else cfg_seed
     rng = random.Random(final_seed)
-
-    final_vac_model = vacancy_gen_model or cfg_vac_model or DEFAULT_VACANCY_GEN_MODEL
 
     cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count)
     if cases_count is not None:
@@ -619,17 +447,12 @@ def run_vacancy_keywords_dataset(
         f"cases_count_requested={cases_count} "
         f"cases_count_selected={len(cdm_paths)} "
         f"seed={final_seed} "
-        f"use_llm_vacancy_gen={use_llm_vacancy_gen} "
-        f"vacancy_gen_model={final_vac_model if use_llm_vacancy_gen else 'template'} "
         f"min_total_matches={min_total_matches} "
-        f"min_stack_matches={min_stack_matches} "
         f"require_all_in_text={require_all_in_text} "
         f"report_verbosity={report_verbosity}",
     )
     _log(quiet, f"[init] prompt_id={final_pid} prompt_version={final_pver}")
 
-    builder = VacancyTextBuilder()
-    synthesizer = VacancyTextSynthesizerLLM(model=final_vac_model, seed=final_seed) if use_llm_vacancy_gen else None
     runner = VacancyKeywordsRunner(prompt_id=final_pid, prompt_version=final_pver)
 
     token_usage_total = _blank_usage()
@@ -644,20 +467,16 @@ def run_vacancy_keywords_dataset(
 
         expected_stack = _split_list_like(vacancy.get("vacancy_stack") or vacancy.get("stack") or "")
         expected_skills = _split_list_like(vacancy.get("vacancy_skills") or "")
+        expected_terms = list(dict.fromkeys(expected_stack + expected_skills))
 
-        vacancy_text = ""
+        raw_vacancy = ""
         raw_output = ""
         predicted: List[str] = []
         raw_error: Optional[str] = None
 
         try:
-            if synthesizer is not None:
-                vacancy_text = synthesizer.synthesize(vacancy)
-                _accumulate_usage(token_usage_total, synthesizer.last_usage)
-            else:
-                vacancy_text = builder.build(vacancy)
-
-            predicted, raw_output = runner.extract(vacancy_text)
+            raw_vacancy = _get_raw_vacancy_text(cdm=cdm, vacancy=vacancy)
+            predicted, raw_output = runner.extract(raw_vacancy)
             _accumulate_usage(token_usage_total, runner.last_usage)
 
         except Exception as e:
@@ -677,11 +496,9 @@ def run_vacancy_keywords_dataset(
 
         passed, issues, checks, details = _evaluate_case_contract(
             predicted=predicted,
-            vacancy_text=vacancy_text,
-            expected_stack=expected_stack,
-            expected_skills=expected_skills,
+            vacancy_text=raw_vacancy,
+            expected_terms=expected_terms,
             min_total_matches=min_total_matches,
-            min_stack_matches=min_stack_matches,
             require_all_in_text=require_all_in_text,
         )
 
@@ -689,7 +506,7 @@ def run_vacancy_keywords_dataset(
             "cdm_file": str(cdm_path),
             "vacancy_title": v_title,
             "vacancy_company": v_company,
-            "vacancy_text": vacancy_text,
+            "raw_vacancy": raw_vacancy,
             "predicted_keywords": predicted,
             "raw_extractor_output": raw_output,
             "passed": passed,
@@ -697,6 +514,9 @@ def run_vacancy_keywords_dataset(
             "checks": checks,
             "details": details,
         }
+        if report_verbosity == "full":
+            case["details"]["expected_stack"] = expected_stack
+            case["details"]["expected_skills"] = expected_skills
         cases.append(case)
 
         _log(
@@ -708,7 +528,6 @@ def run_vacancy_keywords_dataset(
             f"passed={passed} "
             f"issues={issues} "
             f"matches={checks['matched_expected_count']} "
-            f"stack_matches={checks['matched_stack_count']} "
             f"not_in_text={checks['not_in_text_count']}",
         )
 
@@ -718,7 +537,6 @@ def run_vacancy_keywords_dataset(
     pass_rate = round((passed_n / total * 100.0), 2) if total else 0.0
     avg_keywords = round(sum(int(c["checks"]["keywords_count"]) for c in cases) / total, 2) if total else 0.0
     avg_expected_matches = round(sum(int(c["checks"]["matched_expected_count"]) for c in cases) / total, 2) if total else 0.0
-    avg_stack_matches = round(sum(int(c["checks"]["matched_stack_count"]) for c in cases) / total, 2) if total else 0.0
     issue_counter = Counter(issue for c in cases for issue in (c.get("issues") or []))
 
     cases_for_report = [_project_contract_case(case=c, report_verbosity=report_verbosity) for c in cases]
@@ -731,14 +549,10 @@ def run_vacancy_keywords_dataset(
         "cases_count": len(cdm_paths),
         "cases_count_requested": cases_count,
         "seed": final_seed,
-        "use_llm_vacancy_gen": use_llm_vacancy_gen,
-        "vacancy_gen_model": (final_vac_model if use_llm_vacancy_gen else None),
-        "vacancy_gen_retries": (VACANCY_GEN_MAX_RETRIES if use_llm_vacancy_gen else 0),
         "report_verbosity": report_verbosity,
         "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
         "thresholds": {
             "min_total_matches": min_total_matches,
-            "min_stack_matches": min_stack_matches,
             "require_all_in_text": require_all_in_text,
         },
         "token_usage_total": token_usage_total,
@@ -749,7 +563,6 @@ def run_vacancy_keywords_dataset(
             "pass_rate_pct": pass_rate,
             "avg_keywords_per_case": avg_keywords,
             "avg_expected_matches": avg_expected_matches,
-            "avg_stack_matches": avg_stack_matches,
             "errors_count": len(errors),
             "by_issue": dict(issue_counter),
         },
@@ -778,7 +591,7 @@ def run_vacancy_keywords_dataset(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run responsibilities_parser over CDM fixtures and report prompt-contract checks."
+        description="Run responsibilities_parser over raw_vacancy fields from CDM fixtures and report prompt-contract checks."
     )
     parser.add_argument(
         "--cdm-dir",
@@ -817,38 +630,15 @@ def main() -> None:
         help="Override responsibilities_parser prompt version (otherwise from cfg/env).",
     )
     parser.add_argument(
-        "--use-llm-vacancy-gen",
-        action="store_true",
-        help="Use LLM to synthesize vacancy text (more realistic, less deterministic). Default: template-based builder.",
-    )
-    parser.add_argument(
-        "--vacancy-gen-model",
-        type=str,
-        default=None,
-        help=f"Vacancy synthesis model override (default: {DEFAULT_VACANCY_GEN_MODEL}). Only used with --use-llm-vacancy-gen.",
-    )
-    parser.add_argument(
         "--min-total-matches",
         type=int,
         default=2,
         help="Strict threshold only: minimum matched keywords vs (vacancy_stack U vacancy_skills).",
     )
     parser.add_argument(
-        "--min-stack-matches",
-        type=int,
-        default=1,
-        help="Strict threshold only: minimum matched keywords vs vacancy_stack.",
-    )
-    parser.add_argument(
         "--no-require-all-in-text",
         action="store_true",
         help="Disable the check that every predicted keyword must appear in vacancy text.",
-    )
-    parser.add_argument(
-        "--pass-score-threshold",
-        type=float,
-        default=DEFAULT_PASS_SCORE_THRESHOLD,
-        help="Deprecated, ignored. Kept only for backward compatibility.",
     )
     parser.add_argument(
         "--report-verbosity",
@@ -875,12 +665,8 @@ def main() -> None:
         prompt_id=args.prompt_id,
         prompt_version=args.prompt_version,
         seed=args.seed,
-        vacancy_gen_model=args.vacancy_gen_model,
-        use_llm_vacancy_gen=bool(args.use_llm_vacancy_gen),
         min_total_matches=int(args.min_total_matches),
-        min_stack_matches=int(args.min_stack_matches),
         require_all_in_text=not bool(args.no_require_all_in_text),
-        pass_score_threshold=float(args.pass_score_threshold),
         report_verbosity=str(args.report_verbosity),
         quiet=bool(args.quiet),
     )
