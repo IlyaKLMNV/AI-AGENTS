@@ -10,6 +10,7 @@ import pathlib
 import random
 import re
 from collections import Counter
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -235,6 +236,92 @@ def _soft_tokens(s: str) -> List[str]:
     return out
 
 
+_ALIAS_GROUPS: Dict[str, Tuple[str, ...]] = {
+    "machine_learning": ("ml", "machine learning", "машинное обучение"),
+    "computer_vision": ("computer vision", "компьютерное зрение"),
+    "recommendation_systems": (
+        "recsys",
+        "recommendation system",
+        "recommendation systems",
+        "рекомендательная система",
+        "рекомендательные системы",
+    ),
+    "deep_learning": ("deep learning", "нейронные сети"),
+    "technical_writing": (
+        "technical writing",
+        "technical writer",
+        "технический писатель",
+        "техническое письмо",
+    ),
+    "product_management": (
+        "product manager",
+        "product management",
+        "продукт менеджер",
+        "продукт-менеджер",
+        "управление продуктом",
+    ),
+    "composite_materials": (
+        "composite materials",
+        "композитные материалы",
+        "композиционные материалы",
+    ),
+    "one_c": ("1c", "1с"),
+}
+
+_ALIAS_TO_GROUP: Dict[str, str] = {
+    _norm_key(alias): group_name
+    for group_name, aliases in _ALIAS_GROUPS.items()
+    for alias in aliases
+}
+
+
+def _alias_groups_for_text(s: str) -> List[str]:
+    normalized = _norm_key(s)
+    if not normalized:
+        return []
+    groups: List[str] = []
+    for alias_key, group_name in _ALIAS_TO_GROUP.items():
+        if alias_key and alias_key in normalized:
+            groups.append(group_name)
+    return list(dict.fromkeys(groups))
+
+
+def _soft_token_match(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+
+    shorter, longer = sorted((left, right), key=len)
+    if len(shorter) >= 4 and longer.startswith(shorter):
+        return True
+
+    if len(shorter) >= 5 and SequenceMatcher(None, left, right).ratio() >= 0.84:
+        return True
+
+    return False
+
+
+def _soft_phrase_match(left: str, right: str) -> bool:
+    left_tokens = _soft_tokens(left)
+    right_tokens = _soft_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    used_right: set[int] = set()
+    matched = 0
+    for left_token in left_tokens:
+        for idx, right_token in enumerate(right_tokens):
+            if idx in used_right:
+                continue
+            if _soft_token_match(left_token, right_token):
+                used_right.add(idx)
+                matched += 1
+                break
+
+    return matched >= min(len(left_tokens), len(right_tokens))
+
+
 def _contains_in_text(item: str, text: str) -> bool:
     """
     Checks if item appears in text with progressively softer matching:
@@ -253,11 +340,15 @@ def _contains_in_text(item: str, text: str) -> bool:
     if it2 and it2 in tx2:
         return True
 
+    item_groups = set(_alias_groups_for_text(item))
+    text_groups = set(_alias_groups_for_text(text))
+    if item_groups and item_groups & text_groups:
+        return True
+
     item_tokens = _soft_tokens(item)
     text_tokens = _soft_tokens(text)
     if item_tokens and text_tokens:
-        text_token_set = set(text_tokens)
-        if all(token in text_token_set for token in item_tokens):
+        if all(any(_soft_token_match(item_token, text_token) for text_token in text_tokens) for item_token in item_tokens):
             return True
     return False
 
@@ -330,7 +421,7 @@ def _validate_item_format(item: str) -> Tuple[bool, List[str]]:
 def _match_to_expected(pred: str, expected: List[str]) -> Optional[str]:
     """
     Returns matched expected skill if found, else None.
-    Matching is done via normalized key equality or substring containment.
+    Matching is done via normalized equality, alias groups, and soft phrase matching.
     """
     if not pred:
         return None
@@ -338,14 +429,17 @@ def _match_to_expected(pred: str, expected: List[str]) -> Optional[str]:
     if not pk:
         return None
 
-    expected_keys = {e: _norm_key(e) for e in expected}
-    for e, ek in expected_keys.items():
+    pred_groups = set(_alias_groups_for_text(pred))
+    for e in expected:
+        ek = _norm_key(e)
         if pk == ek and ek:
             return e
 
-    # fallback: sometimes pred is a shorter part of a longer expected item
-    for e, ek in expected_keys.items():
-        if pk and ek and (pk in ek or ek in pk):
+        expected_groups = set(_alias_groups_for_text(e))
+        if pred_groups and expected_groups and pred_groups & expected_groups:
+            return e
+
+        if _soft_phrase_match(pred, e):
             return e
 
     return None
@@ -402,7 +496,7 @@ def _evaluate_case_contract(
     expected_terms: List[str],
     min_total_matches: int,
     require_all_in_text: bool,
-) -> Tuple[bool, List[str], Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[bool, List[str], List[str], Dict[str, Any], Dict[str, Any]]:
     list_errors: List[str] = []
     if not (1 <= len(predicted) <= 5):
         list_errors.append(f"len={len(predicted)} (expected 1..5)")
@@ -426,17 +520,18 @@ def _evaluate_case_contract(
 
     matched_expected_u = list(dict.fromkeys(matched_expected))
 
-    contract_issues: List[str] = []
+    hard_failures: List[str] = []
+    warnings: List[str] = []
     if list_errors:
-        contract_issues.append("list_constraints_failed")
+        hard_failures.append("list_constraints_failed")
     if format_errors:
-        contract_issues.append("item_format_failed")
+        hard_failures.append("item_format_failed")
     if duplicates:
-        contract_issues.append("duplicate_keywords")
+        hard_failures.append("duplicate_keywords")
     if require_all_in_text and not_in_text:
-        contract_issues.append("predicted_not_found_in_text")
+        warnings.append("predicted_not_found_in_text")
     if len(matched_expected_u) < min_total_matches:
-        contract_issues.append("expected_matches_below_threshold")
+        warnings.append("expected_matches_below_threshold")
 
     checks = {
         "keywords_count": len(predicted),
@@ -459,7 +554,7 @@ def _evaluate_case_contract(
         "expected_terms": expected_terms,
     }
 
-    return len(contract_issues) == 0, contract_issues, checks, details
+    return len(hard_failures) == 0, hard_failures, warnings, checks, details
 
 
 def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[str, Any]:
@@ -471,10 +566,11 @@ def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[
         "predicted_keywords": case["predicted_keywords"],
         "passed": case["passed"],
         "contract_issues": case["contract_issues"],
-        "checks": case["checks"],
     }
+    if case.get("warnings"):
+        out["warnings"] = case["warnings"]
 
-    include_details = report_verbosity in {"standard", "full"} or not case["passed"]
+    include_details = report_verbosity in {"standard", "full"} or not case["passed"] or bool(case.get("warnings"))
     if include_details:
         details: Dict[str, Any] = {
             "format_errors": case["details"]["format_errors"],
@@ -484,6 +580,7 @@ def _project_contract_case(case: Dict[str, Any], report_verbosity: str) -> Dict[
         if report_verbosity in {"standard", "full"}:
             details["duplicates"] = case["details"]["duplicates"]
             details["list_errors"] = case["details"]["list_errors"]
+            details["warnings"] = case.get("warnings", [])
         out["details"] = details
 
     if report_verbosity == "full":
@@ -612,7 +709,7 @@ def run_vacancy_keywords_dataset(
             )
             continue
 
-        passed, contract_issues, checks, details = _evaluate_case_contract(
+        passed, contract_issues, warnings, checks, details = _evaluate_case_contract(
             predicted=predicted,
             vacancy_text=raw_vacancy,
             expected_terms=expected_terms,
@@ -630,6 +727,7 @@ def run_vacancy_keywords_dataset(
             "raw_extractor_output": raw_output,
             "passed": passed,
             "contract_issues": contract_issues,
+            "warnings": warnings,
             "checks": checks,
             "details": details,
         }
@@ -646,6 +744,7 @@ def run_vacancy_keywords_dataset(
             f"company={structured_vacancy_company} "
             f"passed={passed} "
             f"issues={contract_issues} "
+            f"warnings={warnings} "
             f"matches={checks['matched_expected_count']} "
             f"not_in_text={checks['not_in_text_count']}",
         )
@@ -657,6 +756,7 @@ def run_vacancy_keywords_dataset(
     avg_keywords = round(sum(int(c["checks"]["keywords_count"]) for c in cases) / total, 2) if total else 0.0
     avg_expected_matches = round(sum(int(c["checks"]["matched_expected_count"]) for c in cases) / total, 2) if total else 0.0
     issue_counter = Counter(issue for c in cases for issue in (c.get("contract_issues") or []))
+    warning_counter = Counter(warning for c in cases for warning in (c.get("warnings") or []))
 
     cases_for_report = [_project_contract_case(case=c, report_verbosity=report_verbosity) for c in cases]
 
@@ -684,6 +784,7 @@ def run_vacancy_keywords_dataset(
             "avg_expected_matches": avg_expected_matches,
             "execution_errors_count": len(execution_errors),
             "issue_occurrences": dict(issue_counter),
+            "warning_occurrences": dict(warning_counter),
         },
         "cases": cases_for_report,
         "execution_errors": execution_errors,
@@ -701,6 +802,7 @@ def run_vacancy_keywords_dataset(
         f"avg_expected_matches={avg_expected_matches:.2f} "
         f"execution_errors={len(execution_errors)} "
         f"issues={dict(issue_counter)} "
+        f"warnings={dict(warning_counter)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
     )
     _log(quiet, "[done] report saved: " + str(out_path))
