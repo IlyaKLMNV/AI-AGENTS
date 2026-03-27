@@ -168,7 +168,7 @@ def _strip_html(value: Any) -> str:
 
 
 def _normalize_search_text(value: Any) -> str:
-    return _strip_html(value).lower()
+    return _strip_html(value).lower().replace("ё", "е")
 
 
 def _norm_key(s: str) -> str:
@@ -181,19 +181,61 @@ def _norm_key(s: str) -> str:
     return t
 
 
+def _norm_phrase(s: Any) -> str:
+    t = _normalize_search_text(s)
+    t = t.replace("–", "-").replace("—", "-")
+    t = re.sub(r"[^a-z0-9а-я]+", " ", t, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _norm_compact(s: Any) -> str:
+    return _norm_phrase(s).replace(" ", "")
+
+
+def _norm_keep_punct(s: Any) -> str:
+    t = _normalize_search_text(s)
+    t = t.replace("–", "-").replace("—", "-")
+    t = re.sub(r"\s*([^\w\s]+)\s*", r"\1", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _needs_compact_match(s: Any) -> bool:
+    raw = _strip_html(s)
+    phrase = _norm_phrase(s)
+    compact = _norm_compact(s)
+    if len(compact) < 2:
+        return False
+    return (" " in phrase) or bool(re.search(r"[^0-9A-Za-zА-Яа-яЁё]+", raw))
+
+
 def _contains_norm(needle: str, hay: str) -> bool:
     if not needle or not hay:
         return False
 
-    # quick path
-    if _normalize_search_text(needle) in _normalize_search_text(hay):
+    raw_needle = _strip_html(needle)
+    n_compact = _norm_compact(needle)
+    if bool(re.search(r"[^0-9A-Za-zА-Яа-яЁё]+", raw_needle)) and len(n_compact) < 2:
+        n_keep = _norm_keep_punct(needle)
+        h_keep = _norm_keep_punct(hay)
+        return bool(n_keep) and n_keep in h_keep
+
+    n_phrase = _norm_phrase(needle)
+    h_phrase = _norm_phrase(hay)
+    if n_phrase and h_phrase and f" {n_phrase} " in f" {h_phrase} ":
         return True
 
+    if _needs_compact_match(needle):
+        n = n_compact
+        h = _norm_compact(hay)
+        if n and h:
+            return n in h
+
+    # conservative fallback for pure alnum single-token requirements
     n = _norm_key(needle)
     h = _norm_key(hay)
-    if not n or not h:
+    if not n or not h or len(n) < 2 or _needs_compact_match(needle):
         return False
-    return n in h
+    return re.search(rf"(?<![a-z0-9а-я]){re.escape(n_phrase)}(?![a-z0-9а-я])", f" {h_phrase} ", flags=re.IGNORECASE) is not None
 
 
 def _extract_raw_vacancy_title(vacancy: Dict[str, Any]) -> str:
@@ -211,92 +253,6 @@ def _search_title_variants(vacancy: Dict[str, Any]) -> List[str]:
     title = re.sub(r"\s+", " ", str(vacancy.get("title") or "").strip())
     raw_title = _extract_raw_vacancy_title(vacancy)
     return _dedupe_preserve_order([x for x in [title, raw_title] if x])
-
-
-def _requirement_aliases(part: str) -> List[str]:
-    token = _normalize_search_text(part)
-    if not token:
-        return []
-
-    aliases = {
-        "js": ["javascript", "js"],
-        "javascript": ["javascript", "js"],
-        "ts": ["typescript", "ts"],
-        "typescript": ["typescript", "ts"],
-        "c#": ["c#", "c sharp", "csharp"],
-        ".net": [".net", "dotnet"],
-        "gitlab": ["gitlab"],
-        "ci": ["ci", "ci/cd", "continuous integration"],
-        "cd": ["cd", "ci/cd", "continuous deployment"],
-        "ai": ["ai", "artificial intelligence", "llm", "gpt", "openai"],
-    }.get(token)
-    if aliases is not None:
-        return aliases
-
-    if token.startswith("integrat"):
-        return ["integration", "integrations", "integrat"]
-    if token.startswith("интеграц"):
-        return ["интеграц"]
-
-    return [token]
-
-
-def _alias_matches_text(alias: str, text: str) -> bool:
-    alias_norm = _normalize_search_text(alias)
-    text_norm = _normalize_search_text(text)
-    if not alias_norm or not text_norm:
-        return False
-
-    if alias_norm in {"c#", "c sharp", "csharp"}:
-        return any(x in text_norm for x in ("c#", "c sharp", "csharp"))
-    if alias_norm in {".net", "dotnet"}:
-        return (".net" in text_norm) or ("dotnet" in text_norm)
-
-    tokenish = re.sub(r"[^a-z0-9а-я]+", "", alias_norm, flags=re.IGNORECASE)
-    if tokenish and len(tokenish) <= 3 and re.fullmatch(r"[a-z0-9а-я]+", tokenish, flags=re.IGNORECASE):
-        return re.search(rf"(?<![a-z0-9а-я]){re.escape(tokenish)}(?![a-z0-9а-я])", text_norm, flags=re.IGNORECASE) is not None
-
-    return alias_norm in text_norm
-
-
-def _requirement_groups(req: str) -> Tuple[str, List[List[str]]]:
-    req_plain = _strip_html(req)
-    req_low = req_plain.lower()
-
-    if req_low == "typescript/js":
-        return "any", [
-            _requirement_aliases("typescript"),
-            _requirement_aliases("js"),
-        ]
-
-    if "/" in req_plain:
-        slash_parts = [p.strip() for p in req_plain.split("/") if p.strip()]
-        if len(slash_parts) >= 2 and all(" " not in p for p in slash_parts):
-            return "any", [_requirement_aliases(p) for p in slash_parts]
-
-    word_parts = [p.strip() for p in re.split(r"\s+", req_plain) if p.strip()]
-    if len(word_parts) > 1:
-        return "all", [_requirement_aliases(p) for p in word_parts]
-
-    return "any", [_requirement_aliases(req_plain)]
-
-
-def _requirement_matches_profile(req: str, profile: Dict[str, Any]) -> bool:
-    blob = " || ".join(_profile_search_texts(profile))
-    if not blob:
-        return False
-
-    req_plain = _strip_html(req)
-    if req_plain and _alias_matches_text(req_plain, blob):
-        return True
-
-    mode, groups = _requirement_groups(req_plain)
-    if not groups:
-        return False
-
-    if mode == "all":
-        return all(any(_alias_matches_text(alias, blob) for alias in group) for group in groups)
-    return any(any(_alias_matches_text(alias, blob) for alias in group) for group in groups)
 
 
 def _parse_json_array_strict(raw: str) -> List[Any]:
@@ -726,23 +682,59 @@ def _sample_backend_profiles(
 
 
 def _build_profile_from_backend_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    skills_out: List[Dict[str, Any]] = []
+    for skill in (candidate.get("skills") or []):
+        if not isinstance(skill, dict):
+            continue
+        skill_name = skill.get("skill")
+        if isinstance(skill_name, str) and skill_name.strip():
+            skills_out.append({"skill": re.sub(r"\s+", " ", skill_name.strip())})
+
+    positions_out: List[Dict[str, Any]] = []
+    for pos in (candidate.get("positions") or []):
+        if not isinstance(pos, dict):
+            continue
+        company_norm = pos.get("company_norm") or {}
+        categories = []
+        if isinstance(company_norm, dict):
+            for category in (company_norm.get("categories") or []):
+                if isinstance(category, dict):
+                    title = category.get("title")
+                    if isinstance(title, str) and title.strip():
+                        categories.append({"title": re.sub(r"\s+", " ", title.strip())})
+                elif isinstance(category, str) and category.strip():
+                    categories.append({"title": re.sub(r"\s+", " ", category.strip())})
+
+        positions_norm = []
+        for value in (pos.get("positions_norm") or []):
+            if isinstance(value, dict):
+                item: Dict[str, Any] = {}
+                for key in ("title", "name", "raw_text"):
+                    v = value.get(key)
+                    if isinstance(v, str) and v.strip():
+                        item[key] = re.sub(r"\s+", " ", v.strip())
+                if item:
+                    positions_norm.append(item)
+            elif isinstance(value, str) and value.strip():
+                positions_norm.append(re.sub(r"\s+", " ", value.strip()))
+
+        positions_out.append(
+            {
+                "name": re.sub(r"\s+", " ", str(pos.get("name") or "").strip()),
+                "pos": re.sub(r"\s+", " ", str(pos.get("pos") or "").strip()),
+                "description": re.sub(r"\s+", " ", str(pos.get("description") or "").strip()),
+                "rangeStr": re.sub(r"\s+", " ", str(pos.get("rangeStr") or "").strip()),
+                "dates": pos.get("dates") or [],
+                "current": bool(pos.get("current")),
+                "positions_norm": positions_norm,
+                "company_norm": {"categories": categories},
+            }
+        )
+
     return {
-        "id": candidate.get("id"),
-        "name": candidate.get("name"),
-        "about": candidate.get("about") or "",
-        "geo": candidate.get("geo") or "",
-        "geos": candidate.get("geos") or [],
-        "skills": candidate.get("skills") or [],
-        "positions": candidate.get("positions") or [],
-        "positions_array": candidate.get("positions_array") or [],
-        "positions_array_current": candidate.get("positions_array_current") or [],
-        "pastPositions": candidate.get("pastPositions") or [],
-        "experience": candidate.get("experience") or [],
-        "seniority": candidate.get("seniority") or [],
-        "educations": candidate.get("educations") or [],
-        "is_english": bool(candidate.get("is_english")),
-        "is_russian": bool(candidate.get("is_russian")),
-        "has_higher_education": bool(candidate.get("has_higher_education")),
+        "about": re.sub(r"\s+", " ", str(candidate.get("about") or "").strip()),
+        "skills": skills_out,
+        "positions": positions_out,
     }
 
 
@@ -757,27 +749,19 @@ def _profile_search_texts(profile: Dict[str, Any]) -> List[str]:
             texts.append(t)
 
     add(profile.get("about"))
-    add(profile.get("name"))
-    add(profile.get("geo"))
-
-    for field in ("positions_array", "positions_array_current", "pastPositions"):
-        for item in (profile.get(field) or []):
-            add(item)
 
     for skill in (profile.get("skills") or []):
         if isinstance(skill, dict):
             add(skill.get("skill"))
-            category = skill.get("category") or {}
-            if isinstance(category, dict):
-                add(category.get("title"))
-        else:
-            add(skill)
 
     for pos in (profile.get("positions") or []):
         if not isinstance(pos, dict):
             continue
-        for key in ("name", "pos", "description", "rangeStr", "type"):
+        for key in ("name", "pos", "description", "rangeStr"):
             add(pos.get(key))
+
+        for value in (pos.get("dates") or []):
+            add(value)
 
         for value in (pos.get("positions_norm") or []):
             if isinstance(value, dict):
@@ -788,76 +772,28 @@ def _profile_search_texts(profile: Dict[str, Any]) -> List[str]:
 
         company_norm = pos.get("company_norm") or {}
         if isinstance(company_norm, dict):
-            add(company_norm.get("title"))
-            add(company_norm.get("site"))
             for category in (company_norm.get("categories") or []):
                 if isinstance(category, dict):
                     add(category.get("title"))
                 else:
                     add(category)
 
-        pos_skills = pos.get("skills")
-        if isinstance(pos_skills, list):
-            for item in pos_skills:
-                if isinstance(item, dict):
-                    add(item.get("skill"))
-                else:
-                    add(item)
-
-    for geo in (profile.get("geos") or []):
-        if isinstance(geo, dict):
-            for key in ("title", "level", "render_type"):
-                add(geo.get(key))
-        else:
-            add(geo)
-
-    for exp in (profile.get("experience") or []):
-        if isinstance(exp, dict):
-            add(exp.get("type"))
-            add(exp.get("text"))
-
-    for seniority in (profile.get("seniority") or []):
-        if not isinstance(seniority, dict):
-            continue
-        add(seniority.get("level"))
-        add(seniority.get("reason"))
-        category = seniority.get("category") or {}
-        if isinstance(category, dict):
-            add(category.get("title"))
-
-    for edu in (profile.get("educations") or []):
-        if not isinstance(edu, dict):
-            continue
-        add(edu.get("institutionName"))
-        add(edu.get("specialization"))
-        university_norm = edu.get("university_norm") or {}
-        if isinstance(university_norm, dict):
-            add(university_norm.get("title"))
-
     return _dedupe_preserve_order(texts)
 
 
 def _expected_passed_for_requirement(req: str, profile: Dict[str, Any]) -> int:
     """
-    Детерминированная "истина" для теста:
-    passed=1 если requirement находится в профиле по правилам:
-    - short/special tokens учитывают aliases (C#, JS, .NET, CI/CD);
-    - требования со slash трактуются как any-of (TypeScript/JS);
-    - многословные требования трактуются как all-of по ключевым словам (GitLab CI, AI интеграции).
+    Детерминированная "истина" для теста по контракту prompt-а:
+    требование ищется только в profile.about, skills[].skill и разрешённых полях positions
+    с нормализацией регистра/пробелов/пунктуации, но без синонимов и смысловых эвристик.
     """
     if not req:
         return 0
 
-    req_low = req.strip().lower()
-
-    if ("english" in req_low or "англий" in req_low) and bool(profile.get("is_english")):
-        return 1
-    if ("russian" in req_low or "русск" in req_low) and bool(profile.get("is_russian")):
-        return 1
-    if (("higher education" in req_low) or ("высш" in req_low and "образ" in req_low)) and bool(profile.get("has_higher_education")):
-        return 1
-
-    return 1 if _requirement_matches_profile(req, profile) else 0
+    for text in _profile_search_texts(profile):
+        if _contains_norm(req, text):
+            return 1
+    return 0
 
 
 def _validate_output_item_shape(item: Dict[str, Any]) -> List[str]:
@@ -991,7 +927,8 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
             item_issues.append("passed_mismatch")
             checks["passed_mismatch_count"] += 1
 
-        if exp_pass == 0:
+        actual_passed = item.get("passed")
+        if actual_passed == 0:
             comment = item.get("comment")
             if not isinstance(comment, str) or "в резюме не указано" not in comment.lower():
                 item_issues.append('missing_phrase_required("в резюме не указано")')
@@ -1026,14 +963,16 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
 def _compact_failed_items(failed_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for item in failed_items:
-        out.append(
-            {
-                "requirement": item.get("expected_requirement"),
-                "expected_passed": item.get("expected_passed"),
-                "actual_passed": item.get("actual_passed"),
-                "issues": item.get("issues") or [],
-            }
-        )
+        compact: Dict[str, Any] = {
+            "requirement": item.get("expected_requirement"),
+            "expected_passed": item.get("expected_passed"),
+            "actual_passed": item.get("actual_passed"),
+            "issues": item.get("issues") or [],
+        }
+        actual_requirement = item.get("actual_requirement")
+        if actual_requirement is not None and actual_requirement != item.get("expected_requirement"):
+            compact["actual_requirement"] = actual_requirement
+        out.append(compact)
     return out
 
 
@@ -1324,6 +1263,18 @@ def run_sourcing_assistant_dataset(
                 candidate_issue_occurrences_total["execution_error"] += 1
                 case_checks["execution_error_count"] += 1
                 case_checks["candidate_eval_failed_count"] += 1
+                execution_errors.append(
+                    {
+                        "cdm_file": _path_for_report(cdm_path),
+                        "structured_vacancy_title": v_title,
+                        "structured_vacancy_company": v_company,
+                        "raw_vacancy_title": raw_vacancy_title,
+                        "candidate_id": candidate_id,
+                        "candidate_name": candidate_name,
+                        "error": "sourcing_assistant_execution_error",
+                        "details": raw_error,
+                    }
+                )
                 candidate_results.append(
                     {
                         "candidate_id": candidate_id,
@@ -1419,6 +1370,8 @@ def run_sourcing_assistant_dataset(
     avg_requirements_per_case = round((total_requirements_count / total), 2) if total else 0.0
     avg_backend_found_per_case = round((backend_total_found_sum / total), 2) if total else 0.0
     avg_candidates_evaluated_per_case = round((total_candidates_evaluated / total), 2) if total else 0.0
+    backend_execution_errors_count = sum(1 for err in execution_errors if err.get("candidate_id") is None)
+    candidate_execution_errors_count = sum(1 for err in execution_errors if err.get("candidate_id") is not None)
 
     issue_counter = Counter(
         reason for c in cases for reason in (c.get("contract_issues") or [])
@@ -1455,6 +1408,8 @@ def run_sourcing_assistant_dataset(
             "candidate_eval_failed": candidate_failures,
             "candidate_eval_pass_rate_pct": candidate_pass_rate,
             "execution_errors_count": len(execution_errors),
+            "backend_execution_errors_count": backend_execution_errors_count,
+            "candidate_execution_errors_count": candidate_execution_errors_count,
             "issue_occurrences": dict(issue_counter),
             "candidate_issue_occurrences": dict(candidate_issue_occurrences_total),
         },
