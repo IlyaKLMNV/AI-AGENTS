@@ -23,12 +23,18 @@
     "extractor_entities": {
       "positions": [
         {
-          "raw_text": "Backend Engineer (Marketplace)",
+          "raw_text": "Backend Engineer",
           "operator": "AND"
         }
       ],
       "level": [
         "senior"
+      ],
+      "keywords": [
+        {
+          "raw_text": "Marketplace",
+          "operator": "AND"
+        }
       ]
     }
   },

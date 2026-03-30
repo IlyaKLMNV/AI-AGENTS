@@ -29,15 +29,15 @@
       ],
       "skills": [
         {
-          "raw_text": "ИИ",
+          "raw_text": "artificial intelligence",
           "operator": "AND"
         },
         {
-          "raw_text": "Агенты",
+          "raw_text": "agent",
           "operator": "AND"
         },
         {
-          "raw_text": "Роботы",
+          "raw_text": "robot",
           "operator": "AND"
         }
       ]

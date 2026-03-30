@@ -23,12 +23,12 @@
     "extractor_entities": {
       "positions": [
         {
-          "raw_text": "Executive Director",
+          "raw_text": "CEO",
           "operator": "AND"
         },
         {
-          "raw_text": "CEO",
-          "operator": "OR"
+          "raw_text": "Исполнительный директор",
+          "operator": "AND"
         }
       ]
     }

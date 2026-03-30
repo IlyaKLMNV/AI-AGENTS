@@ -23,12 +23,9 @@
     "extractor_entities": {
       "positions": [
         {
-          "raw_text": "Automation QA Lead",
+          "raw_text": "QA Automation Lead",
           "operator": "AND"
         }
-      ],
-      "level": [
-        "lead"
       ]
     }
   },

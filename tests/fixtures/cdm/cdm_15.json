@@ -21,15 +21,28 @@
       "пентест"
     ],
     "extractor_entities": {
+      "skills": [
+        {
+          "raw_text": "penetration testing",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "web application",
+          "operator": "AND"
+        }
+      ],
       "positions": [
         {
-          "raw_text": "ведущий инженер по тестированию на проникновение веб-приложений",
+          "raw_text": "инженер по тестированию на проникновение веб-приложений",
           "operator": "OR"
         },
         {
-          "raw_text": "Senior penetration tester (Web)",
+          "raw_text": "penetration tester (Web)",
           "operator": "OR"
         }
+      ],
+      "level": [
+        "senior"
       ]
     }
   },

@@ -21,9 +21,19 @@
       "компьютерное зрение"
     ],
     "extractor_entities": {
+      "skills": [
+        {
+          "raw_text": "machine learning",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "computer vision",
+          "operator": "AND"
+        }
+      ],
       "positions": [
         {
-          "raw_text": "ML Engineer (Computer Vision)",
+          "raw_text": "ML Engineer",
           "operator": "AND"
         }
       ],

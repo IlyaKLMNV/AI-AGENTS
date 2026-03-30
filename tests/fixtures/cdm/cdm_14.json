@@ -24,7 +24,7 @@
       "positions": [
         {
           "raw_text": "Скриптолог",
-          "operator": "AND"
+          "operator": "OR"
         },
         {
           "raw_text": "Диалоговый архитектор",

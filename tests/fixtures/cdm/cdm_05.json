@@ -27,11 +27,14 @@
           "operator": "AND"
         }
       ],
-      "business_spheres": [
+      "keywords": [
         {
-          "raw_text": "Фин сектор / Банки",
+          "raw_text": "Payments",
           "operator": "AND"
         }
+      ],
+      "level": [
+        "lead"
       ]
     }
   },

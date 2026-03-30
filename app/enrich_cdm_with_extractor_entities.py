@@ -53,7 +53,7 @@ def _resolve_prompt_cfg(
     block = cfg.get("extractor_agent") if isinstance(cfg.get("extractor_agent"), dict) else {}
     prompt_id = prompt_id_override or block.get("prompt_id") or os.getenv("EXTRACTOR_AGENT_PROMPT_ID")
     prompt_version = prompt_version_override or block.get("prompt_version") or os.getenv("EXTRACTOR_AGENT_PROMPT_VERSION")
-    model = model_override or cfg.get("model") or ((cfg.get("openai") or {}).get("model")) or "gpt-4.1-mini"
+    model = model_override or cfg.get("model") or ((cfg.get("openai") or {}).get("model")) or "gpt-4.1"
     return PromptCfg(
         prompt_id=str(prompt_id) if prompt_id else None,
         prompt_version=str(prompt_version) if prompt_version else None,
