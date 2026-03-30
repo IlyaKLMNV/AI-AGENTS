@@ -19,7 +19,19 @@
       "LLM/RAG",
       "диалоговая архитектура",
       "API-интеграции"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Скриптолог",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "Диалоговый архитектор",
+          "operator": "OR"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

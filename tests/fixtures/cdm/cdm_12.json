@@ -19,7 +19,15 @@
       "Google Play Console",
       "Sensor Tower",
       "Apple Ads"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "ASO-менеджер",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

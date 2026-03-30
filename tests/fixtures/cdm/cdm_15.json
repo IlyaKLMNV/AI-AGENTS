@@ -19,7 +19,19 @@
       "Burp Suite",
       "SQL Injection/XSS/CSRF",
       "пентест"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "ведущий инженер по тестированию на проникновение веб-приложений",
+          "operator": "OR"
+        },
+        {
+          "raw_text": "Senior penetration tester (Web)",
+          "operator": "OR"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

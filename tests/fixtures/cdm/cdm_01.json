@@ -19,7 +19,18 @@
       "C#",
       "GitLab CI",
       "Docker"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Automation QA Lead",
+          "operator": "AND"
+        }
+      ],
+      "level": [
+        "lead"
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

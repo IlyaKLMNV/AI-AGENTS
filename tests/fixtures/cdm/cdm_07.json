@@ -19,7 +19,18 @@
       "PyTorch/TensorFlow",
       "машинное обучение",
       "компьютерное зрение"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "ML Engineer (Computer Vision)",
+          "operator": "AND"
+        }
+      ],
+      "level": [
+        "senior"
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

@@ -16,9 +16,9 @@ import yaml
 from openai import OpenAI
 
 try:
-    from app.extractor_agent_runner import BackendCfg, call_backend_search_bool
+    from app.extractor_agent_runner import BackendCfg, build_step3_payload, call_backend_search_bool
 except Exception:
-    from extractor_agent_runner import BackendCfg, call_backend_search_bool  # type: ignore
+    from extractor_agent_runner import BackendCfg, build_step3_payload, call_backend_search_bool  # type: ignore
 
 # Repo root: if this file is in app/, parents[1] is repo root.
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -30,7 +30,6 @@ REPORTS_DIR = ROOT / "tests" / "reports" / "sourcing_assistant"
 REPORT_VERBOSITY_VALUES = ("compact", "standard", "full")
 REQUIREMENTS_SOURCE_VALUES = ("cdm_key_requirements", "stack_skills", "responsibilities_parser")
 SAMPLE_MODE_VALUES = ("first", "random")
-NON_GEO_LOCATIONS = {"remote", "hybrid", "office", "onsite", "on-site", "удаленно", "удалённо", "офис"}
 
 
 def _log(quiet: bool, msg: str) -> None:
@@ -249,12 +248,6 @@ def _extract_raw_vacancy_title(vacancy: Dict[str, Any]) -> str:
     return ""
 
 
-def _search_title_variants(vacancy: Dict[str, Any]) -> List[str]:
-    title = re.sub(r"\s+", " ", str(vacancy.get("title") or "").strip())
-    raw_title = _extract_raw_vacancy_title(vacancy)
-    return _dedupe_preserve_order([x for x in [title, raw_title] if x])
-
-
 def _parse_json_array_strict(raw: str) -> List[Any]:
     if not raw:
         raise ValueError("empty output")
@@ -389,6 +382,7 @@ class SourcingAssistantRunner:
         if prompt_version:
             self.prompt["version"] = str(prompt_version)
         self.last_usage: Any = None
+        self.last_output_text: str = ""
 
     def run(self, requirements: List[str], profile: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
         payload = {"requirements": requirements, "profile": profile}
@@ -398,6 +392,7 @@ class SourcingAssistantRunner:
         )
         self.last_usage = getattr(resp, "usage", None)
         raw = (getattr(resp, "output_text", "") or "").strip()
+        self.last_output_text = raw
         items = _parse_json_array_of_objects(raw)
         return items, raw
 
@@ -480,20 +475,11 @@ def _requirements_from_stack_skills(vacancy: Dict[str, Any]) -> List[str]:
     return merged[:5]
 
 
-def _is_real_geo_value(value: Any) -> bool:
-    text = re.sub(r"\s+", " ", str(value or "").strip()).lower()
-    return bool(text) and text not in NON_GEO_LOCATIONS
-
-
 def _build_backend_search_payload(
     vacancy: Dict[str, Any],
-    requirements: List[str],
     candidate_pool_size: int,
-    title_override: Optional[str] = None,
-    include_requirements: bool = True,
-    include_geo: bool = True,
 ) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
+    base_payload: Dict[str, Any] = {
         "limit": int(candidate_pool_size),
         "offset": 0,
         "onlyWithContacts": True,
@@ -502,163 +488,89 @@ def _build_backend_search_payload(
         "highlight": True,
     }
 
-    title = re.sub(r"\s+", " ", str(title_override if title_override is not None else (vacancy.get("title") or "")).strip())
-    if title:
-        payload["positions"] = [["all", [title]]]
+    title = re.sub(r"\s+", " ", str(vacancy.get("title") or "").strip())
+    extractor_entities = vacancy.get("extractor_entities")
+    if not title or not isinstance(extractor_entities, dict):
+        return dict(base_payload)
 
-    reqs = _dedupe_preserve_order([re.sub(r"\s+", " ", str(x).strip()) for x in requirements if str(x).strip()])
-    if include_requirements and reqs:
-        payload["keys"] = [["or", reqs]]
-
-    location = vacancy.get("location")
-    if include_geo and _is_real_geo_value(location):
-        payload["geos"] = [["or", [re.sub(r"\s+", " ", str(location).strip())]]]
-
-    return payload
+    return build_step3_payload(
+        extractor_json=extractor_entities,
+        user_phrase=title,
+        base_payload=base_payload,
+        sanitize_office_geo=True,
+    )
 
 
 def _search_backend_candidates(
     vacancy: Dict[str, Any],
-    requirements: List[str],
     candidate_pool_size: int,
     backend_cfg: BackendCfg,
     token: str,
 ) -> Dict[str, Any]:
-    title_variants = _search_title_variants(vacancy)
-    search_specs: List[Tuple[str, Dict[str, Any]]] = []
-
-    def add_spec(label: str, payload: Dict[str, Any]) -> None:
-        if ("positions" not in payload) and ("keys" not in payload):
-            return
-        search_specs.append((label, payload))
-
-    if title_variants:
-        add_spec(
-            "title+requirements+geo",
-            _build_backend_search_payload(
-                vacancy=vacancy,
-                requirements=requirements,
-                candidate_pool_size=candidate_pool_size,
-                title_override=title_variants[0],
-                include_requirements=True,
-                include_geo=True,
-            ),
-        )
-
-    for alt_title in title_variants[1:]:
-        add_spec(
-            "raw_title+requirements+geo",
-            _build_backend_search_payload(
-                vacancy=vacancy,
-                requirements=requirements,
-                candidate_pool_size=candidate_pool_size,
-                title_override=alt_title,
-                include_requirements=True,
-                include_geo=True,
-            ),
-        )
-
-    if title_variants:
-        add_spec(
-            "title_only+geo",
-            _build_backend_search_payload(
-                vacancy=vacancy,
-                requirements=requirements,
-                candidate_pool_size=candidate_pool_size,
-                title_override=title_variants[0],
-                include_requirements=False,
-                include_geo=True,
-            ),
-        )
-
-    add_spec(
-        "requirements_only+geo",
-        _build_backend_search_payload(
-            vacancy=vacancy,
-            requirements=requirements,
-            candidate_pool_size=candidate_pool_size,
-            title_override="",
-            include_requirements=True,
-            include_geo=True,
-        ),
-    )
-
-    if title_variants:
-        add_spec(
-            "title_only",
-            _build_backend_search_payload(
-                vacancy=vacancy,
-                requirements=requirements,
-                candidate_pool_size=candidate_pool_size,
-                title_override=title_variants[0],
-                include_requirements=False,
-                include_geo=False,
-            ),
-        )
-
-    add_spec(
-        "requirements_only",
-        _build_backend_search_payload(
-            vacancy=vacancy,
-            requirements=requirements,
-            candidate_pool_size=candidate_pool_size,
-            title_override="",
-            include_requirements=True,
-            include_geo=False,
-        ),
-    )
-
-    total_attempts = 0
-    best_result: Optional[Dict[str, Any]] = None
-    tried_labels: List[str] = []
-
-    for label, payload in search_specs:
-        tried_labels.append(label)
-        kind, status_code, attempts, found_count, backend_error, backend_response = call_backend_search_bool(
-            backend=backend_cfg,
-            token=token,
-            payload=payload,
-        )
-        total_attempts += int(attempts or 0)
-
-        profiles: List[Dict[str, Any]] = []
-        if isinstance(backend_response, dict) and isinstance(backend_response.get("profiles"), list):
-            profiles = [p for p in (backend_response.get("profiles") or []) if isinstance(p, dict)]
-
-        current = {
-            "kind": kind,
-            "status_code": status_code,
-            "attempts_total": total_attempts,
-            "found_count": int(found_count or 0),
-            "backend_error": backend_error,
-            "backend_response": backend_response,
-            "backend_profiles": profiles,
-            "search_strategy": label,
-            "search_payload": payload,
-            "search_strategies_tried": list(tried_labels),
+    title = re.sub(r"\s+", " ", str(vacancy.get("title") or "").strip())
+    extractor_entities = vacancy.get("extractor_entities")
+    if not title:
+        return {
+            "kind": "no_title_in_cdm",
+            "status_code": 0,
+            "attempts_total": 0,
+            "found_count": 0,
+            "backend_error": "no_title_in_cdm",
+            "backend_response": None,
+            "backend_profiles": [],
+            "search_strategy": None,
+            "search_payload": {},
+        }
+    if not isinstance(extractor_entities, dict):
+        return {
+            "kind": "no_search_entities_in_cdm",
+            "status_code": 0,
+            "attempts_total": 0,
+            "found_count": 0,
+            "backend_error": "no_search_entities_in_cdm",
+            "backend_response": None,
+            "backend_profiles": [],
+            "search_strategy": None,
+            "search_payload": {},
         }
 
-        if best_result is None:
-            best_result = current
-        elif current["found_count"] > int(best_result.get("found_count") or 0):
-            best_result = current
-        elif current["found_count"] == int(best_result.get("found_count") or 0) and len(profiles) > len(best_result.get("backend_profiles") or []):
-            best_result = current
+    payload = _build_backend_search_payload(
+        vacancy=vacancy,
+        candidate_pool_size=candidate_pool_size,
+    )
+    if not any(key in payload for key in ("positions", "skills", "keys")):
+        return {
+            "kind": "no_search_entities_in_cdm",
+            "status_code": 0,
+            "attempts_total": 0,
+            "found_count": 0,
+            "backend_error": "no_search_entities_in_cdm",
+            "backend_response": None,
+            "backend_profiles": [],
+            "search_strategy": None,
+            "search_payload": payload,
+        }
 
-        if kind == "success" and profiles:
-            return current
+    kind, status_code, attempts, found_count, backend_error, backend_response = call_backend_search_bool(
+        backend=backend_cfg,
+        token=token,
+        payload=payload,
+    )
 
-    return best_result or {
-        "kind": "backend_search_not_attempted",
-        "status_code": 0,
-        "attempts_total": 0,
-        "found_count": 0,
-        "backend_error": "backend_search_not_attempted",
-        "backend_response": None,
-        "backend_profiles": [],
-        "search_strategy": None,
-        "search_payload": None,
-        "search_strategies_tried": [],
+    profiles: List[Dict[str, Any]] = []
+    if isinstance(backend_response, dict) and isinstance(backend_response.get("profiles"), list):
+        profiles = [p for p in (backend_response.get("profiles") or []) if isinstance(p, dict)]
+
+    return {
+        "kind": kind,
+        "status_code": int(status_code or 0),
+        "attempts_total": int(attempts or 0),
+        "found_count": int(found_count or 0),
+        "backend_error": backend_error,
+        "backend_response": backend_response,
+        "backend_profiles": profiles,
+        "search_strategy": "cdm_extractor_entities",
+        "search_payload": payload,
     }
 
 
@@ -735,6 +647,60 @@ def _build_profile_from_backend_candidate(candidate: Dict[str, Any]) -> Dict[str
         "about": re.sub(r"\s+", " ", str(candidate.get("about") or "").strip()),
         "skills": skills_out,
         "positions": positions_out,
+    }
+
+
+def _flatten_profile_for_report(profile: Dict[str, Any]) -> Dict[str, Any]:
+    skills_csv = ", ".join(
+        re.sub(r"\s+", " ", str(skill.get("skill") or "").strip())
+        for skill in (profile.get("skills") or [])
+        if isinstance(skill, dict) and str(skill.get("skill") or "").strip()
+    )
+
+    positions_flat: List[str] = []
+    for pos in (profile.get("positions") or []):
+        if not isinstance(pos, dict):
+            continue
+
+        company_name = re.sub(r"\s+", " ", str(pos.get("name") or "").strip())
+        position_name = re.sub(r"\s+", " ", str(pos.get("pos") or "").strip())
+        range_str = re.sub(r"\s+", " ", str(pos.get("rangeStr") or "").strip())
+        positions_norm = ", ".join(
+            re.sub(r"\s+", " ", str(value).strip())
+            for value in (pos.get("positions_norm") or [])
+            if isinstance(value, str) and str(value).strip()
+        )
+        categories = ", ".join(
+            re.sub(r"\s+", " ", str(cat.get("title") or "").strip())
+            for cat in ((pos.get("company_norm") or {}).get("categories") or [])
+            if isinstance(cat, dict) and str(cat.get("title") or "").strip()
+        )
+        dates = ", ".join(
+            re.sub(r"\s+", " ", str(value).strip())
+            for value in (pos.get("dates") or [])
+            if str(value).strip()
+        )
+
+        parts = [
+            f"company={company_name}",
+            f"pos={position_name}",
+        ]
+        if dates:
+            parts.append(f"dates={dates}")
+        if range_str:
+            parts.append(f"range={range_str}")
+        if positions_norm:
+            parts.append(f"positions_norm={positions_norm}")
+        if categories:
+            parts.append(f"categories={categories}")
+        if str(pos.get("description") or "").strip():
+            parts.append(f"description={_strip_html(pos.get('description'))}")
+        positions_flat.append(" | ".join(part for part in parts if part and not part.endswith("=")))
+
+    return {
+        "about": _strip_html(profile.get("about")),
+        "skills": skills_csv,
+        "positions": positions_flat,
     }
 
 
@@ -816,12 +782,6 @@ def _validate_output_item_shape(item: Dict[str, Any]) -> List[str]:
     if "passed" in item and (not isinstance(item["passed"], int) or item["passed"] not in (0, 1)):
         reasons.append("passed_not_0_1")
 
-    c = item.get("comment") if isinstance(item.get("comment"), str) else ""
-    if "\n" in c or "\r" in c:
-        reasons.append("comment_has_newlines")
-    if len(c) > 220:
-        reasons.append("comment_too_long>220")
-
     return reasons
 
 
@@ -854,12 +814,6 @@ def _run_case_strict(requirements: List[str], expected_passed: List[int], predic
         if item.get("passed") != exp_pass:
             item_reasons.append("passed_mismatch")
 
-        # if passed=0 -> must include phrase
-        if exp_pass == 0:
-            c = (item.get("comment") or "")
-            if not isinstance(c, str) or "в резюме не указано" not in c.lower():
-                item_reasons.append('missing_phrase_required("в резюме не указано")')
-
         ok = len(item_reasons) == 0
         per_item.append(
             {
@@ -889,7 +843,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
         "shape_fail_count": 0,
         "requirement_not_exact_count": 0,
         "passed_mismatch_count": 0,
-        "comment_contract_fail_count": 0,
     }
 
     if len(predicted) != len(requirements):
@@ -900,6 +853,7 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
         item = predicted[i]
         exp_req = requirements[i]
         exp_pass = expected_passed[i]
+        actual_comment = item.get("comment") if isinstance(item, dict) else None
 
         if not isinstance(item, dict):
             checks["shape_fail_count"] += 1
@@ -910,6 +864,7 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
                     "actual_requirement": None,
                     "expected_passed": exp_pass,
                     "actual_passed": None,
+                    "actual_comment": None,
                     "issues": ["item_not_object"],
                 }
             )
@@ -927,13 +882,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
             item_issues.append("passed_mismatch")
             checks["passed_mismatch_count"] += 1
 
-        actual_passed = item.get("passed")
-        if actual_passed == 0:
-            comment = item.get("comment")
-            if not isinstance(comment, str) or "в резюме не указано" not in comment.lower():
-                item_issues.append('missing_phrase_required("в резюме не указано")')
-                checks["comment_contract_fail_count"] += 1
-
         if item_issues:
             failed_items.append(
                 {
@@ -942,6 +890,7 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
                     "actual_requirement": item.get("requirement"),
                     "expected_passed": exp_pass,
                     "actual_passed": item.get("passed"),
+                    "actual_comment": actual_comment,
                     "issues": item_issues,
                 }
             )
@@ -954,8 +903,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
         issues.append("requirement_not_exact")
     if checks["passed_mismatch_count"] > 0:
         issues.append("passed_mismatch")
-    if checks["comment_contract_fail_count"] > 0:
-        issues.append("comment_contract_failed")
 
     return len(issues) == 0, issues, {"checks": checks, "failed_items": failed_items}
 
@@ -972,6 +919,9 @@ def _compact_failed_items(failed_items: List[Dict[str, Any]]) -> List[Dict[str, 
         actual_requirement = item.get("actual_requirement")
         if actual_requirement is not None and actual_requirement != item.get("expected_requirement"):
             compact["actual_requirement"] = actual_requirement
+        actual_comment = item.get("actual_comment")
+        if isinstance(actual_comment, str):
+            compact["actual_comment"] = actual_comment
         out.append(compact)
     return out
 
@@ -1106,9 +1056,6 @@ def run_sourcing_assistant_dataset(
     execution_errors: List[Dict[str, Any]] = []
     total_candidates_evaluated = 0
     total_candidates_passed = 0
-    backend_total_found_sum = 0
-    candidate_issue_occurrences_total: Counter[str] = Counter()
-    total_requirements_count = 0
 
     for cdm_path in cdm_paths:
         cdm = load_json(cdm_path)
@@ -1144,26 +1091,45 @@ def run_sourcing_assistant_dataset(
                 }
             )
             continue
-        total_requirements_count += len(requirements)
-
-        # 2) backend search for real candidates with fallback strategies
+        # 2) backend search for real candidates using extractor entities stored in CDM
         search_result = _search_backend_candidates(
             vacancy=vacancy,
-            requirements=requirements,
             candidate_pool_size=candidate_pool_size,
             backend_cfg=backend_cfg,
             token=token,
         )
         kind = str(search_result.get("kind") or "")
         status_code = int(search_result.get("status_code") or 0)
-        attempts = int(search_result.get("attempts_total") or 0)
         found_count = int(search_result.get("found_count") or 0)
         backend_error = search_result.get("backend_error")
         backend_profiles = [p for p in (search_result.get("backend_profiles") or []) if isinstance(p, dict)]
         search_strategy = search_result.get("search_strategy")
-        search_strategies_tried = search_result.get("search_strategies_tried") or []
+        search_payload = search_result.get("search_payload")
 
-        if kind != "success" and not backend_profiles:
+        if kind in {"no_title_in_cdm", "no_search_entities_in_cdm"}:
+            case_rec: Dict[str, Any] = {
+                "cdm_file": _path_for_report(cdm_path),
+                "structured_vacancy_title": v_title,
+                "structured_vacancy_company": v_company,
+                "raw_vacancy_title": raw_vacancy_title,
+                "key_requirements": requirements,
+                "passed": False,
+                "search_status": kind,
+                "contract_issues": [],
+                "backend_found_count": 0,
+                "backend_profiles_evaluated": 0,
+                "backend_candidates_passed": 0,
+                "search_strategy": None,
+            }
+            if report_verbosity in {"standard", "full"}:
+                case_rec["candidate_results"] = []
+            if report_verbosity == "full":
+                case_rec["backend_search_payload_used"] = search_payload
+            cases.append(case_rec)
+            _log(quiet, f"[case] cdm={cdm_path.name} title={v_title} search_status={kind}")
+            continue
+
+        if kind != "success":
             execution_errors.append(
                 {
                     "cdm_file": _path_for_report(cdm_path),
@@ -1175,13 +1141,61 @@ def run_sourcing_assistant_dataset(
                     "http_status": status_code,
                     "backend_found_count": found_count,
                     "search_strategy": search_strategy,
-                    "search_strategies_tried": search_strategies_tried,
+                    "backend_search_payload_used": search_payload,
                 }
             )
+            case_rec = {
+                "cdm_file": _path_for_report(cdm_path),
+                "structured_vacancy_title": v_title,
+                "structured_vacancy_company": v_company,
+                "raw_vacancy_title": raw_vacancy_title,
+                "key_requirements": requirements,
+                "passed": False,
+                "search_status": "backend_error",
+                "contract_issues": [],
+                "backend_found_count": int(found_count or 0),
+                "backend_profiles_evaluated": 0,
+                "backend_candidates_passed": 0,
+                "search_strategy": search_strategy,
+                "backend_error": backend_error or kind,
+                "http_status": status_code,
+            }
+            if report_verbosity in {"standard", "full"}:
+                case_rec["candidate_results"] = []
+            if report_verbosity == "full":
+                case_rec["backend_search_payload_used"] = search_payload
+            cases.append(case_rec)
             _log(
                 quiet,
                 f"[err] cdm={cdm_path.name} title={v_title} company={v_company} "
                 f"backend_kind={kind} status={status_code} error={backend_error}",
+            )
+            continue
+
+        if found_count <= 0 and not backend_profiles:
+            case_rec = {
+                "cdm_file": _path_for_report(cdm_path),
+                "structured_vacancy_title": v_title,
+                "structured_vacancy_company": v_company,
+                "raw_vacancy_title": raw_vacancy_title,
+                "key_requirements": requirements,
+                "passed": False,
+                "search_status": "no_candidates_found",
+                "contract_issues": [],
+                "backend_found_count": int(found_count or 0),
+                "backend_profiles_evaluated": 0,
+                "backend_candidates_passed": 0,
+                "search_strategy": search_strategy,
+                "http_status": status_code,
+            }
+            if report_verbosity in {"standard", "full"}:
+                case_rec["candidate_results"] = []
+            if report_verbosity == "full":
+                case_rec["backend_search_payload_used"] = search_payload
+            cases.append(case_rec)
+            _log(
+                quiet,
+                f"[case] cdm={cdm_path.name} title={v_title} backend_found=0 search_status=no_candidates_found",
             )
             continue
 
@@ -1192,14 +1206,38 @@ def run_sourcing_assistant_dataset(
                     "structured_vacancy_title": v_title,
                     "structured_vacancy_company": v_company,
                     "raw_vacancy_title": raw_vacancy_title,
-                    "error": "no_profiles_returned",
+                    "error": "profiles_missing_in_backend_response",
                     "http_status": status_code,
                     "backend_found_count": found_count,
                     "search_strategy": search_strategy,
-                    "search_strategies_tried": search_strategies_tried,
+                    "backend_search_payload_used": search_payload,
                 }
             )
-            _log(quiet, f"[err] cdm={cdm_path.name} title={v_title} company={v_company} error=no_profiles_returned")
+            case_rec = {
+                "cdm_file": _path_for_report(cdm_path),
+                "structured_vacancy_title": v_title,
+                "structured_vacancy_company": v_company,
+                "raw_vacancy_title": raw_vacancy_title,
+                "key_requirements": requirements,
+                "passed": False,
+                "search_status": "backend_error",
+                "contract_issues": [],
+                "backend_found_count": int(found_count or 0),
+                "backend_profiles_evaluated": 0,
+                "backend_candidates_passed": 0,
+                "search_strategy": search_strategy,
+                "backend_error": "profiles_missing_in_backend_response",
+                "http_status": status_code,
+            }
+            if report_verbosity in {"standard", "full"}:
+                case_rec["candidate_results"] = []
+            if report_verbosity == "full":
+                case_rec["backend_search_payload_used"] = search_payload
+            cases.append(case_rec)
+            _log(
+                quiet,
+                f"[err] cdm={cdm_path.name} title={v_title} status={status_code} error=profiles_missing_in_backend_response",
+            )
             continue
 
         sampled_profiles = _sample_backend_profiles(
@@ -1218,12 +1256,29 @@ def run_sourcing_assistant_dataset(
                     "error": "no_profiles_sampled",
                     "backend_found_count": found_count,
                     "search_strategy": search_strategy,
-                    "search_strategies_tried": search_strategies_tried,
+                    "backend_search_payload_used": search_payload,
                 }
             )
+            case_rec = {
+                "cdm_file": _path_for_report(cdm_path),
+                "structured_vacancy_title": v_title,
+                "structured_vacancy_company": v_company,
+                "raw_vacancy_title": raw_vacancy_title,
+                "key_requirements": requirements,
+                "passed": False,
+                "search_status": "sampling_error",
+                "contract_issues": [],
+                "backend_found_count": int(found_count or 0),
+                "backend_profiles_evaluated": 0,
+                "backend_candidates_passed": 0,
+                "search_strategy": search_strategy,
+            }
+            if report_verbosity in {"standard", "full"}:
+                case_rec["candidate_results"] = []
+            if report_verbosity == "full":
+                case_rec["backend_search_payload_used"] = search_payload
+            cases.append(case_rec)
             continue
-
-        backend_total_found_sum += int(found_count or 0)
 
         candidate_results: List[Dict[str, Any]] = []
         case_issue_counter: Counter[str] = Counter()
@@ -1236,19 +1291,20 @@ def run_sourcing_assistant_dataset(
             "shape_fail_count": 0,
             "requirement_not_exact_count": 0,
             "passed_mismatch_count": 0,
-            "comment_contract_fail_count": 0,
             "failed_items_count": 0,
         }
         case_passed = True
 
         for candidate in sampled_profiles:
             profile = _build_profile_from_backend_candidate(candidate)
+            profile_flat = _flatten_profile_for_report(profile)
             expected_passed = [_expected_passed_for_requirement(req, profile) for req in requirements]
 
             predicted: List[Dict[str, Any]] = []
+            raw_output = ""
             raw_error: Optional[str] = None
             try:
-                predicted, _ = sa_runner.run(requirements=requirements, profile=profile)
+                predicted, raw_output = sa_runner.run(requirements=requirements, profile=profile)
                 _accumulate_usage(token_usage_total, sa_runner.last_usage)
             except Exception as e:
                 raw_error = repr(e)
@@ -1260,9 +1316,9 @@ def run_sourcing_assistant_dataset(
             if raw_error is not None:
                 case_passed = False
                 case_issue_counter["execution_error"] += 1
-                candidate_issue_occurrences_total["execution_error"] += 1
                 case_checks["execution_error_count"] += 1
                 case_checks["candidate_eval_failed_count"] += 1
+                raw_output = sa_runner.last_output_text or ""
                 execution_errors.append(
                     {
                         "cdm_file": _path_for_report(cdm_path),
@@ -1273,16 +1329,19 @@ def run_sourcing_assistant_dataset(
                         "candidate_name": candidate_name,
                         "error": "sourcing_assistant_execution_error",
                         "details": raw_error,
+                        "prompt_output_raw": raw_output,
                     }
                 )
-                candidate_results.append(
-                    {
-                        "candidate_id": candidate_id,
-                        "candidate_name": candidate_name,
-                        "passed": False,
-                        "contract_issues": ["execution_error"],
-                    }
-                )
+                candidate_rec = {
+                    "candidate_id": candidate_id,
+                    "candidate_name": candidate_name,
+                    "passed": False,
+                    "contract_issues": ["execution_error"],
+                }
+                if report_verbosity == "full":
+                    candidate_rec["prompt_input_flat"] = profile_flat
+                    candidate_rec["prompt_output_raw"] = raw_output
+                candidate_results.append(candidate_rec)
                 continue
 
             candidate_passed, candidate_issues, candidate_details = _run_case_contract(
@@ -1299,13 +1358,11 @@ def run_sourcing_assistant_dataset(
 
             for issue in candidate_issues:
                 case_issue_counter[issue] += 1
-                candidate_issue_occurrences_total[issue] += 1
 
             candidate_checks = candidate_details["checks"]
             case_checks["shape_fail_count"] += int(candidate_checks.get("shape_fail_count", 0))
             case_checks["requirement_not_exact_count"] += int(candidate_checks.get("requirement_not_exact_count", 0))
             case_checks["passed_mismatch_count"] += int(candidate_checks.get("passed_mismatch_count", 0))
-            case_checks["comment_contract_fail_count"] += int(candidate_checks.get("comment_contract_fail_count", 0))
             case_checks["failed_items_count"] += int(candidate_checks.get("failed_items_count", 0))
 
             candidate_rec: Dict[str, Any] = {
@@ -1320,6 +1377,10 @@ def run_sourcing_assistant_dataset(
                 if failed_items:
                     candidate_rec["failed_requirements"] = _compact_failed_items(failed_items)
 
+            if report_verbosity == "full":
+                candidate_rec["prompt_input_flat"] = profile_flat
+                candidate_rec["prompt_output"] = predicted
+
             candidate_results.append(candidate_rec)
 
         candidates_passed = sum(1 for item in candidate_results if item.get("passed"))
@@ -1331,6 +1392,7 @@ def run_sourcing_assistant_dataset(
             "raw_vacancy_title": raw_vacancy_title,
             "key_requirements": requirements,
             "passed": case_passed,
+            "search_status": "evaluated",
             "contract_issues": sorted(case_issue_counter.keys()),
             "backend_found_count": int(found_count or 0),
             "backend_profiles_evaluated": len(candidate_results),
@@ -1339,12 +1401,10 @@ def run_sourcing_assistant_dataset(
         }
 
         if report_verbosity in {"standard", "full"}:
-            case_rec["candidate_issue_occurrences"] = dict(case_issue_counter)
             case_rec["candidate_results"] = candidate_results
 
         if report_verbosity == "full":
-            case_rec["backend_profiles_returned"] = len(backend_profiles)
-            case_rec["search_strategies_tried"] = search_strategies_tried
+            case_rec["backend_search_payload_used"] = search_payload
 
         cases.append({k: v for k, v in case_rec.items() if v is not None})
 
@@ -1362,20 +1422,14 @@ def run_sourcing_assistant_dataset(
         )
 
     total = len(cases)
-    passed_n = sum(1 for c in cases if c.get("passed"))
-    failed_n = total - passed_n
-    pass_rate = round((passed_n / total * 100.0), 2) if total else 0.0
+    search_status_counter = Counter(str(c.get("search_status") or "unknown") for c in cases)
+    evaluated_cases = [c for c in cases if c.get("search_status") == "evaluated"]
+    evaluated_total = len(evaluated_cases)
+    passed_n = sum(1 for c in evaluated_cases if c.get("passed"))
+    failed_n = evaluated_total - passed_n
+    pass_rate = round((passed_n / evaluated_total * 100.0), 2) if evaluated_total else 0.0
     candidate_failures = total_candidates_evaluated - total_candidates_passed
     candidate_pass_rate = round((total_candidates_passed / total_candidates_evaluated * 100.0), 2) if total_candidates_evaluated else 0.0
-    avg_requirements_per_case = round((total_requirements_count / total), 2) if total else 0.0
-    avg_backend_found_per_case = round((backend_total_found_sum / total), 2) if total else 0.0
-    avg_candidates_evaluated_per_case = round((total_candidates_evaluated / total), 2) if total else 0.0
-    backend_execution_errors_count = sum(1 for err in execution_errors if err.get("candidate_id") is None)
-    candidate_execution_errors_count = sum(1 for err in execution_errors if err.get("candidate_id") is not None)
-
-    issue_counter = Counter(
-        reason for c in cases for reason in (c.get("contract_issues") or [])
-    )
 
     report: Dict[str, Any] = {
         "run_id": run_id,
@@ -1397,21 +1451,18 @@ def run_sourcing_assistant_dataset(
         "token_usage_total": token_usage_total,
         "summary": {
             "total_cases": total,
+            "evaluated_cases": evaluated_total,
+            "cases_without_candidates": int(search_status_counter.get("no_candidates_found", 0)),
+            "cases_with_backend_error": int(search_status_counter.get("backend_error", 0)),
+            "cases_without_title": int(search_status_counter.get("no_title_in_cdm", 0)),
             "passed": passed_n,
             "failed": failed_n,
             "pass_rate_pct": pass_rate,
-            "avg_requirements_per_case": avg_requirements_per_case,
-            "avg_backend_found_per_case": avg_backend_found_per_case,
-            "avg_candidates_evaluated_per_case": avg_candidates_evaluated_per_case,
             "total_candidates_evaluated": total_candidates_evaluated,
             "candidate_eval_passed": total_candidates_passed,
             "candidate_eval_failed": candidate_failures,
             "candidate_eval_pass_rate_pct": candidate_pass_rate,
             "execution_errors_count": len(execution_errors),
-            "backend_execution_errors_count": backend_execution_errors_count,
-            "candidate_execution_errors_count": candidate_execution_errors_count,
-            "issue_occurrences": dict(issue_counter),
-            "candidate_issue_occurrences": dict(candidate_issue_occurrences_total),
         },
         "cases": cases,
         "execution_errors": execution_errors,
@@ -1424,6 +1475,7 @@ def run_sourcing_assistant_dataset(
         quiet,
         "[summary] "
         f"total_cases={total} "
+        f"evaluated_cases={evaluated_total} "
         f"passed={passed_n} "
         f"pass_rate={pass_rate:.2f}% "
         f"candidates={total_candidates_evaluated} "
@@ -1438,7 +1490,7 @@ def run_sourcing_assistant_dataset(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run sourcing_assistant over real backend candidates fetched for CDM vacancies with strict deterministic evaluation."
+        description="Run sourcing_assistant over real backend candidates fetched from backend payloads built from CDM extractor entities."
     )
     parser.add_argument(
         "--cdm-dir",
@@ -1472,14 +1524,14 @@ def main() -> None:
     parser.add_argument("--step3-retries", type=int, default=2, help="Backend retries.")
     parser.add_argument("--token-in-body", dest="token_in_body", action="store_true", default=True)
     parser.add_argument("--token-in-header", dest="token_in_body", action="store_false")
-    parser.add_argument("--candidate-pool-size", type=int, default=100, help="How many backend profiles to fetch per vacancy.")
-    parser.add_argument("--candidate-sample-size", type=int, default=10, help="How many fetched profiles to evaluate.")
+    parser.add_argument("--candidate-pool-size", type=int, default=100, help="How many backend profiles to fetch per vacancy from backend search.")
+    parser.add_argument("--candidate-sample-size", type=int, default=10, help="How many fetched profiles to evaluate with sourcing_assistant.")
     parser.add_argument(
         "--sample-mode",
         type=str,
         choices=list(SAMPLE_MODE_VALUES),
         default="first",
-        help="How to choose evaluated candidates from fetched backend profiles.",
+        help="How to choose evaluated candidates from fetched backend profiles returned by backend search.",
     )
     parser.add_argument("--quiet", action="store_true", help="Disable console output.")
 

@@ -19,7 +19,18 @@
       "Airflow",
       "SQL",
       "Data Quality"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Head of Data Platform",
+          "operator": "AND"
+        }
+      ],
+      "level": [
+        "head"
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

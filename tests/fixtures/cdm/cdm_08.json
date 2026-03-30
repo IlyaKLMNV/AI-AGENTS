@@ -19,7 +19,15 @@
       "1C/CRM",
       "автоклавное/вакуумное формование",
       "знание английского"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Продукт-менеджер",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

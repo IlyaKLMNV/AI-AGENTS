@@ -19,7 +19,21 @@
       "Deep Learning",
       "RecSys",
       "Spark"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Lead Data Scientist",
+          "operator": "AND"
+        }
+      ],
+      "business_spheres": [
+        {
+          "raw_text": "Фин сектор / Банки",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

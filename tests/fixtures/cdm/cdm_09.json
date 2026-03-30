@@ -19,7 +19,15 @@
       "Shorts/TikTok/Reels",
       "видеомонтаж",
       "работа с ИИ"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Engineering Manager (Analytics)",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

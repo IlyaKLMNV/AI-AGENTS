@@ -19,7 +19,29 @@
       "CV модели",
       "transformers",
       "fine-tuning"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Главный архитектор",
+          "operator": "AND"
+        }
+      ],
+      "skills": [
+        {
+          "raw_text": "ИИ",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "Агенты",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "Роботы",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

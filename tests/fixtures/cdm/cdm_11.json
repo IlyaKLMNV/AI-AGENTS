@@ -19,7 +19,15 @@
       "техническое письмо",
       "локализация",
       "базовые знания IT"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Стажер технический писатель",
+          "operator": "AND"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

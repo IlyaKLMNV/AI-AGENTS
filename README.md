@@ -1,6 +1,6 @@
 ﻿# AI Agents Workspace
 
-Набор раннеров для тестирования рекрутмент-промптов. Включает полный интеграционный прогон и отдельные проверки для `screening_assistant`, `message_classifier`, `screening_autofill`, `verdict_classifier`, `extractor_agent` и генератора первого касания (Telegram).
+Набор раннеров для тестирования рекрутмент-промптов. Включает полный интеграционный прогон и отдельные проверки для `screening_assistant`, `message_classifier`, `screening_autofill`, `verdict_classifier`, `extractor_agent`, `sourcing_assistant` и генератора первого касания (Telegram).
 
 ## Структура проекта
 - `app/` — CLI-раннеры.
@@ -43,6 +43,7 @@ OPENAI_API_KEY=sk-...
 - `screening_autofill`
 - `verdict_classifier`
 - `extractor_agent`
+- `sourcing_assistant`
 - `candidate_simulator` (профили кандидатов для `app/runner.py`)
 
 Переменные окружения для переопределения:
@@ -50,9 +51,12 @@ OPENAI_API_KEY=sk-...
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
 - `VERDICT_CLASSIFIER_PROMPT_ID`, `VERDICT_CLASSIFIER_PROMPT_VERSION` — для `app/verdict_classifier_runner.py`.
 - `EXTRACTOR_AGENT_PROMPT_ID`, `EXTRACTOR_AGENT_PROMPT_VERSION` — для `app/extractor_agent_runner.py`.
+- `SOURCING_ASSISTANT_PROMPT_ID`, `SOURCING_ASSISTANT_PROMPT_VERSION` — для `app/sourcing_assistant_runner.py`.
 
 ## Фикстуры и данные
 - `tests/fixtures/cdm/` — CDM-фикстуры вакансий (генерируются `python -m app.runner gen-fixtures`).
+  Для `sourcing_assistant_runner.py` в `vacancy` дополнительно используются:
+  `key_requirements` — список ключевых требований для матчинга и `extractor_entities` — сохранённый `extractor_json` для backend search.
 - `tests/fixtures/screening_scenarios.csv` — сценарии для проверки `screening_assistant`.
 - `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py`.
 - `cdm/schema.json` — схема CDM.
@@ -169,6 +173,46 @@ python app/extractor_agent_runner.py \
 Отчеты:
 - `tests/reports/extractor_agent_full/extractor_agent_full_report_<run_id>.json`
 - В каждом кейсе сохраняются `extractor_json` и `step3_payload` (распашенно) для дебага маппинга.
+
+### `app/enrich_cdm_with_extractor_entities.py` — заполнение `vacancy.extractor_entities` в CDM
+Как работает:
+- Берёт `vacancy.title` из каждого `cdm_*.json`.
+- Прогоняет title через prompt `extractor_agent`.
+- Валидирует полученный `extractor_json` по контракту Step1.
+- Записывает результат в `vacancy.extractor_entities`.
+
+Зачем нужен:
+- Чтобы не вызывать `extractor_agent` заново при каждом запуске `sourcing_assistant_runner.py`.
+- Чтобы backend search для `sourcing_assistant_runner.py` строился из уже сохранённых сущностей, а не из сырого title.
+
+Запуск:
+```bash
+# Все CDM
+python app/enrich_cdm_with_extractor_entities.py
+
+# Только первые 3 CDM
+python app/enrich_cdm_with_extractor_entities.py --cdm-count 3
+
+# С переопределением prompt
+python app/enrich_cdm_with_extractor_entities.py \
+  --prompt-id pmpt_... \
+  --prompt-version 31
+```
+
+Важно:
+- Скрипт перезаписывает только `vacancy.extractor_entities`.
+- JSON пишется в UTF-8 без BOM.
+
+### `app/sourcing_assistant_runner.py` — тест `sourcing_assistant` на реальных кандидатах из backend
+Как работает:
+- Берёт требования из `vacancy.key_requirements` или альтернативного источника (`stack_skills` / `responsibilities_parser`).
+- Берёт backend search-структуру из `vacancy.extractor_entities`.
+- Через `build_step3_payload(...)` собирает payload для backend `/site/searchBool`.
+- Получает кандидатов, выбирает нужное количество, прогоняет каждого через `sourcing_assistant` и сравнивает `passed` с детерминированным baseline.
+
+Важно:
+- Если в CDM нет `vacancy.extractor_entities`, раннер не сможет построить корректный backend search payload.
+- Если после изменения prompt `extractor_agent` нужно обновить сущности в CDM, сначала заново запустите `app/enrich_cdm_with_extractor_entities.py`.
 
 ### `app/screening_guardrails_runner.py` — guardrails-проверки
 Как работает:

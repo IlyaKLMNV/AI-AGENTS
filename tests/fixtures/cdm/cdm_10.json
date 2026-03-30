@@ -19,7 +19,19 @@
       "управление командой",
       "бизнес-процессы",
       "контроль работы"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Executive Director",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "CEO",
+          "operator": "OR"
+        }
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",

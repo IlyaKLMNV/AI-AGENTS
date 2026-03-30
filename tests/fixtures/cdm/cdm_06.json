@@ -19,7 +19,18 @@
       "CSS3",
       "REST API",
       "Git"
-    ]
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "Backend Engineer (Marketplace)",
+          "operator": "AND"
+        }
+      ],
+      "level": [
+        "senior"
+      ]
+    }
   },
   "candidate": {
     "recruiter_name": "Варя",
