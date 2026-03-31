@@ -237,6 +237,42 @@ def _contains_norm(needle: str, hay: str) -> bool:
     return re.search(rf"(?<![a-z0-9а-я]){re.escape(n_phrase)}(?![a-z0-9а-я])", f" {h_phrase} ", flags=re.IGNORECASE) is not None
 
 
+_SLASH_SINGLE_TERM_REQUIREMENTS = {
+    "ci/cd",
+    "nlp/llm",
+    "tts/stt",
+}
+
+_DIRECTED_REQUIREMENT_VARIANTS = {
+    "html5": ["HTML5", "HTML"],
+    "css3": ["CSS3", "CSS"],
+    "работа с ии": ["работа с ИИ", "AI"],
+}
+
+
+def _normalize_requirement_token(req: Any) -> str:
+    text = _normalize_search_text(req)
+    text = re.sub(r"\s*/\s*", "/", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _requirement_search_variants(req: str) -> List[str]:
+    raw = re.sub(r"\s+", " ", _strip_html(req)).strip()
+    if not raw:
+        return []
+
+    normalized = _normalize_requirement_token(raw)
+    if normalized in _DIRECTED_REQUIREMENT_VARIANTS:
+        return _DIRECTED_REQUIREMENT_VARIANTS[normalized]
+
+    if "/" in raw and normalized not in _SLASH_SINGLE_TERM_REQUIREMENTS:
+        parts = [part.strip() for part in re.split(r"\s*/\s*", raw) if part.strip()]
+        if parts:
+            return _dedupe_preserve_order(parts)
+
+    return [raw]
+
+
 def _extract_raw_vacancy_title(vacancy: Dict[str, Any]) -> str:
     raw_vacancy = str(vacancy.get("raw_vacancy") or "").strip()
     if not raw_vacancy:
@@ -751,14 +787,26 @@ def _expected_passed_for_requirement(req: str, profile: Dict[str, Any]) -> int:
     """
     Детерминированная "истина" для теста по контракту prompt-а:
     требование ищется только в profile.about, skills[].skill и разрешённых полях positions
-    с нормализацией регистра/пробелов/пунктуации, но без синонимов и смысловых эвристик.
+    с нормализацией регистра/пробелов/пунктуации.
+
+    Важно:
+    - для большинства требований с "/" judge следует текущему prompt-контракту и
+      трактует их как OR между частями;
+    - "CI/CD", "NLP/LLM", "TTS/STT" остаются едиными терминами;
+    - для нескольких продуктово-согласованных кейсов поддерживаются направленные
+      варианты поиска, например "HTML5" -> "HTML".
     """
     if not req:
         return 0
 
+    variants = _requirement_search_variants(req)
+    if not variants:
+        return 0
+
     for text in _profile_search_texts(profile):
-        if _contains_norm(req, text):
-            return 1
+        for variant in variants:
+            if _contains_norm(variant, text):
+                return 1
     return 0
 
 

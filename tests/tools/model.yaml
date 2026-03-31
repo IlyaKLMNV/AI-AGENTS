@@ -40,7 +40,7 @@ responsibilities_parser:
 
 sourcing_assistant:
   prompt_id: pmpt_68e66be91c9c8193873259d4e8e6366504610f09662d6bed
-  prompt_version: 4
+  prompt_version: 6
   seed: 1234
 
 candidate_simulator:
