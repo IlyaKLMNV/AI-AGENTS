@@ -1341,8 +1341,6 @@ def run_sourcing_assistant_dataset(
             "passed_mismatch_count": 0,
             "failed_items_count": 0,
         }
-        case_passed = True
-
         for candidate in sampled_profiles:
             profile = _build_profile_from_backend_candidate(candidate)
             profile_flat = _flatten_profile_for_report(profile)
@@ -1362,7 +1360,6 @@ def run_sourcing_assistant_dataset(
             candidate_name = candidate.get("name")
 
             if raw_error is not None:
-                case_passed = False
                 case_issue_counter["execution_error"] += 1
                 case_checks["execution_error_count"] += 1
                 case_checks["candidate_eval_failed_count"] += 1
@@ -1401,7 +1398,6 @@ def run_sourcing_assistant_dataset(
             if candidate_passed:
                 total_candidates_passed += 1
             else:
-                case_passed = False
                 case_checks["candidate_eval_failed_count"] += 1
 
             for issue in candidate_issues:
@@ -1432,6 +1428,7 @@ def run_sourcing_assistant_dataset(
             candidate_results.append(candidate_rec)
 
         candidates_passed = sum(1 for item in candidate_results if item.get("passed"))
+        case_passed = candidates_passed > 0
 
         case_rec: Dict[str, Any] = {
             "cdm_file": _path_for_report(cdm_path),
@@ -1488,6 +1485,10 @@ def run_sourcing_assistant_dataset(
         "cases_count_requested": cases_count,
         "seed": final_seed,
         "report_verbosity": report_verbosity,
+        "requirements_source": requirements_source,
+        "candidate_pool_size": int(candidate_pool_size),
+        "candidate_sample_size": int(candidate_sample_size),
+        "sample_mode": sample_mode,
         "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
         "backend": {
             "step3_path": step3_path,
