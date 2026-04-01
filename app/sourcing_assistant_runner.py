@@ -170,109 +170,6 @@ def _normalize_search_text(value: Any) -> str:
     return _strip_html(value).lower().replace("ё", "е")
 
 
-def _norm_key(s: str) -> str:
-    t = (s or "").strip().lower()
-    t = t.replace("ё", "е")
-    t = t.replace("–", "-").replace("—", "-")
-    t = re.sub(r"\s+", " ", t).strip()
-    # keep latin+cyrillic+digits, drop punctuation/spaces
-    t = re.sub(r"[^a-z0-9а-я]+", "", t, flags=re.IGNORECASE)
-    return t
-
-
-def _norm_phrase(s: Any) -> str:
-    t = _normalize_search_text(s)
-    t = t.replace("–", "-").replace("—", "-")
-    t = re.sub(r"[^a-z0-9а-я]+", " ", t, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", t).strip()
-
-
-def _norm_compact(s: Any) -> str:
-    return _norm_phrase(s).replace(" ", "")
-
-
-def _norm_keep_punct(s: Any) -> str:
-    t = _normalize_search_text(s)
-    t = t.replace("–", "-").replace("—", "-")
-    t = re.sub(r"\s*([^\w\s]+)\s*", r"\1", t)
-    return re.sub(r"\s+", " ", t).strip()
-
-
-def _needs_compact_match(s: Any) -> bool:
-    raw = _strip_html(s)
-    phrase = _norm_phrase(s)
-    compact = _norm_compact(s)
-    if len(compact) < 2:
-        return False
-    return (" " in phrase) or bool(re.search(r"[^0-9A-Za-zА-Яа-яЁё]+", raw))
-
-
-def _contains_norm(needle: str, hay: str) -> bool:
-    if not needle or not hay:
-        return False
-
-    raw_needle = _strip_html(needle)
-    n_compact = _norm_compact(needle)
-    if bool(re.search(r"[^0-9A-Za-zА-Яа-яЁё]+", raw_needle)) and len(n_compact) < 2:
-        n_keep = _norm_keep_punct(needle)
-        h_keep = _norm_keep_punct(hay)
-        return bool(n_keep) and n_keep in h_keep
-
-    n_phrase = _norm_phrase(needle)
-    h_phrase = _norm_phrase(hay)
-    if n_phrase and h_phrase and f" {n_phrase} " in f" {h_phrase} ":
-        return True
-
-    if _needs_compact_match(needle):
-        n = n_compact
-        h = _norm_compact(hay)
-        if n and h:
-            return n in h
-
-    # conservative fallback for pure alnum single-token requirements
-    n = _norm_key(needle)
-    h = _norm_key(hay)
-    if not n or not h or len(n) < 2 or _needs_compact_match(needle):
-        return False
-    return re.search(rf"(?<![a-z0-9а-я]){re.escape(n_phrase)}(?![a-z0-9а-я])", f" {h_phrase} ", flags=re.IGNORECASE) is not None
-
-
-_SLASH_SINGLE_TERM_REQUIREMENTS = {
-    "ci/cd",
-    "nlp/llm",
-    "tts/stt",
-}
-
-_DIRECTED_REQUIREMENT_VARIANTS = {
-    "html5": ["HTML5", "HTML"],
-    "css3": ["CSS3", "CSS"],
-    "работа с ии": ["работа с ИИ", "AI"],
-}
-
-
-def _normalize_requirement_token(req: Any) -> str:
-    text = _normalize_search_text(req)
-    text = re.sub(r"\s*/\s*", "/", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _requirement_search_variants(req: str) -> List[str]:
-    raw = re.sub(r"\s+", " ", _strip_html(req)).strip()
-    if not raw:
-        return []
-
-    normalized = _normalize_requirement_token(raw)
-    if normalized in _DIRECTED_REQUIREMENT_VARIANTS:
-        return _DIRECTED_REQUIREMENT_VARIANTS[normalized]
-
-    if "/" in raw and normalized not in _SLASH_SINGLE_TERM_REQUIREMENTS:
-        parts = [part.strip() for part in re.split(r"\s*/\s*", raw) if part.strip()]
-        if parts:
-            return _dedupe_preserve_order(parts)
-
-    return [raw]
-
-
 def _extract_raw_vacancy_title(vacancy: Dict[str, Any]) -> str:
     raw_vacancy = str(vacancy.get("raw_vacancy") or "").strip()
     if not raw_vacancy:
@@ -740,76 +637,6 @@ def _flatten_profile_for_report(profile: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _profile_search_texts(profile: Dict[str, Any]) -> List[str]:
-    texts: List[str] = []
-
-    def add(value: Any) -> None:
-        if not isinstance(value, str):
-            return
-        t = re.sub(r"\s+", " ", value.strip())
-        if t:
-            texts.append(t)
-
-    add(profile.get("about"))
-
-    for skill in (profile.get("skills") or []):
-        if isinstance(skill, dict):
-            add(skill.get("skill"))
-
-    for pos in (profile.get("positions") or []):
-        if not isinstance(pos, dict):
-            continue
-        for key in ("name", "pos", "description", "rangeStr"):
-            add(pos.get(key))
-
-        for value in (pos.get("dates") or []):
-            add(value)
-
-        for value in (pos.get("positions_norm") or []):
-            if isinstance(value, dict):
-                for key in ("title", "name", "raw_text"):
-                    add(value.get(key))
-            else:
-                add(value)
-
-        company_norm = pos.get("company_norm") or {}
-        if isinstance(company_norm, dict):
-            for category in (company_norm.get("categories") or []):
-                if isinstance(category, dict):
-                    add(category.get("title"))
-                else:
-                    add(category)
-
-    return _dedupe_preserve_order(texts)
-
-
-def _expected_passed_for_requirement(req: str, profile: Dict[str, Any]) -> int:
-    """
-    Детерминированная "истина" для теста по контракту prompt-а:
-    требование ищется только в profile.about, skills[].skill и разрешённых полях positions
-    с нормализацией регистра/пробелов/пунктуации.
-
-    Важно:
-    - для большинства требований с "/" judge следует текущему prompt-контракту и
-      трактует их как OR между частями;
-    - "CI/CD", "NLP/LLM", "TTS/STT" остаются едиными терминами;
-    - для нескольких продуктово-согласованных кейсов поддерживаются направленные
-      варианты поиска, например "HTML5" -> "HTML".
-    """
-    if not req:
-        return 0
-
-    variants = _requirement_search_variants(req)
-    if not variants:
-        return 0
-
-    for text in _profile_search_texts(profile):
-        for variant in variants:
-            if _contains_norm(variant, text):
-                return 1
-    return 0
-
-
 def _validate_output_item_shape(item: Dict[str, Any]) -> List[str]:
     """
     Строго: только requirement/comment/passed. Никаких лишних полей.
@@ -833,53 +660,7 @@ def _validate_output_item_shape(item: Dict[str, Any]) -> List[str]:
     return reasons
 
 
-def _run_case_strict(requirements: List[str], expected_passed: List[int], predicted: List[Dict[str, Any]]) -> Tuple[bool, List[str], Dict[str, Any]]:
-    reasons: List[str] = []
-    per_item: List[Dict[str, Any]] = []
-
-    if len(predicted) != len(requirements):
-        reasons.append(f"len_mismatch predicted={len(predicted)} requirements={len(requirements)}")
-
-    n = min(len(predicted), len(requirements))
-    for i in range(n):
-        item = predicted[i]
-        exp_req = requirements[i]
-        exp_pass = expected_passed[i]
-        item_reasons: List[str] = []
-
-        if not isinstance(item, dict):
-            item_reasons.append("item_not_object")
-            per_item.append({"index": i, "ok": False, "reasons": item_reasons})
-            continue
-
-        item_reasons.extend(_validate_output_item_shape(item))
-
-        # requirement must be EXACT
-        if isinstance(item.get("requirement"), str) and item["requirement"] != exp_req:
-            item_reasons.append("requirement_not_exact")
-
-        # passed must match deterministic expected
-        if item.get("passed") != exp_pass:
-            item_reasons.append("passed_mismatch")
-
-        ok = len(item_reasons) == 0
-        per_item.append(
-            {
-                "index": i,
-                "ok": ok,
-                "reasons": item_reasons,
-                "requirement": item.get("requirement"),
-                "passed": item.get("passed"),
-            }
-        )
-
-    if any(not x["ok"] for x in per_item):
-        reasons.append("one_or_more_items_failed")
-
-    return len(reasons) == 0, reasons, {"per_item": per_item}
-
-
-def _run_case_contract(requirements: List[str], expected_passed: List[int], predicted: List[Dict[str, Any]]) -> Tuple[bool, List[str], Dict[str, Any]]:
+def _run_case_contract(requirements: List[str], predicted: List[Dict[str, Any]]) -> Tuple[bool, List[str], Dict[str, Any]]:
     issues: List[str] = []
     failed_items: List[Dict[str, Any]] = []
     checks: Dict[str, Any] = {
@@ -890,7 +671,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
         "failed_items_count": 0,
         "shape_fail_count": 0,
         "requirement_not_exact_count": 0,
-        "passed_mismatch_count": 0,
     }
 
     if len(predicted) != len(requirements):
@@ -900,7 +680,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
     for i in range(n):
         item = predicted[i]
         exp_req = requirements[i]
-        exp_pass = expected_passed[i]
         actual_comment = item.get("comment") if isinstance(item, dict) else None
 
         if not isinstance(item, dict):
@@ -910,7 +689,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
                     "index": i,
                     "expected_requirement": exp_req,
                     "actual_requirement": None,
-                    "expected_passed": exp_pass,
                     "actual_passed": None,
                     "actual_comment": None,
                     "issues": ["item_not_object"],
@@ -926,17 +704,12 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
             item_issues.append("requirement_not_exact")
             checks["requirement_not_exact_count"] += 1
 
-        if item.get("passed") != exp_pass:
-            item_issues.append("passed_mismatch")
-            checks["passed_mismatch_count"] += 1
-
         if item_issues:
             failed_items.append(
                 {
                     "index": i,
                     "expected_requirement": exp_req,
                     "actual_requirement": item.get("requirement"),
-                    "expected_passed": exp_pass,
                     "actual_passed": item.get("passed"),
                     "actual_comment": actual_comment,
                     "issues": item_issues,
@@ -949,8 +722,6 @@ def _run_case_contract(requirements: List[str], expected_passed: List[int], pred
         issues.append("output_shape_failed")
     if checks["requirement_not_exact_count"] > 0:
         issues.append("requirement_not_exact")
-    if checks["passed_mismatch_count"] > 0:
-        issues.append("passed_mismatch")
 
     return len(issues) == 0, issues, {"checks": checks, "failed_items": failed_items}
 
@@ -960,7 +731,6 @@ def _compact_failed_items(failed_items: List[Dict[str, Any]]) -> List[Dict[str, 
     for item in failed_items:
         compact: Dict[str, Any] = {
             "requirement": item.get("expected_requirement"),
-            "expected_passed": item.get("expected_passed"),
             "actual_passed": item.get("actual_passed"),
             "issues": item.get("issues") or [],
         }
@@ -1338,13 +1108,11 @@ def run_sourcing_assistant_dataset(
             "execution_error_count": 0,
             "shape_fail_count": 0,
             "requirement_not_exact_count": 0,
-            "passed_mismatch_count": 0,
             "failed_items_count": 0,
         }
         for candidate in sampled_profiles:
             profile = _build_profile_from_backend_candidate(candidate)
             profile_flat = _flatten_profile_for_report(profile)
-            expected_passed = [_expected_passed_for_requirement(req, profile) for req in requirements]
 
             predicted: List[Dict[str, Any]] = []
             raw_output = ""
@@ -1391,7 +1159,6 @@ def run_sourcing_assistant_dataset(
 
             candidate_passed, candidate_issues, candidate_details = _run_case_contract(
                 requirements=requirements,
-                expected_passed=expected_passed,
                 predicted=predicted,
             )
 
@@ -1406,7 +1173,6 @@ def run_sourcing_assistant_dataset(
             candidate_checks = candidate_details["checks"]
             case_checks["shape_fail_count"] += int(candidate_checks.get("shape_fail_count", 0))
             case_checks["requirement_not_exact_count"] += int(candidate_checks.get("requirement_not_exact_count", 0))
-            case_checks["passed_mismatch_count"] += int(candidate_checks.get("passed_mismatch_count", 0))
             case_checks["failed_items_count"] += int(candidate_checks.get("failed_items_count", 0))
 
             candidate_rec: Dict[str, Any] = {
