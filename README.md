@@ -48,6 +48,7 @@ OPENAI_API_KEY=sk-...
 
 Переменные окружения для переопределения:
 - `FIRST_TOUCH_PROMPT_ID` — для `app/telegram_generator_runner.py` и генератора первого касания в `app/runner.py`.
+- `FIRST_TOUCH_EVENT_PROMPT_ID`, `FIRST_TOUCH_EVENT_PROMPT_VERSION` — для `app/first_touch_event_runner.py`.
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
 - `VERDICT_CLASSIFIER_PROMPT_ID`, `VERDICT_CLASSIFIER_PROMPT_VERSION` — для `app/verdict_classifier_runner.py`.
 - `EXTRACTOR_AGENT_PROMPT_ID`, `EXTRACTOR_AGENT_PROMPT_VERSION` — для `app/extractor_agent_runner.py`.
@@ -278,6 +279,36 @@ python -m app.telegram_generator_runner --limit 5 --require-question
 
 Отчеты:
 - `tests/reports/telegram_generator/telegram_generator_report_<run_id>.json`
+
+### `app/first_touch_event_runner.py` — простой раннер для event-invite prompt
+Как работает:
+- Напрямую вызывает сохранённый prompt по `prompt_id/prompt_version`, без CDM и без `telegramMessageGenerator`.
+- На вход подаёт только `candidate_name` в JSON (`{"candidate_name": ...}`).
+- Генерирует сообщения для набора имён, отдельно прогоняет кейс с пустым именем.
+- Проверяет каждое сообщение на обязательные факты, выдуманные детали и финальный вопрос про ссылку на регистрацию.
+- Отдельно считает вариативность по телу сообщения без приветствия и по последнему вопросу.
+
+Запуск:
+```bash
+python -m app.first_touch_event_runner
+
+# Точечный прогон на своём наборе имён
+python -m app.first_touch_event_runner \
+  --names "Анна,Мария,Илья,Олег" \
+  --repeats-per-name 2
+```
+
+Параметры:
+- `--prompt-id`, `--prompt-version` — переопределить prompt.
+- `--eval-model` — модель-судья (по умолчанию `gpt-4.1-mini`).
+- `--names` — список имён через запятую.
+- `--repeats-per-name` — сколько генераций делать на одно имя.
+- `--include-empty-name` / `--no-include-empty-name` — включать ли кейс с пустым `candidate_name`.
+- `--min-unique-bodies`, `--min-unique-questions` — пороги для `variability_passed`.
+- `--quiet` — без прогресс-логов.
+
+Отчеты:
+- `tests/reports/first_touch_event/first_touch_event_report_<run_id>.json`
 
 ### `app/screening_autofill_runner.py` — тест `screening_autofill`
 Как работает:
