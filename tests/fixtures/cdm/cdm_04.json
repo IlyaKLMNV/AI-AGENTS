@@ -1,0 +1,69 @@
+{
+  "vacancy": {
+    "title": "QA Automation Lead",
+    "company_name": "HelixCare",
+    "company_description": "Команда ищет инженера production-поддержки, который будет следить за стабильностью сервисов, разбирать инциденты и помогать командам в рабочих чатах.",
+    "company_industry": "Tech",
+    "location": "Удаленно",
+    "work_format": "remote",
+    "salary_range_from": 250000,
+    "salary_range_to": 320000,
+    "responsibilities": "Мониторинг состояния балансировщиков, обработка production-инцидентов, базовая работа с Kubernetes, координация действий в чатах и плановое обслуживание серверов.",
+    "vacancy_stack": "Linux, Kubernetes, HAProxy, Nginx, Prometheus, Grafana, ELK, Bash, Ansible",
+    "vacancy_skills": "Production support, Incident management, Linux, Kubernetes, Monitoring",
+    "questions": "1. Какой у вас опыт production-поддержки и разбора инцидентов в Linux-окружении?\n2. Насколько уверенно вы работаете с Kubernetes, балансировщиками L4/L7 и сетевой диагностикой?\n3. Подходит ли вам удалённый формат с плановыми работами и возможными дежурствами?",
+    "raw_vacancy": "Инженер поддержки Production (Prod Support / L2)\nУровень дохода не указан\nОпыт работы: 1–3 года\n\nПолная занятость\nГрафик: 5/2 и другие варианты\n\nРабочие часы: 8 или по договорённости\nФормат работы: удалённо\n\nСейчас эту вакансию смотрят 94 человека\n\nО роли\nCледить за стабильностью сервисов, оперативно разбирать инциденты и помогать командам в рабочих чатах\n\nЧем предстоит заниматься\n- Мониторить состояние балансировщиков и реагировать на деградации/отказы.\n- Обрабатывать инциденты в production: первичная диагностика, локализация, эскалация, сопровождение до восстановления.\n- Работать с Kubernetes на базовом уровне: понимать принципы, проверять статусы, выполнять типовые действия для pods/deployments/services.\n- Отвечать на сообщения в чатах, собирать контекст, координировать действия с командами разработки и тестирования.\n- Обслуживать и обновлять серверы: плановые обновления, патчи, поддержание актуального состояния окружений.\n\nЧто важно\n- Опыт системного администрирования (Linux).\n- Понимание сетевых основ и типовых проблем в проде (DNS, TCP/IP, HTTP/HTTPS).\n- Базовое понимание работы L4/L7 балансировщиков.\n- Базовые знания Kubernetes и практический опыт взаимодействия.\n- Умение работать по инцидентам с фиксацией статуса и результатов.\n\nБудет плюсом\n- Опыт мониторинга и логирования (Prometheus/Grafana/ELK или аналоги).\n- Опыт с HAProxy/Nginx и сетевой диагностикой.\n- Навыки автоматизации (bash, Ansible и т.п.).\n- Опыт участия в postmortem/разборах инцидентов и улучшении надежности.\n\nФормат и условия\n- Production-поддержка, плановые работы, коммуникация в чатах.\n- График/дежурства/формат работы — обсуждаем.\n\n\nКлючевые навыки\nHAProxy\nPrometheus\nGrafana\nELK\nLinux",
+    "key_requirements": [
+      "Kubernetes",
+      "Linux",
+      "инциденты",
+      "Prometheus",
+      "HAProxy"
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "QA Automation Lead",
+          "operator": "AND"
+        }
+      ]
+    }
+  },
+  "candidate": {
+    "recruiter_name": "Варя",
+    "candidate_name": "Вадим",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Senior Engineer",
+        "company": "ExampleCorp",
+        "company_norm": {
+          "categories": [
+            {
+              "title": "Healthcare"
+            }
+          ]
+        }
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Python QA",
+        "quantile": 4.1
+      },
+      {
+        "skill": "Playwright",
+        "quantile": 4.1
+      },
+      {
+        "skill": "Communication",
+        "quantile": 2.0
+      }
+    ]
+  }
+}
