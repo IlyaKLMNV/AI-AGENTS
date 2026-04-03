@@ -1,6 +1,6 @@
 ﻿# AI Agents Workspace
 
-Набор раннеров для тестирования рекрутмент-промптов. Включает полный интеграционный прогон и отдельные проверки для `screening_assistant`, `message_classifier`, `screening_autofill`, `verdict_classifier`, `extractor_agent`, `sourcing_assistant` и генератора первого касания (Telegram).
+Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `telegram_generator_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`. `app/runner.py` сохранён как исторический интеграционный сценарий end-to-end симуляции.
 
 ## Структура проекта
 - `app/` — CLI-раннеры.
@@ -13,7 +13,7 @@
 - `telegramMessageGenerator-main/` — опциональный генератор первого сообщения в Telegram.
 - `tests/fixtures/` — фикстуры (CDM и сценарии).
 - `tests/tools/` — `model.yaml` и скрипты генерации фикстур.
-- `tests/reports/` — отчеты раннеров (`runs`, `screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`).
+- `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
 
 ## Подготовка окружения
 ```bash
@@ -38,20 +38,26 @@ OPENAI_API_KEY=sk-...
 ## Конфигурация промптов и профилей
 `tests/tools/model.yaml` хранит `prompt_id`/`prompt_version` для:
 - `first_touch`
+- `first_touch_event_invite`
 - `message_classifier`
 - `screening_assistant`
 - `screening_autofill`
 - `verdict_classifier`
 - `extractor_agent`
+- `one_line_search_query_builder`
+- `responsibilities_parser`
 - `sourcing_assistant`
 - `candidate_simulator` (профили кандидатов для `app/runner.py`)
 
 Переменные окружения для переопределения:
 - `FIRST_TOUCH_PROMPT_ID` — для `app/telegram_generator_runner.py` и генератора первого касания в `app/runner.py`.
 - `FIRST_TOUCH_EVENT_PROMPT_ID`, `FIRST_TOUCH_EVENT_PROMPT_VERSION` — для `app/first_touch_event_runner.py`.
+- `MESSAGE_CLASSIFIER_PROMPT_ID`, `MESSAGE_CLASSIFIER_PROMPT_VERSION` — для `app/message_classifier_runner.py`.
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
 - `VERDICT_CLASSIFIER_PROMPT_ID`, `VERDICT_CLASSIFIER_PROMPT_VERSION` — для `app/verdict_classifier_runner.py`.
 - `EXTRACTOR_AGENT_PROMPT_ID`, `EXTRACTOR_AGENT_PROMPT_VERSION` — для `app/extractor_agent_runner.py`.
+- `ONE_LINE_SEARCH_QUERY_BUILDER_PROMPT_ID`, `ONE_LINE_SEARCH_QUERY_BUILDER_PROMPT_VERSION` — для builder prompt в `app/one_line_search_query_builder_runner.py`.
+- `RESPONSIBILITIES_PARSER_PROMPT_ID`, `RESPONSIBILITIES_PARSER_PROMPT_VERSION` — для `app/responsibilities_parser_runner.py` и для режима `--requirements-source responsibilities_parser` в `app/sourcing_assistant_runner.py`.
 - `SOURCING_ASSISTANT_PROMPT_ID`, `SOURCING_ASSISTANT_PROMPT_VERSION` — для `app/sourcing_assistant_runner.py`.
 
 ## Фикстуры и данные
@@ -64,7 +70,11 @@ OPENAI_API_KEY=sk-...
 
 ## Раннеры (`app/`)
 
-### `app/runner.py` — интеграционный прогон пайплайна
+### `app/runner.py` — исторический end-to-end интеграционный раннер
+Статус:
+- Сейчас обычно не используется как основной способ регрессионной проверки.
+- Это первоначальная концепция сквозной симуляции сценария `одна вакансия x один профиль кандидата` через цепочку `first_touch` / `telegramMessageGenerator` -> `candidate_simulator` -> `screening_assistant` -> `message_classifier` -> `verdict_classifier` -> `screening_autofill`.
+
 Как работает:
 - Берет CDM-фикстуры и прогоняет их по всем профилям из `candidate_simulator`.
 - Стартовое сообщение генерируется через `telegramMessageGenerator` (если доступен), иначе берется шаблон из CDM или fallback.
@@ -215,6 +225,42 @@ python app/enrich_cdm_with_extractor_entities.py \
 - Если в CDM нет `vacancy.extractor_entities`, раннер не сможет построить корректный backend search payload.
 - Если после изменения prompt `extractor_agent` нужно обновить сущности в CDM, сначала заново запустите `app/enrich_cdm_with_extractor_entities.py`.
 
+Запуск:
+```bash
+export OPENAI_API_KEY=sk-...
+export AI_SEARCH_AUTH_TOKEN=...
+export AI_SEARCH_BASE_URL=https://...
+
+python -m app.sourcing_assistant_runner \
+  --cdm-count 5 \
+  --candidate-sample-size 10
+```
+
+Запуск с альтернативным источником требований:
+```bash
+python -m app.sourcing_assistant_runner \
+  --cdm-count 5 \
+  --requirements-source responsibilities_parser \
+  --report-verbosity standard \
+  --sample-mode random
+```
+
+Параметры:
+- `--cdm-dir`, `--cdm-count` — путь к CDM и лимит выбранных вакансий.
+- `--cases-count` — случайно выбрать N вакансий из уже отобранного пула.
+- `--seed` — сид выборки и прогона.
+- `--prompt-id`, `--prompt-version` — переопределить prompt `sourcing_assistant`.
+- `--requirements-source` — `cdm_key_requirements`, `stack_skills` или `responsibilities_parser`.
+- `--report-verbosity` — `compact`, `standard`, `full`.
+- `--base-url`, `--step3-path`, `--token`, `--timeout-s`, `--step3-retries`, `--token-in-body`, `--token-in-header` — настройки backend `/site/searchBool`.
+- `--candidate-pool-size` — сколько backend-профилей запрашивать на вакансию.
+- `--candidate-sample-size` — сколько из найденных профилей прогонять через `sourcing_assistant`.
+- `--sample-mode` — `first` или `random`.
+- `--quiet` — без прогресс-логов.
+
+Отчеты:
+- `tests/reports/sourcing_assistant/sourcing_assistant_report_<run_id>.json`
+
 ### `app/screening_guardrails_runner.py` — guardrails-проверки
 Как работает:
 - Генерирует многоходовые диалоги кандидата.
@@ -238,19 +284,25 @@ python -m app.screening_guardrails_runner --conversations 20 --turns-per-convers
 ### `app/message_classifier_runner.py` — тест `message_classifier`
 Как работает:
 - Генерирует сообщения кандидата по классам (`reason_farewell`, `no_reason`, `acceptance`, `human_needed`).
-- Опционально фильтрует кейсы через LLM-судью.
 - Классифицирует и считает accuracy/матрицу ошибок.
+- Генерирует сообщения на основе CDM-контекста и сценарных подсказок, но с заранее известным target-классом.
 
 Запуск:
 ```bash
-python -m app.message_classifier_runner --n-per-class 3 --seed 42
+python -m app.message_classifier_runner --messages-per-class 3 --seed 42
 ```
 
 Параметры:
-- `--n-per-class` — сколько кейсов на класс.
+- `--cdm-dir`, `--cdm-count` — путь к CDM и лимит вакансий для контекста генерации.
+- `--messages-per-class` — сколько сообщений сгенерировать на каждый класс (обязательный параметр).
+- `--noise-level` — уровень косвенности/шума `0..2`.
 - `--seed` — сид для генерации/перемешивания.
-- `--no-gen` — не генерировать LLM-кейсы, использовать только fallback-пул.
-- `--judge` — включить LLM-судью для фильтрации спорных кейсов.
+- `--message-gen-model` — модель для генерации synthetic candidate messages.
+- `--prompt-id`, `--prompt-version` — переопределить prompt `message_classifier`.
+- `--scenario-mode` — `random` или `cycle` для выбора сценарных подсказок.
+- `--scenario-count-per-class` — ограничить число сценарных подсказок на класс.
+- `--max-attempts-multiplier` — лимит попыток генерации.
+- `--quiet` — без прогресс-логов.
 
 Отчеты:
 - `tests/reports/message_classifier/message_classifier_report_<run_id>.json`
@@ -309,6 +361,78 @@ python -m app.first_touch_event_runner \
 
 Отчеты:
 - `tests/reports/first_touch_event/first_touch_event_report_<run_id>.json`
+
+### `app/responsibilities_parser_runner.py` — тест `responsibilities_parser`
+Как работает:
+- Берёт `vacancy.raw_vacancy` из CDM-фикстур.
+- Вызывает prompt `responsibilities_parser` и ожидает строгий JSON-массив строк.
+- Сверяет извлечённые пункты с текстом вакансии, `vacancy_stack` и `vacancy_skills`.
+- Проверяет prompt-contract: формат ответа, дубли, число пунктов, покрытие терминов и наличие совпадений с ожидаемыми требованиями.
+
+Запуск:
+```bash
+python -m app.responsibilities_parser_runner --cdm-count 10
+
+# Более подробный отчёт на выборке из 5 вакансий
+python -m app.responsibilities_parser_runner \
+  --cases-count 5 \
+  --report-verbosity standard \
+  --min-total-matches 3
+```
+
+Параметры:
+- `--cdm-dir`, `--cdm-count` — путь к CDM и лимит выбранных вакансий.
+- `--cases-count` — случайно выбрать N вакансий из доступного пула.
+- `--seed` — сид выборки.
+- `--prompt-id`, `--prompt-version` — переопределить prompt `responsibilities_parser`.
+- `--min-total-matches` — минимальный порог совпадений с `vacancy_stack U vacancy_skills`.
+- `--no-require-all-in-text` — отключить строгую проверку, что каждый предсказанный пункт встречается в тексте вакансии.
+- `--report-verbosity` — `compact`, `standard`, `full`.
+- `--quiet` — без прогресс-логов.
+
+Отчеты:
+- `tests/reports/responsibilities_parser/responsibilities_parser_report_<run_id>.json`
+
+### `app/one_line_search_query_builder_runner.py` — тест one-line search query builder
+Как работает:
+- Step1: строит однострочный поисковый запрос по `raw_vacancy`.
+- Step2: прогоняет этот запрос через `extractor_agent` и валидирует промежуточный `extractor_json`.
+- Step3: собирает payload для `/site/searchBool`, отправляет его в backend и сохраняет результаты семантической проверки.
+- Поддерживает частичный прогон по шагам: `1`, `1,2`, `1,2,3`.
+
+Запуск:
+```bash
+export OPENAI_API_KEY=sk-...
+export AI_SEARCH_AUTH_TOKEN=...
+export AI_SEARCH_BASE_URL=https://...
+
+python app/one_line_search_query_builder_runner.py \
+  --cdm-count 10 \
+  --steps 1,2,3
+```
+
+Только Step1 и Step2:
+```bash
+python app/one_line_search_query_builder_runner.py \
+  --cdm-count 10 \
+  --steps 1,2 \
+  --report-mode full
+```
+
+Параметры:
+- `--cdm-dir`, `--cdm-count` — путь к CDM и лимит вакансий.
+- `--steps` — один из режимов: `1`, `1,2`, `1,2,3`.
+- `--cfg` — путь к `tests/tools/model.yaml`.
+- `--builder-prompt-id`, `--builder-prompt-version` — переопределить prompt `one_line_search_query_builder`.
+- `--extractor-prompt-id`, `--extractor-prompt-version` — переопределить prompt `extractor_agent` для Step2.
+- `--model` — модель для prompt-вызовов.
+- `--base-url`, `--step3-path`, `--token`, `--timeout-s`, `--step3-retries`, `--token-in-body`, `--token-in-header` — настройки backend `/site/searchBool`.
+- `--only-russian`, `--only-english`, `--only-with-contacts`, `--only-with-higher-education`, `--current-position-title` — backend-флаги фильтрации.
+- `--limit`, `--offset`, `--shuffle`, `--highlight` — дополнительные backend-параметры выборки.
+- `--report-dir`, `--report-mode`, `--report-json-indent` — управление путём и детализацией отчёта.
+
+Отчеты:
+- `tests/reports/one_line_search_query_builder/one_line_search_query_builder_report_<run_id>.json`
 
 ### `app/screening_autofill_runner.py` — тест `screening_autofill`
 Как работает:
