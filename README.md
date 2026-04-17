@@ -5,14 +5,14 @@
 ## Структура проекта
 - `app/` — CLI-раннеры.
 - `adapters/` — преобразования CDM -> input-форматы промптов.
-- `cdm/` — схема CDM и примерные данные.
+- `cdm/` — схема CDM и каталог `samples/` (может быть пустым).
 - `messageLabelGenerator/` — обвязка промпта `message_classifier`.
 - `screeningAssistant/` — обвязка промпта `screening_assistant`.
 - `screening_autofill/` — обвязка промпта `screening_autofill`.
 - `verdict_classifier/` — обвязка промпта `verdict_classifier`.
-- `telegramMessageGenerator-main/` — опциональный генератор первого сообщения в Telegram.
-- `tests/fixtures/` — фикстуры (CDM и сценарии).
-- `tests/tools/` — `model.yaml` и скрипты генерации фикстур.
+- `telegramMessageGenerator-main/` — генератор первого сообщения в Telegram.
+- `tests/fixtures/` — фикстуры (CDM, screening-сценарии, extractor-кейсы).
+- `tests/tools/` — `model.yaml` и утилиты для генерации baseline-фикстур.
 - `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
 
 ## Подготовка окружения
@@ -28,12 +28,21 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Создайте `.env` (можно скопировать из `.env.example`) и задайте ключ:
+Создайте `.env` (можно скопировать из `.env.example`) и задайте как минимум:
 ```bash
 OPENAI_API_KEY=sk-...
+
+# Для backend search раннеров:
+AI_SEARCH_BASE_URL=https://...
+AI_SEARCH_AUTH_TOKEN=...
 ```
 
-Все раннеры, которые используют LLM, требуют `OPENAI_API_KEY`. Исключение: `gen-fixtures`.
+Важно:
+- Большинство раннеров не читают `.env` автоматически. Для них переменные должны быть выставлены в окружении текущего процесса/терминала.
+- `.env` автоматически подхватывают только `app/first_touch_event_runner.py` и `app/enrich_cdm_with_extractor_entities.py`.
+- `OPENAI_API_KEY` нужен всем раннерам, которые обращаются к LLM. Исключение: `python -m app.runner gen-fixtures`.
+- `AI_SEARCH_BASE_URL` и `AI_SEARCH_AUTH_TOKEN` нужны для backend-шагов в `extractor_agent_runner.py`, `one_line_search_query_builder_runner.py`, `sourcing_assistant_runner.py`.
+- `OPENAI_BASE_URL` опционален и используется только `app/extractor_agent_runner.py` для Step1.
 
 ## Конфигурация промптов и профилей
 `tests/tools/model.yaml` хранит `prompt_id`/`prompt_version` для:
@@ -60,13 +69,23 @@ OPENAI_API_KEY=sk-...
 - `RESPONSIBILITIES_PARSER_PROMPT_ID`, `RESPONSIBILITIES_PARSER_PROMPT_VERSION` — для `app/responsibilities_parser_runner.py` и для режима `--requirements-source responsibilities_parser` в `app/sourcing_assistant_runner.py`.
 - `SOURCING_ASSISTANT_PROMPT_ID`, `SOURCING_ASSISTANT_PROMPT_VERSION` — для `app/sourcing_assistant_runner.py`.
 
+Важно:
+- `app/screening_scenarios_runner.py` и `app/screening_guardrails_runner.py` читают `screening_assistant.prompt_id/prompt_version` только из `tests/tools/model.yaml`.
+- `app/runner.py` читает `screening_assistant`, `screening_autofill`, `verdict_classifier`, `message_classifier` и `candidate_simulator` только из `tests/tools/model.yaml`.
+
 ## Фикстуры и данные
-- `tests/fixtures/cdm/` — CDM-фикстуры вакансий (генерируются `python -m app.runner gen-fixtures`).
-  Для `sourcing_assistant_runner.py` в `vacancy` дополнительно используются:
-  `key_requirements` — список ключевых требований для матчинга и `extractor_entities` — сохранённый `extractor_json` для backend search.
+- `tests/fixtures/cdm/` — CDM-фикстуры вакансий.
+  Checked-in фикстуры в репозитории уже могут содержать дополнительные поля `vacancy.raw_vacancy`, `vacancy.key_requirements`, `vacancy.extractor_entities`.
+  Команда `python -m app.runner gen-fixtures` удаляет текущие `cdm_*.json` и заново генерирует 10 baseline-CDM через `tests/tools/make_vacancies.py`.
+  Эти baseline-CDM подходят для smoke/e2e-сценариев, но не добавляют `raw_vacancy`, `key_requirements`, `extractor_entities`.
 - `tests/fixtures/screening_scenarios.csv` — сценарии для проверки `screening_assistant`.
-- `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py`.
+- `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py` (сейчас хранятся в `cases.yaml`).
 - `cdm/schema.json` — схема CDM.
+
+Дополнительные требования к данным:
+- `responsibilities_parser_runner.py` и `one_line_search_query_builder_runner.py` требуют `vacancy.raw_vacancy`.
+- `sourcing_assistant_runner.py` использует `vacancy.extractor_entities` для backend search и предпочитает `vacancy.key_requirements` как основной источник требований.
+- `app/enrich_cdm_with_extractor_entities.py` заполняет только `vacancy.extractor_entities`; поля `raw_vacancy` и `key_requirements` он не генерирует.
 
 ## Раннеры (`app/`)
 
@@ -87,7 +106,7 @@ python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
 ```
 
 Параметры:
-- `gen-fixtures` — генерирует `tests/fixtures/cdm/cdm_*.json` (ключ не нужен).
+- `gen-fixtures` — удаляет текущие `tests/fixtures/cdm/cdm_*.json` и генерирует 10 baseline-CDM через `tests.tools.make_vacancies` (ключ не нужен).
 - `unit --limit` — сколько CDM брать в прогон (по умолчанию 5).
 - `unit --candidate-profiles` — список профилей из `candidate_simulator` (по умолчанию все).
 
@@ -152,6 +171,7 @@ python -m app.screening_scenarios_runner \
 - Prompt берется из `tests/tools/model.yaml` (поддерживается блок `extractor_agent.prompt_id/prompt_version`, а также fallback к `top-level/prompt.*`).
 - Можно переопределить через `--prompt-id/--prompt-version` или env `EXTRACTOR_AGENT_PROMPT_ID/EXTRACTOR_AGENT_PROMPT_VERSION`.
 - Для Step3 по умолчанию используются env: `AI_SEARCH_BASE_URL`, `AI_SEARCH_AUTH_TOKEN`.
+- Для Step1 опционально поддерживается `OPENAI_BASE_URL` (по умолчанию `https://api.openai.com/v1`).
 
 Запуск (полный `1:1:1` прогон):
 ```bash
@@ -224,6 +244,8 @@ python app/enrich_cdm_with_extractor_entities.py \
 Важно:
 - Если в CDM нет `vacancy.extractor_entities`, раннер не сможет построить корректный backend search payload.
 - Если после изменения prompt `extractor_agent` нужно обновить сущности в CDM, сначала заново запустите `app/enrich_cdm_with_extractor_entities.py`.
+- Если выбран `--requirements-source cdm_key_requirements`, но `vacancy.key_requirements` отсутствует, раннер fallback-ится на `stack_skills`.
+- Если выбран `--requirements-source responsibilities_parser` и LLM-парсер не смог извлечь требования, раннер также fallback-ится на `cdm_key_requirements`/`stack_skills`.
 
 Запуск:
 ```bash
