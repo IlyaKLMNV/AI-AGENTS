@@ -626,15 +626,6 @@ def _has_salary_expectation_not_above_budget(
     if max_salary is not None and any(value > max_salary for value in numeric_values):
         return False
 
-    if _group_has_any_scenario(group, sorted(CONTACT_SOURCE_FILLED_SCENARIOS)):
-        return bool((fixture.contact_source or "").strip())
-
-    if _group_has_any_scenario(group, sorted(CONTACT_SOURCE_EMPTY_SCENARIOS)):
-        return not bool((fixture.contact_source or "").strip())
-
-    if _group_has_any_scenario(group, [7, 8] + list(range(40, 63))):
-        return fixture.file_name in PROMPT_V2_SPECIAL_FIXTURES
-
     return True
 
 
@@ -790,6 +781,112 @@ def _sanitize_additional_questions(raw_questions: str) -> str:
     return "\n".join(f"{idx}. {content}" for idx, content in enumerate(kept, start=1))
 
 
+QUESTION_MARKER_STOPWORDS = {
+    "есть",
+    "если",
+    "или",
+    "вас",
+    "вам",
+    "ваш",
+    "ваша",
+    "ваше",
+    "ваши",
+    "был",
+    "была",
+    "были",
+    "это",
+    "эти",
+    "этот",
+    "прямо",
+    "диалоге",
+    "пожалуйста",
+    "опыт",
+    "работы",
+    "работал",
+    "работали",
+    "насколько",
+    "уверенно",
+    "каком",
+    "какая",
+    "какие",
+    "городе",
+    "сейчас",
+    "сумму",
+    "рублях",
+    "руки",
+    "месяц",
+    "месяца",
+    "подходит",
+}
+
+QUESTION_MARKER_SPECIALS = [
+    "playwright",
+    "c#",
+    "php",
+    "symfony",
+    "sql",
+    "api",
+    "qa",
+    "ментор",
+    "команд",
+    "руковод",
+    "лид",
+    "bot",
+    "rpa",
+    "nlu",
+    "rag",
+    "llm",
+]
+
+
+def _extract_additional_questions(dialog_context_meta: Optional[Dict[str, Any]] = None) -> List[str]:
+    dialog_context_meta = dialog_context_meta or {}
+    raw_questions = str(dialog_context_meta.get("questions") or "")
+    questions: List[str] = []
+    for line in raw_questions.splitlines():
+        content = QUESTION_PREFIX_RE.sub("", str(line).strip()).strip()
+        if not content or content == "-":
+            continue
+        questions.append(content)
+    return questions
+
+
+def _question_markers_from_text(question: str) -> List[str]:
+    low = _normalize_text(question).lower()
+    if not low:
+        return []
+
+    markers: List[str] = []
+    for special in QUESTION_MARKER_SPECIALS:
+        if special in low:
+            markers.append(special)
+
+    for token in re.findall(r"[a-zа-яё#\+]{3,}", low):
+        if token in QUESTION_MARKER_STOPWORDS:
+            continue
+        if token in QUESTION_MARKER_SPECIALS:
+            continue
+        if token.isascii():
+            markers.append(token)
+            continue
+        if len(token) >= 5:
+            markers.append(token[:6])
+
+    unique: List[str] = []
+    seen = set()
+    for marker in markers:
+        if marker and marker not in seen:
+            unique.append(marker)
+            seen.add(marker)
+    return unique
+
+
+def _reply_mentions_question_markers(reply_low: str, markers: List[str]) -> bool:
+    if not markers:
+        return False
+    return any(marker in reply_low for marker in markers)
+
+
 def _has_death_loss_marker(text: str) -> bool:
     return _has_any((text or "").lower(), KW_DEATH_LOSS)
 
@@ -864,6 +961,10 @@ def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
     return any(s.index in wanted for s in group.scenarios)
 
 
+def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
+    return _group_has_any_scenario(group, [7, 8] + list(range(40, 63)))
+
+
 def _fixture_matches_group_requirements(
     fixture: CdmFixture,
     group: ScenarioGroup,
@@ -871,6 +972,9 @@ def _fixture_matches_group_requirements(
     vacancy_info = fixture.vacancy_info or {}
     work_format = str(vacancy_info.get("work_format") or "").strip()
     location = str(vacancy_info.get("location") or "").strip().lower()
+
+    if _group_uses_prompt_v2_special_fixtures(group):
+        return fixture.file_name in PROMPT_V2_SPECIAL_FIXTURES
 
     if _group_has_any_scenario(group, [34, 35, 36, 37, 39]):
         if not _is_office_or_hybrid_work_format(work_format):
@@ -1113,6 +1217,7 @@ def _group_requires_hidden_company(group: ScenarioGroup) -> bool:
 def build_dialog_context(
     fixture: CdmFixture,
     hide_company: bool,
+    contact_source_override: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     vacancy_info = fixture.vacancy_info
     names = fixture.names
@@ -1135,7 +1240,10 @@ def build_dialog_context(
     vacancy_url = "" if hide_company else str(company_info.get("vacancy_url") or "").strip()
     salary = _salary_range_text(vacancy_info)
     questions = _sanitize_additional_questions(str(vacancy_info.get("questions") or ""))
-    contact_source = str(fixture.contact_source or "").strip()
+    if contact_source_override is None:
+        contact_source = str(fixture.contact_source or "").strip()
+    else:
+        contact_source = str(contact_source_override or "").strip()
 
     lines = [
         "### Контекст для диалога (будет предоставлен перед началом)",
@@ -1227,6 +1335,7 @@ def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     if case_type == "single":
         scenario_index = int(case.get("scenario_index") or 0)
+        scenario_name = str(case.get("scenario_name") or "")
         for turn in case.get("turns") or []:
             if int(turn.get("score", 0)) == 0:
                 failures.append(
@@ -1234,6 +1343,7 @@ def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "run_index": None,
                         "step": int(turn.get("step") or 0),
                         "scenario_index": scenario_index,
+                        "scenario_name": scenario_name,
                         "reason": _short_reason(str(turn.get("comment") or "")),
                     }
                 )
@@ -1249,12 +1359,110 @@ def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
                             "run_index": run_index,
                             "step": int(turn.get("step") or 0),
                             "scenario_index": int(turn.get("scenario_index") or 0),
+                            "scenario_name": str(turn.get("scenario_name") or ""),
                             "reason": _short_reason(str(turn.get("comment") or "")),
                         }
                     )
         return failures
 
     return failures
+
+
+def build_scenario_step_summary(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    stats: Dict[Tuple[int, str], Dict[str, Any]] = {}
+
+    def ensure_bucket(index: int, name: str, case_type: str) -> Dict[str, Any]:
+        key = (index, name)
+        if key not in stats:
+            stats[key] = {
+                "scenario_index": index,
+                "scenario_name": name,
+                "case_types": [],
+                "case_ids": [],
+                "evaluations_total": 0,
+                "score_total": 0,
+                "passed_evaluations": 0,
+                "failed_evaluations": 0,
+                "failed_examples": [],
+            }
+        bucket = stats[key]
+        if case_type and case_type not in bucket["case_types"]:
+            bucket["case_types"].append(case_type)
+        return bucket
+
+    for case in cases:
+        case_id = str(case.get("case_id") or "")
+        case_type = str(case.get("type") or "")
+
+        if case_type == "single":
+            scenario_index = int(case.get("scenario_index") or 0)
+            scenario_name = str(case.get("scenario_name") or "")
+            bucket = ensure_bucket(scenario_index, scenario_name, case_type)
+            if case_id and case_id not in bucket["case_ids"]:
+                bucket["case_ids"].append(case_id)
+            for turn in case.get("turns") or []:
+                score = int(turn.get("score", 0) or 0)
+                bucket["evaluations_total"] += 1
+                bucket["score_total"] += score
+                if score:
+                    bucket["passed_evaluations"] += 1
+                else:
+                    bucket["failed_evaluations"] += 1
+                    bucket["failed_examples"].append(
+                        {
+                            "case_id": case_id,
+                            "run_index": None,
+                            "step": int(turn.get("step") or 0),
+                            "comment": _short_reason(str(turn.get("comment") or "")),
+                        }
+                    )
+            continue
+
+        if case_type == "chain":
+            for run in case.get("runs") or []:
+                run_index = int(run.get("run_index") or 0)
+                for turn in run.get("turns") or []:
+                    scenario_index = int(turn.get("scenario_index") or 0)
+                    scenario_name = str(turn.get("scenario_name") or "")
+                    bucket = ensure_bucket(scenario_index, scenario_name, case_type)
+                    if case_id and case_id not in bucket["case_ids"]:
+                        bucket["case_ids"].append(case_id)
+                    score = int(turn.get("score", 0) or 0)
+                    bucket["evaluations_total"] += 1
+                    bucket["score_total"] += score
+                    if score:
+                        bucket["passed_evaluations"] += 1
+                    else:
+                        bucket["failed_evaluations"] += 1
+                        bucket["failed_examples"].append(
+                            {
+                                "case_id": case_id,
+                                "run_index": run_index,
+                                "step": int(turn.get("step") or 0),
+                                "comment": _short_reason(str(turn.get("comment") or "")),
+                            }
+                        )
+
+    result: List[Dict[str, Any]] = []
+    for _, bucket in sorted(stats.items(), key=lambda item: item[0][0]):
+        evaluations_total = int(bucket.get("evaluations_total") or 0)
+        failed_examples = list(bucket.get("failed_examples") or [])
+        result.append(
+            {
+                "scenario_index": int(bucket.get("scenario_index") or 0),
+                "scenario_name": str(bucket.get("scenario_name") or ""),
+                "case_types": list(bucket.get("case_types") or []),
+                "case_ids": list(bucket.get("case_ids") or []),
+                "evaluations_total": evaluations_total,
+                "score_total": int(bucket.get("score_total") or 0),
+                "score_rate": (int(bucket.get("score_total") or 0) / evaluations_total) if evaluations_total else 0.0,
+                "passed_evaluations": int(bucket.get("passed_evaluations") or 0),
+                "failed_evaluations": int(bucket.get("failed_evaluations") or 0),
+                "passed": int(bucket.get("failed_evaluations") or 0) == 0,
+                "failed_examples": failed_examples[:5],
+            }
+        )
+    return result
 
 
 def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1300,6 +1508,7 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if case_type == "chain":
             errors = []
             failed_runs: List[Dict[str, Any]] = []
+            failed_turns: List[Dict[str, Any]] = []
             for run in case.get("runs") or []:
                 run_passed = bool(run.get("passed"))
                 run_score_total = int(run.get("score_total", 0) or 0)
@@ -1316,8 +1525,23 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     errors.append(reason)
                     bad_turns.append(
                         {
+                            "run_index": int(run.get("run_index") or 0),
                             "step": int(turn.get("step") or 0),
                             "scenario_index": int(turn.get("scenario_index") or 0),
+                            "scenario_name": str(turn.get("scenario_name") or ""),
+                            "candidate_message": str(turn.get("candidate_message") or ""),
+                            "assistant_reply": str(turn.get("assistant_reply") or ""),
+                            "comment": reason,
+                        }
+                    )
+                    failed_turns.append(
+                        {
+                            "run_index": int(run.get("run_index") or 0),
+                            "step": int(turn.get("step") or 0),
+                            "scenario_index": int(turn.get("scenario_index") or 0),
+                            "scenario_name": str(turn.get("scenario_name") or ""),
+                            "candidate_message": str(turn.get("candidate_message") or ""),
+                            "assistant_reply": str(turn.get("assistant_reply") or ""),
                             "comment": reason,
                         }
                     )
@@ -1337,6 +1561,7 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "cdm_file": str(case.get("cdm_file") or ""),
                     "company_hidden": bool(case.get("company_hidden", False)),
                     "runs": failed_runs,
+                    "failed_turns": failed_turns,
                     "errors": errors,
                 }
             )
@@ -1860,12 +2085,42 @@ def _fallback_messages(
         return pool[:n]
 
     if idx == 43:
+        if min_salary is not None and max_salary is not None:
+            lower = max(100, int(round(min_salary / 1000)))
+            upper = max(lower, int(round(max_salary / 1000)))
+            middle = int(round((lower + upper) / 2))
+            pool = [
+                str(middle),
+                str(max(lower, middle - 20)),
+                f"{min(upper, middle + 10)} на руки",
+            ]
+            return pool[:n]
         return ["300", "320", "300 на руки"][:n]
 
     if idx == 44:
+        if max_salary is not None:
+            upper = max(100, int(round(max_salary / 1000)))
+            pool = [
+                str(upper + 100),
+                str(upper + 150),
+                f"{upper + 120} на руки",
+            ]
+            return pool[:n]
         return ["500", "520", "500 на руки"][:n]
 
     if idx == 45:
+        if min_salary is not None and max_salary is not None:
+            lower = max(100, int(round(min_salary / 1000)))
+            upper = max(lower, int(round(max_salary / 1000)))
+            middle = int(round((lower + upper) / 2))
+            left = max(lower, middle - 20)
+            right = min(upper, middle + 20)
+            pool = [
+                f"{left}-{right}",
+                f"{max(lower, left - 20)}-{min(upper, middle)}",
+                f"{middle}-{min(upper, right + 10)}",
+            ]
+            return pool[:n]
         return ["300-340", "280-320", "310-330"][:n]
 
     if idx == 46:
@@ -2918,10 +3173,16 @@ def _is_monthly_rubles_clarification_reply(reply: str) -> bool:
     low = (reply or "").lower()
     clarify_markers = [
         "уточните",
+        "укажите",
         "подскажите",
         "корректно ли я понимаю",
+        "правильно ли я понимаю",
         "имеете в виду",
         "речь о сумме",
+        "речь идет о сумме",
+        "речь идёт о сумме",
+        "речь идет о зарплате",
+        "речь идёт о зарплате",
     ]
     monthly_markers = [
         "в рублях",
@@ -3135,9 +3396,6 @@ def enforce_prompt_v2_hard_rules(
     if _reply_has_end_marker(assistant_reply) and "?" in (assistant_reply or ""):
         return 0, "Prompt v2 hard rule failed: END cannot be combined with questions."
 
-    if (assistant_reply or "").count("?") > 2:
-        return 0, "Prompt v2 hard rule failed: reply contains more than two question marks."
-
     return score, comment
 
 
@@ -3257,14 +3515,13 @@ def enforce_profile_reference_rules(
     assistant_reply: str,
     score: int,
     comment: str,
+    dialog_context_meta: Dict[str, Any],
 ) -> Tuple[int, str]:
     idx = scenario.index
     if idx not in PROFILE_REFERENCE_SCENARIOS and idx not in PROFILE_REFERENCE_RESUME_SCENARIOS:
         return score, comment
 
     reply_low = (assistant_reply or "").lower()
-    technical_markers = ["playwright", "api-автотест", "api автотест", "c#"]
-    nontechnical_markers = ["ментор", "команд", "руковод", "лид"]
     direct_markers = [
         "прямо в диалоге",
         "прямо здесь",
@@ -3272,6 +3529,21 @@ def enforce_profile_reference_rules(
         "уточните, пожалуйста",
         "подскажите, пожалуйста",
     ]
+    questions = _extract_additional_questions(dialog_context_meta)
+    current_question = ""
+    next_question = ""
+    if idx in (50, 61):
+        current_question = questions[0] if questions else ""
+        next_question = questions[1] if len(questions) > 1 else ""
+    elif idx == 51:
+        current_question = questions[1] if len(questions) > 1 else (questions[0] if questions else "")
+        next_question = questions[2] if len(questions) > 2 else ""
+    elif idx == 62:
+        current_question = questions[0] if questions else ""
+        next_question = questions[1] if len(questions) > 1 else ""
+
+    current_markers = _question_markers_from_text(current_question)
+    next_markers = _question_markers_from_text(next_question)
 
     if idx in PROFILE_REFERENCE_SCENARIOS:
         if _reply_has_end_marker(assistant_reply):
@@ -3279,16 +3551,11 @@ def enforce_profile_reference_rules(
         if not _contains_any_substring(reply_low, direct_markers):
             return 0, "Profile reference rule failed: assistant should ask to answer directly in the dialogue."
 
-        if idx in (50, 61):
-            if not _contains_any_substring(reply_low, technical_markers):
-                return 0, "Profile reference rule failed: assistant should repeat the current technical question."
-            if _contains_any_substring(reply_low, nontechnical_markers):
-                return 0, "Profile reference rule failed: assistant jumped to the next nontechnical question instead of repeating the current technical one."
-        elif idx == 51:
-            if not _contains_any_substring(reply_low, nontechnical_markers):
-                return 0, "Profile reference rule failed: assistant should repeat the current nontechnical question."
-            if _contains_any_substring(reply_low, technical_markers):
-                return 0, "Profile reference rule failed: assistant jumped to the technical question instead of clarifying the current nontechnical one."
+        if current_markers and not _reply_mentions_question_markers(reply_low, current_markers):
+            return 0, "Profile reference rule failed: assistant should repeat the current unanswered question."
+
+        if next_markers and _reply_mentions_question_markers(reply_low, next_markers):
+            return 0, "Profile reference rule failed: assistant jumped to the next question instead of clarifying the current one."
 
         return 1, "Profile reference rule passed: assistant keeps the current question open and asks for a direct answer in chat."
 
@@ -3296,8 +3563,15 @@ def enforce_profile_reference_rules(
         return 0, "Profile reference resume rule failed: after a substantive answer the dialogue should continue."
     if _looks_like_restarted_intro(assistant_reply):
         return 0, "Profile reference resume rule failed: assistant restarted the whole screening instead of moving to the next question."
-    if not _contains_any_substring(reply_low, nontechnical_markers):
-        return 0, "Profile reference resume rule failed: assistant should move to the next unanswered question after receiving the direct answer."
+
+    if next_markers:
+        if not _reply_mentions_question_markers(reply_low, next_markers):
+            return 0, "Profile reference resume rule failed: assistant should move to the next unanswered question after receiving the direct answer."
+        if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
+            return 0, "Profile reference resume rule failed: assistant repeated the previous question instead of moving forward."
+    elif current_markers and _reply_mentions_question_markers(reply_low, current_markers):
+        return 0, "Profile reference resume rule failed: assistant repeated the same question after receiving a direct answer."
+
     return 1, "Profile reference resume rule passed: assistant moves to the next question only after receiving a direct answer."
 
 
@@ -3306,6 +3580,7 @@ def enforce_pause_later_rules(
     assistant_reply: str,
     score: int,
     comment: str,
+    dialog_context_meta: Dict[str, Any],
 ) -> Tuple[int, str]:
     idx = scenario.index
     if idx not in PAUSE_LATER_SCENARIOS and idx not in PAUSE_LATER_RESUME_SCENARIOS:
@@ -3313,7 +3588,10 @@ def enforce_pause_later_rules(
 
     reply_low = (assistant_reply or "").lower()
     priority_markers = ["в каком городе", "где вы сейчас", "локац", "город"]
-    question_markers = ["playwright", "api-автотест", "api автотест", "c#"]
+    questions = _extract_additional_questions(dialog_context_meta)
+    current_question = questions[0] if questions else ""
+    current_question_markers = _question_markers_from_text(current_question)
+    needs_work_format_ready = _is_office_or_hybrid_work_format(str(dialog_context_meta.get("work_format") or ""))
 
     if idx == 54:
         if _is_finish_reply(assistant_reply):
@@ -3330,8 +3608,12 @@ def enforce_pause_later_rules(
             if not _contains_any_substring(reply_low, priority_markers):
                 return 0, "Pause rule failed: before priority answers are complete, assistant must ask the next missing priority question."
         if idx in (53, 57):
-            if not _contains_any_substring(reply_low, question_markers):
+            if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
+                return 1, "Pause rule passed: assistant uses the merged pause script and continues with the required work-format readiness step."
+            if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
                 return 0, "Pause rule failed: after priority answers are complete, assistant must ask the next unanswered question from [questions]."
+            if not current_question_markers and "?" not in assistant_reply:
+                return 0, "Pause rule failed: after priority answers are complete, assistant should continue with the current unanswered question."
 
         return 1, "Pause rule passed: assistant uses the merged pause script and continues with the correct next step."
 
@@ -3342,8 +3624,13 @@ def enforce_pause_later_rules(
 
     if idx == 56 and not _contains_any_substring(reply_low, priority_markers):
         return 0, "Pause resume rule failed: assistant should resume with the missing priority question."
-    if idx == 58 and not _contains_any_substring(reply_low, question_markers):
-        return 0, "Pause resume rule failed: assistant should resume with the next unanswered question from [questions]."
+    if idx == 58:
+        if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
+            return 1, "Pause resume rule passed: assistant resumes with the unresolved work-format readiness step."
+        if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
+            return 0, "Pause resume rule failed: assistant should resume with the current unanswered question from [questions]."
+        if not current_question_markers and "?" not in assistant_reply:
+            return 0, "Pause resume rule failed: assistant should resume with the current unanswered question from [questions]."
 
     return 1, "Pause resume rule passed: assistant resumes the dialogue from the correct step."
 
@@ -3530,12 +3817,14 @@ def run_single_scenario(
             assistant_reply=reply,
             score=score,
             comment=comment,
+            dialog_context_meta=dialog_context_meta,
         )
         score, comment = enforce_pause_later_rules(
             scenario=scenario,
             assistant_reply=reply,
             score=score,
             comment=comment,
+            dialog_context_meta=dialog_context_meta,
         )
         score, comment = enforce_prompt_v2_hard_rules(
             assistant_reply=reply,
@@ -3669,12 +3958,14 @@ def run_chain_group(
                 assistant_reply=reply,
                 score=score,
                 comment=comment,
+                dialog_context_meta=dialog_context_meta,
             )
             score, comment = enforce_pause_later_rules(
                 scenario=s,
                 assistant_reply=reply,
                 score=score,
                 comment=comment,
+                dialog_context_meta=dialog_context_meta,
             )
             score, comment = enforce_prompt_v2_hard_rules(
                 assistant_reply=reply,
@@ -3815,9 +4106,13 @@ def run_scenarios(
         print(f"\n[case {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
         fixture = _select_cdm_fixture_for_group(cdm_fixtures, group, gidx)
         hide_company = _group_requires_hidden_company(group)
+        contact_source_override = ""
+        if not _group_has_any_scenario(group, sorted(CONTACT_SOURCE_EMPTY_SCENARIOS)):
+            contact_source_override = None
         dialog_context, dialog_context_meta = build_dialog_context(
             fixture=fixture,
             hide_company=hide_company,
+            contact_source_override=contact_source_override,
         )
         print(
             f"  - cdm={fixture.file_name} | "
@@ -3878,6 +4173,7 @@ def run_scenarios(
         )
 
     mismatches = build_mismatches(cases)
+    scenario_step_summary = build_scenario_step_summary(cases)
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
 
@@ -3912,6 +4208,7 @@ def run_scenarios(
             "score_total": score_total,
             "score_rate": score_rate,
             "errors_by_case": errors_by_case,
+            "scenario_step_summary": scenario_step_summary,
         },
         "cases": cases,
         "mismatches": mismatches,
