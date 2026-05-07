@@ -324,7 +324,7 @@ CHAIN_BY_INDEX["chain_pause_resume_questions"] = [57, 58]
 CHAIN_BY_INDEX["chain_contact_source_resume"] = [59, 60]
 CHAIN_BY_INDEX["chain_profile_reference_resume"] = [61, 62]
 
-CONTACT_SOURCE_FILLED_SCENARIOS = {8, 40, 59}
+CONTACT_SOURCE_FILLED_SCENARIOS = {8, 20, 40, 59}
 CONTACT_SOURCE_EMPTY_SCENARIOS = {41}
 CONTACT_SOURCE_SCENARIOS = CONTACT_SOURCE_FILLED_SCENARIOS | CONTACT_SOURCE_EMPTY_SCENARIOS
 CONTACT_SOURCE_RESUME_SCENARIOS = {60}
@@ -965,6 +965,13 @@ def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
     return _group_has_any_scenario(group, [7, 8] + list(range(40, 63)))
 
 
+def _is_real_company_name(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    return normalized not in {"не указано", "скрыто", "n/a", "na", "none", "null", "-"}
+
+
 def _fixture_matches_group_requirements(
     fixture: CdmFixture,
     group: ScenarioGroup,
@@ -985,6 +992,11 @@ def _fixture_matches_group_requirements(
 
     if _group_has_any_scenario(group, [36]):
         return bool(location) and "моск" not in location and "удал" not in location
+
+    if _group_has_any_scenario(group, [28, 31]):
+        company_name = str(vacancy_info.get("company_name") or "").strip()
+        if not _is_real_company_name(company_name):
+            return False
 
     return True
 
@@ -1329,140 +1341,33 @@ def _short_reason(comment: str, limit: int = 140) -> str:
     return normalized[:limit]
 
 
-def _case_failures(case: Dict[str, Any]) -> List[Dict[str, Any]]:
-    failures: List[Dict[str, Any]] = []
-    case_type = case.get("type")
+def _compact_problem_summary(dialogs: List[Dict[str, Any]]) -> str:
+    if not dialogs:
+        return ""
+    total = len(dialogs)
+    reason_counts: Dict[str, int] = {}
+    scenario_counts: Dict[str, int] = {}
+    for dialog in dialogs:
+        problem = _short_reason(str(dialog.get("problem") or ""))
+        if problem:
+            reason_counts[problem] = reason_counts.get(problem, 0) + 1
+        scenario_index = dialog.get("scenario_index")
+        if scenario_index is not None:
+            key = f"S{int(scenario_index)}"
+            scenario_counts[key] = scenario_counts.get(key, 0) + 1
 
-    if case_type == "single":
-        scenario_index = int(case.get("scenario_index") or 0)
-        scenario_name = str(case.get("scenario_name") or "")
-        for turn in case.get("turns") or []:
-            if int(turn.get("score", 0)) == 0:
-                failures.append(
-                    {
-                        "run_index": None,
-                        "step": int(turn.get("step") or 0),
-                        "scenario_index": scenario_index,
-                        "scenario_name": scenario_name,
-                        "reason": _short_reason(str(turn.get("comment") or "")),
-                    }
-                )
-        return failures
+    top_reason = ""
+    if reason_counts:
+        top_reason = sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
-    if case_type == "chain":
-        for run in case.get("runs") or []:
-            run_index = int(run.get("run_index") or 0)
-            for turn in run.get("turns") or []:
-                if int(turn.get("score", 0)) == 0:
-                    failures.append(
-                        {
-                            "run_index": run_index,
-                            "step": int(turn.get("step") or 0),
-                            "scenario_index": int(turn.get("scenario_index") or 0),
-                            "scenario_name": str(turn.get("scenario_name") or ""),
-                            "reason": _short_reason(str(turn.get("comment") or "")),
-                        }
-                    )
-        return failures
-
-    return failures
-
-
-def build_scenario_step_summary(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    stats: Dict[Tuple[int, str], Dict[str, Any]] = {}
-
-    def ensure_bucket(index: int, name: str, case_type: str) -> Dict[str, Any]:
-        key = (index, name)
-        if key not in stats:
-            stats[key] = {
-                "scenario_index": index,
-                "scenario_name": name,
-                "case_types": [],
-                "case_ids": [],
-                "evaluations_total": 0,
-                "score_total": 0,
-                "passed_evaluations": 0,
-                "failed_evaluations": 0,
-                "failed_examples": [],
-            }
-        bucket = stats[key]
-        if case_type and case_type not in bucket["case_types"]:
-            bucket["case_types"].append(case_type)
-        return bucket
-
-    for case in cases:
-        case_id = str(case.get("case_id") or "")
-        case_type = str(case.get("type") or "")
-
-        if case_type == "single":
-            scenario_index = int(case.get("scenario_index") or 0)
-            scenario_name = str(case.get("scenario_name") or "")
-            bucket = ensure_bucket(scenario_index, scenario_name, case_type)
-            if case_id and case_id not in bucket["case_ids"]:
-                bucket["case_ids"].append(case_id)
-            for turn in case.get("turns") or []:
-                score = int(turn.get("score", 0) or 0)
-                bucket["evaluations_total"] += 1
-                bucket["score_total"] += score
-                if score:
-                    bucket["passed_evaluations"] += 1
-                else:
-                    bucket["failed_evaluations"] += 1
-                    bucket["failed_examples"].append(
-                        {
-                            "case_id": case_id,
-                            "run_index": None,
-                            "step": int(turn.get("step") or 0),
-                            "comment": _short_reason(str(turn.get("comment") or "")),
-                        }
-                    )
-            continue
-
-        if case_type == "chain":
-            for run in case.get("runs") or []:
-                run_index = int(run.get("run_index") or 0)
-                for turn in run.get("turns") or []:
-                    scenario_index = int(turn.get("scenario_index") or 0)
-                    scenario_name = str(turn.get("scenario_name") or "")
-                    bucket = ensure_bucket(scenario_index, scenario_name, case_type)
-                    if case_id and case_id not in bucket["case_ids"]:
-                        bucket["case_ids"].append(case_id)
-                    score = int(turn.get("score", 0) or 0)
-                    bucket["evaluations_total"] += 1
-                    bucket["score_total"] += score
-                    if score:
-                        bucket["passed_evaluations"] += 1
-                    else:
-                        bucket["failed_evaluations"] += 1
-                        bucket["failed_examples"].append(
-                            {
-                                "case_id": case_id,
-                                "run_index": run_index,
-                                "step": int(turn.get("step") or 0),
-                                "comment": _short_reason(str(turn.get("comment") or "")),
-                            }
-                        )
-
-    result: List[Dict[str, Any]] = []
-    for _, bucket in sorted(stats.items(), key=lambda item: item[0][0]):
-        evaluations_total = int(bucket.get("evaluations_total") or 0)
-        failed_examples = list(bucket.get("failed_examples") or [])
-        result.append(
-            {
-                "scenario_index": int(bucket.get("scenario_index") or 0),
-                "scenario_name": str(bucket.get("scenario_name") or ""),
-                "case_types": list(bucket.get("case_types") or []),
-                "case_ids": list(bucket.get("case_ids") or []),
-                "evaluations_total": evaluations_total,
-                "score_total": int(bucket.get("score_total") or 0),
-                "score_rate": (int(bucket.get("score_total") or 0) / evaluations_total) if evaluations_total else 0.0,
-                "passed_evaluations": int(bucket.get("passed_evaluations") or 0),
-                "failed_evaluations": int(bucket.get("failed_evaluations") or 0),
-                "passed": int(bucket.get("failed_evaluations") or 0) == 0,
-                "failed_examples": failed_examples[:5],
-            }
-        )
-    return result
+    top_scenarios = ", ".join(
+        f"{key} x{count}" for key, count in sorted(scenario_counts.items(), key=lambda item: (int(item[0][1:]), item[0]))
+    )
+    if top_reason and top_scenarios:
+        return f"{total} failed turn(s). Main issue: {top_reason} [{top_scenarios}]"
+    if top_reason:
+        return f"{total} failed turn(s). Main issue: {top_reason}"
+    return f"{total} failed turn(s)."
 
 
 def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1478,17 +1383,17 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
 
         if case_type == "single":
-            errors: List[str] = []
-            failed_turns: List[Dict[str, Any]] = []
+            dialogs: List[Dict[str, Any]] = []
             for turn in case.get("turns") or []:
                 if int(turn.get("score", 0)) != 0:
                     continue
                 reason = _short_reason(str(turn.get("comment") or ""))
-                errors.append(reason)
-                failed_turns.append(
+                dialogs.append(
                     {
                         "step": int(turn.get("step") or 0),
-                        "comment": reason,
+                        "candidate_message": str(turn.get("candidate_message") or ""),
+                        "assistant_reply": str(turn.get("assistant_reply") or ""),
+                        "problem": reason,
                     }
                 )
 
@@ -1498,17 +1403,14 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "scenario_name": str(case.get("scenario_name") or ""),
                 "cdm_file": str(case.get("cdm_file") or ""),
                 "company_hidden": bool(case.get("company_hidden", False)),
-                "errors": errors,
+                "problem_summary": _compact_problem_summary(dialogs),
+                "dialogs": dialogs,
             }
-            if failed_turns:
-                mismatch["failed_turns"] = failed_turns
             mismatches.append(mismatch)
             continue
 
         if case_type == "chain":
-            errors = []
-            failed_runs: List[Dict[str, Any]] = []
-            failed_turns: List[Dict[str, Any]] = []
+            dialogs: List[Dict[str, Any]] = []
             for run in case.get("runs") or []:
                 run_passed = bool(run.get("passed"))
                 run_score_total = int(run.get("score_total", 0) or 0)
@@ -1517,13 +1419,11 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 if not run_failed:
                     continue
 
-                bad_turns: List[Dict[str, Any]] = []
                 for turn in run.get("turns") or []:
                     if int(turn.get("score", 0)) != 0:
                         continue
                     reason = _short_reason(str(turn.get("comment") or ""))
-                    errors.append(reason)
-                    bad_turns.append(
+                    dialogs.append(
                         {
                             "run_index": int(run.get("run_index") or 0),
                             "step": int(turn.get("step") or 0),
@@ -1531,27 +1431,9 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                             "scenario_name": str(turn.get("scenario_name") or ""),
                             "candidate_message": str(turn.get("candidate_message") or ""),
                             "assistant_reply": str(turn.get("assistant_reply") or ""),
-                            "comment": reason,
+                            "problem": reason,
                         }
                     )
-                    failed_turns.append(
-                        {
-                            "run_index": int(run.get("run_index") or 0),
-                            "step": int(turn.get("step") or 0),
-                            "scenario_index": int(turn.get("scenario_index") or 0),
-                            "scenario_name": str(turn.get("scenario_name") or ""),
-                            "candidate_message": str(turn.get("candidate_message") or ""),
-                            "assistant_reply": str(turn.get("assistant_reply") or ""),
-                            "comment": reason,
-                        }
-                    )
-
-                failed_runs.append(
-                    {
-                        "run_index": int(run.get("run_index") or 0),
-                        "turns": bad_turns,
-                    }
-                )
 
             mismatches.append(
                 {
@@ -1560,9 +1442,8 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "scenario_names": list(case.get("scenario_names") or []),
                     "cdm_file": str(case.get("cdm_file") or ""),
                     "company_hidden": bool(case.get("company_hidden", False)),
-                    "runs": failed_runs,
-                    "failed_turns": failed_turns,
-                    "errors": errors,
+                    "problem_summary": _compact_problem_summary(dialogs),
+                    "dialogs": dialogs,
                 }
             )
 
@@ -1727,10 +1608,16 @@ def _trigger_requirement_text(s: Scenario) -> str:
         )
 
     # 26/27 - бот
-    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
+    if idx == 26:
         return (
             "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
-            "Если повторно - явно укажи, что это повторный вопрос и ранее ответа не было.\n"
+            "Это ПЕРВЫЙ такой вопрос. Не пиши, что кандидат уже спрашивал раньше, и не используй формулировки"
+            " «повторяю», «в третий раз», «я уже спрашивал».\n"
+        )
+    if idx == 27 or ("повторно" in name and "бот" in name):
+        return (
+            "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
+            "Это ПОВТОРНЫЙ вопрос. Явно укажи, что кандидат уже спрашивал об этом раньше и ответа не получил.\n"
         )
 
     if idx == 10 or "географические ограничения" in name:
@@ -2018,10 +1905,11 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
 
     # 26/27. Бот
-    if idx == 26 or "бот" in name:
-        parts.append("- Кандидат сомневается: «ты бот?», «это ИИ или человек?».")
+    if idx == 26:
+        parts.append("- Это первый вопрос про бота: «ты бот?», «это ИИ или человек?».")
+        parts.append("- Не используй слова «повторно», «снова», «я уже спрашивал», «в третий раз».")
     if idx == 27 or ("повторно" in name and "бот" in name):
-        parts.append("- Повторный вопрос про бота: «я же уже спрашивал, вы бот?».")
+        parts.append("- Это повторный вопрос про бота: «я же уже спрашивал, вы бот?».")
     if not parts:
         return ""
 
@@ -2084,44 +1972,64 @@ def _fallback_messages(
         ]
         return pool[:n]
 
+    if idx == 20:
+        pool = [
+            "Вы пишете, что нашли меня на LinkedIn, но меня там нет.",
+            "Почему указано, что вы нашли мой профиль на HH, если я там его не размещал?",
+            "Вы пишете про GitHub, но мой контакт точно не оттуда.",
+        ]
+        return pool[:n]
+
     if idx == 43:
         if min_salary is not None and max_salary is not None:
-            lower = max(100, int(round(min_salary / 1000)))
-            upper = max(lower, int(round(max_salary / 1000)))
-            middle = int(round((lower + upper) / 2))
+            lower = int(min_salary)
+            upper = max(lower, int(max_salary))
+            middle = int(round((lower + upper) / 2 / 10_000) * 10_000)
             pool = [
-                str(middle),
-                str(max(lower, middle - 20)),
-                f"{min(upper, middle + 10)} на руки",
+                f"{middle} рублей на руки в месяц",
+                f"{max(lower, middle - 10_000)} руб на руки в месяц",
+                f"{min(upper, middle + 10_000)} рублей в месяц net",
             ]
             return pool[:n]
-        return ["300", "320", "300 на руки"][:n]
+        return [
+            "300000 рублей на руки в месяц",
+            "320000 руб на руки в месяц",
+            "300000 рублей в месяц net",
+        ][:n]
 
     if idx == 44:
         if max_salary is not None:
-            upper = max(100, int(round(max_salary / 1000)))
+            upper = int(max_salary)
             pool = [
-                str(upper + 100),
-                str(upper + 150),
-                f"{upper + 120} на руки",
+                f"{upper + 100_000} рублей на руки в месяц",
+                f"{upper + 150_000} руб в месяц",
+                f"{upper + 120_000} рублей net в месяц",
             ]
             return pool[:n]
-        return ["500", "520", "500 на руки"][:n]
+        return [
+            "450000 рублей на руки в месяц",
+            "500000 руб в месяц",
+            "470000 рублей net в месяц",
+        ][:n]
 
     if idx == 45:
         if min_salary is not None and max_salary is not None:
-            lower = max(100, int(round(min_salary / 1000)))
-            upper = max(lower, int(round(max_salary / 1000)))
-            middle = int(round((lower + upper) / 2))
-            left = max(lower, middle - 20)
-            right = min(upper, middle + 20)
+            lower = int(min_salary)
+            upper = max(lower, int(max_salary))
+            middle = int(round((lower + upper) / 2 / 10_000) * 10_000)
+            left = max(lower, middle - 20_000)
+            right = min(upper, middle + 20_000)
             pool = [
-                f"{left}-{right}",
-                f"{max(lower, left - 20)}-{min(upper, middle)}",
-                f"{middle}-{min(upper, right + 10)}",
+                f"{left}-{right} рублей на руки в месяц",
+                f"от {max(lower, left - 20_000)} до {min(upper, middle)} рублей в месяц",
+                f"{middle}-{min(upper, right + 10_000)} руб net в месяц",
             ]
             return pool[:n]
-        return ["300-340", "280-320", "310-330"][:n]
+        return [
+            "280000-320000 рублей на руки в месяц",
+            "от 260000 до 300000 рублей в месяц",
+            "300000-330000 руб net в месяц",
+        ][:n]
 
     if idx == 46:
         return ["50", "60", "70"][:n]
@@ -2431,6 +2339,26 @@ def _fallback_messages(
     return [f"[SCENARIO {s.index}] Сообщение кандидата по сценарию: {s.name}" for _ in range(n)]
 
 
+def _generated_message_matches_scenario_constraints(scenario_index: int, message: str) -> bool:
+    low = _normalize_text(message).lower()
+    repeated_markers = [
+        "повтор",
+        "снова",
+        "уже спрашивал",
+        "второй раз",
+        "третий раз",
+        "опять спрашиваю",
+        "повторю вопрос",
+        "так и не ответили",
+        "ответа не было",
+    ]
+    if scenario_index == 26:
+        return not _contains_any_substring(low, repeated_markers)
+    if scenario_index == 27:
+        return _contains_any_substring(low, repeated_markers)
+    return True
+
+
 def _parse_json_string_list(text: str) -> List[str]:
     try:
         data = _safe_json_loads(text)
@@ -2638,7 +2566,10 @@ def generate_candidate_messages_for_scenario(
         cleaned = [_normalize_text(m) for m in msgs[:messages_per_scenario]]
         return cleaned
 
-    messages = _do_gen(strong=True)
+    messages = [
+        m for m in _do_gen(strong=True)
+        if _generated_message_matches_scenario_constraints(scenario.index, m)
+    ]
 
     if len(messages) < messages_per_scenario:
         fallback = _fallback_messages(
@@ -3017,7 +2948,7 @@ def _asks_relocation_and_office_visit(
         "удобно",
         "комфортно",
     ]
-    office_markers = [
+    format_markers = [
         "офис",
         "office",
         "в офис",
@@ -3028,14 +2959,24 @@ def _asks_relocation_and_office_visit(
         "бывать",
         "присутств",
         "выходить",
+        "гибрид",
+        "hybrid",
+        "гибридный",
+        "гибридном формате",
+        "формат работы",
     ]
+    canonical = _canonical_work_format(str(dialog_context_meta.get("work_format") or "").strip())
+    if canonical == "hybrid":
+        format_markers.extend(["работу в гибридном формате", "работать в гибридном формате"])
+    if canonical == "office":
+        format_markers.extend(["работу в офисе", "работать в офисе"])
     has_location = True if not location_markers else _contains_any_substring(low, location_markers)
 
     return (
         has_location
         and _contains_any_substring(low, relocation_markers)
         and _contains_any_substring(low, readiness_markers)
-        and _contains_any_substring(low, office_markers)
+        and _contains_any_substring(low, format_markers)
     )
 
 
@@ -3188,6 +3129,7 @@ def _is_monthly_rubles_clarification_reply(reply: str) -> bool:
         "в рублях",
         "на руки",
         "в месяц",
+        "за месяц",
     ]
     return (
         not _reply_has_end_marker(reply)
@@ -3206,7 +3148,39 @@ def _is_finish_reply(reply: str) -> bool:
 
 
 def _has_pause_script(reply: str) -> bool:
-    return _contains_markers(reply, PAUSE_SCRIPT_MARKERS, minimum=2)
+    low = (reply or "").lower()
+    if _contains_markers(reply, PAUSE_SCRIPT_MARKERS, minimum=2):
+        return True
+    return _contains_any_substring(low, ["хорошо, договорились", "договорились"]) and _contains_any_substring(
+        low,
+        [
+            "вернуться к этому диалогу позже",
+            "вернуться позже",
+            "позже обсудим",
+            "когда вам будет удобно",
+        ],
+    )
+
+
+def _looks_like_direct_answer_request(reply: str) -> bool:
+    low = (reply or "").lower()
+    direct_markers = [
+        "прямо в диалоге",
+        "прямо здесь",
+        "ответить прямо",
+        "для корректной фиксации",
+        "для корректной фиксации данных",
+        "для корректной фиксации в базе",
+        "важно получить ответ",
+        "важно получить ваш ответ",
+        "важно зафиксировать",
+        "прошу коротко подтвердить",
+        "кратко подтвердить",
+        "прошу уточнить",
+        "кратко описать",
+        "кратко рассказать",
+    ]
+    return _contains_any_substring(low, direct_markers)
 
 
 def _is_hidden_company_reply_valid(
@@ -3491,23 +3465,23 @@ def enforce_salary_normalization_rules(
 
     if idx == 44:
         if _reply_matches_exact_script(assistant_reply, S14_SALARY_REJECTION_SCRIPT):
-            return 1, "Salary normalization rule passed: three-digit value above the budget triggers the salary rejection END script."
-        return 0, "Salary normalization rule failed: over-budget three-digit salary must use the standard salary rejection END script."
+            return 1, "Salary rule passed: explicit monthly salary above the budget triggers the standard salary rejection END script."
+        return 0, "Salary rule failed: explicit monthly salary above the budget must use the standard salary rejection END script."
 
     if idx in (46, 47, 48, 49):
         if _reply_has_end_marker(assistant_reply):
-            return 0, "Salary normalization rule failed: ambiguous/hourly/currency salary must not end the dialogue."
+            return 0, "Salary rule failed: ambiguous/hourly/currency salary must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
-            return 0, "Salary normalization rule failed: ambiguous/hourly/currency salary must trigger clarification in monthly net rubles."
-        return 1, "Salary normalization rule passed: assistant asks to clarify monthly net salary in rubles."
+            return 0, "Salary rule failed: ambiguous/hourly/currency salary must trigger clarification in monthly net rubles."
+        return 1, "Salary rule passed: assistant asks to clarify monthly net salary in rubles."
 
     if _reply_has_end_marker(assistant_reply):
-        return 0, "Salary normalization rule failed: in-range normalized three-digit salary must not end the dialogue."
+        return 0, "Salary rule failed: explicit monthly salary within range must not end the dialogue."
 
     if _is_monthly_rubles_clarification_reply(assistant_reply):
-        return 0, "Salary normalization rule failed: normalized three-digit monthly salary must not trigger unnecessary clarification."
+        return 0, "Salary rule failed: explicit monthly salary in rubles per month must not trigger unnecessary clarification."
 
-    return 1, "Salary normalization rule passed: assistant accepts normalized three-digit monthly salary without unnecessary clarification."
+    return 1, "Salary rule passed: assistant accepts explicit monthly salary in rubles without unnecessary clarification."
 
 
 def enforce_profile_reference_rules(
@@ -3522,13 +3496,6 @@ def enforce_profile_reference_rules(
         return score, comment
 
     reply_low = (assistant_reply or "").lower()
-    direct_markers = [
-        "прямо в диалоге",
-        "прямо здесь",
-        "ответить прямо",
-        "уточните, пожалуйста",
-        "подскажите, пожалуйста",
-    ]
     questions = _extract_additional_questions(dialog_context_meta)
     current_question = ""
     next_question = ""
@@ -3548,7 +3515,7 @@ def enforce_profile_reference_rules(
     if idx in PROFILE_REFERENCE_SCENARIOS:
         if _reply_has_end_marker(assistant_reply):
             return 0, "Profile reference rule failed: reply must not end the dialogue."
-        if not _contains_any_substring(reply_low, direct_markers):
+        if not _looks_like_direct_answer_request(assistant_reply):
             return 0, "Profile reference rule failed: assistant should ask to answer directly in the dialogue."
 
         if current_markers and not _reply_mentions_question_markers(reply_low, current_markers):
@@ -3653,7 +3620,7 @@ def enforce_open_company_answer_for_s31(
     )
     expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
 
-    if not expected_company:
+    if not _is_real_company_name(expected_company):
         return score, comment
 
     reply_raw = assistant_reply or ""
@@ -4158,22 +4125,7 @@ def run_scenarios(
     failed_cases = cases_total - passed_cases
     pass_rate = (passed_cases / cases_total * 100.0) if cases_total else 0.0
 
-    errors_by_case: List[Dict[str, Any]] = []
-    for case in cases:
-        if bool(case.get("passed")):
-            continue
-        errors_by_case.append(
-            {
-                "case_id": str(case.get("case_id") or ""),
-                "type": str(case.get("type") or ""),
-                "cdm_file": str(case.get("cdm_file") or ""),
-                "company_hidden": bool(case.get("company_hidden", False)),
-                "failures": _case_failures(case),
-            }
-        )
-
     mismatches = build_mismatches(cases)
-    scenario_step_summary = build_scenario_step_summary(cases)
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
 
@@ -4207,8 +4159,6 @@ def run_scenarios(
             "pass_rate": pass_rate,
             "score_total": score_total,
             "score_rate": score_rate,
-            "errors_by_case": errors_by_case,
-            "scenario_step_summary": scenario_step_summary,
         },
         "cases": cases,
         "mismatches": mismatches,
@@ -4218,7 +4168,7 @@ def run_scenarios(
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n[done] Screening scenarios report saved to: {out_path}")
-    failed_turns = sum(len(item.get("failures") or []) for item in errors_by_case)
+    failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     print(
         f"[summary] cases_total={cases_total} | turns_total={turns_total} | "
         f"score_total={score_total} | score_rate={score_rate:.3f} | "
