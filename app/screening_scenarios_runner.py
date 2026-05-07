@@ -3394,7 +3394,16 @@ def enforce_contact_source_rules(
                 return 0, "Contact source rule failed: empty contact_source scenario must use the fallback phrase about the candidate database."
         else:
             expected_source = str(dialog_context_meta.get("contact_source") or "").strip().lower()
-            if not expected_source or expected_source not in reply_low:
+            # Для S20 кандидат оспаривает сам указанный источник контакта.
+            # В таком кейсе считаем валидным либо повторение текущего contact_source,
+            # либо безопасный fallback про "базу кандидатов".
+            if idx == 20:
+                if not (
+                    (expected_source and expected_source in reply_low)
+                    or CONTACT_SOURCE_FALLBACK_FRAGMENT.lower() in reply_low
+                ):
+                    return 0, "Contact source rule failed: source-mismatch scenario must mention the current contact_source or use the candidate-database fallback."
+            elif not expected_source or expected_source not in reply_low:
                 return 0, "Contact source rule failed: reply must contain the current contact_source value."
 
         if _reply_matches_exact_script(assistant_reply, S7_LEGITIMACY_SCRIPT) or _contains_any_substring(
