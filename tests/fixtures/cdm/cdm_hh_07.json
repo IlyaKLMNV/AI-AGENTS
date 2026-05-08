@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "QA Specialist",
+    "company_name": "",
+    "company_description": "",
+    "location": "",
+    "work_format": "REMOTE",
+    "salary_range_from": 120000,
+    "salary_range_to": 180000,
+    "responsibilities": "Ручное тестирование, работа с баг-трекером и поддержка релизов.",
+    "vacancy_description": "Удаленная роль без жестких локационных ограничений.",
+    "questions": "1. Есть ли у вас опыт ручного тестирования web-приложений?\n2. Работали ли вы с баг-трекингом и тест-кейсами?"
+  },
+  "candidate": {
+    "recruiter_name": "Дарья",
+    "candidate_name": "Никита",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-manual-qa"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "QA Engineer",
+        "company": "CheckPoint"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Manual testing",
+        "quantile": 4.0
+      },
+      {
+        "skill": "Bug tracking",
+        "quantile": 4.1
+      }
+    ]
+  }
+}

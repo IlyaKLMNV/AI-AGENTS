@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Backend Engineer",
+    "company_name": "Northwind",
+    "company_description": "Команда backend-разработки для высоконагруженного сервиса.",
+    "location": "Москва",
+    "work_format": "REMOTE",
+    "salary_range_from": 200000,
+    "salary_range_to": 280000,
+    "responsibilities": "Разработка сервисов на Python, работа с API и инфраструктурой.",
+    "vacancy_description": "Удаленный формат, но работать можно только из РФ.",
+    "questions": "1. Есть ли у вас опыт с Python и FastAPI?\n2. Работали ли вы с микросервисной архитектурой?"
+  },
+  "candidate": {
+    "recruiter_name": "Марина",
+    "candidate_name": "Егор",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-backend"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Backend Engineer",
+        "company": "PyCore"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Python",
+        "quantile": 4.4
+      },
+      {
+        "skill": "FastAPI",
+        "quantile": 4.0
+      }
+    ]
+  }
+}

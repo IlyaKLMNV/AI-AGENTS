@@ -18,6 +18,11 @@ screening_assistant:
   prompt_version: 46
   seed: 1234
 
+screening_assistant_hh:
+  prompt_id: pmpt_69fcfc0bced48193ba7d544092b466050a5817bedd826d40
+  prompt_version: 2
+  seed: 1234
+
 screening_autofill:
   prompt_id: pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902
   prompt_version: 27

@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Support Engineer",
+    "company_name": "Orbit Systems",
+    "company_description": "B2B SaaS компания с распределенной командой поддержки.",
+    "location": "Москва",
+    "work_format": "ON_SITE, REMOTE",
+    "salary_range_from": 180000,
+    "salary_range_to": 260000,
+    "responsibilities": "Поддержка клиентов, разбор инцидентов, работа с Linux и сетевыми сервисами.",
+    "vacancy_description": "Можно работать удаленно из РФ или на месте работодателя в Москве. Если кандидат не готов к офису, нужно проверить готовность к удаленному формату.",
+    "questions": "1. Есть ли у вас опыт поддержки Linux-систем?\n2. Работали ли вы с инцидентами и клиентскими обращениями?"
+  },
+  "candidate": {
+    "recruiter_name": "Яна",
+    "candidate_name": "Игорь",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-support"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Support Engineer",
+        "company": "OpsCenter"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Linux",
+        "quantile": 4.2
+      },
+      {
+        "skill": "Incident management",
+        "quantile": 4.0
+      }
+    ]
+  }
+}

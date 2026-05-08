@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Data Engineer",
+    "company_name": "CityCore",
+    "company_description": "Команда данных в финтех-продукте.",
+    "location": "Москва",
+    "work_format": "REMOTE",
+    "salary_range_from": 210000,
+    "salary_range_to": 310000,
+    "responsibilities": "Разработка ETL-процессов, пайплайнов данных и витрин.",
+    "vacancy_description": "Удаленная роль, но позиция привязана к Москве; важно находиться в Москве.",
+    "questions": "1. Есть ли у вас опыт с Airflow и ETL?\n2. Работали ли вы с витринами и DWH?"
+  },
+  "candidate": {
+    "recruiter_name": "Настя",
+    "candidate_name": "Дмитрий",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-data"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Data Engineer",
+        "company": "Pipeline"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Airflow",
+        "quantile": 4.1
+      },
+      {
+        "skill": "DWH",
+        "quantile": 4.0
+      }
+    ]
+  }
+}
