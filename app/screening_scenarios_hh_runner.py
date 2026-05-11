@@ -442,27 +442,28 @@ TOPIC_COMPANY = ["компан", "название компании", "рабо�
 # Явные цепочки по индексам строк CSV.
 # Важно: порядок в списке - это порядок шагов в одном диалоге.
 CHAIN_BY_INDEX: Dict[str, List[int]] = {
-    "chain_salary_3x": [12, 29, 30],  # 1-й, 2-й, 3-й вопрос кандидата о ЗП
-    "chain_bot_check": [26, 27],
+    "chain_salary_3x": [11, 23, 24],  # 1-й, 2-й, 3-й вопрос кандидата о ЗП
+    "chain_bot_check": [20, 21],
 }
 
 
-CHAIN_BY_INDEX["chain_pause_resume_priority"] = [55, 56]
-CHAIN_BY_INDEX["chain_pause_resume_questions"] = [57, 58]
-CHAIN_BY_INDEX["chain_profile_reference_resume"] = [61, 62]
+CHAIN_BY_INDEX["chain_pause_resume_priority"] = [46, 47]
+CHAIN_BY_INDEX["chain_pause_resume_questions"] = [48, 49]
+CHAIN_BY_INDEX["chain_profile_reference_resume"] = [50, 51]
 
 CONTACT_SOURCE_SCENARIOS: set[int] = set()
 CONTACT_SOURCE_RESUME_SCENARIOS: set[int] = set()
-LEGITIMACY_SCENARIOS = {7, 42}
-SALARY_NORMALIZATION_SCENARIOS = {43, 44, 46, 47, 48, 49}
-PROFILE_REFERENCE_SCENARIOS = {50, 51, 61}
-PROFILE_REFERENCE_RESUME_SCENARIOS = {62}
-PAUSE_LATER_SCENARIOS = {54, 55, 57}
-PAUSE_LATER_RESUME_SCENARIOS = {56, 58}
+LEGITIMACY_SCENARIOS = {7, 36}
+SALARY_NORMALIZATION_SCENARIOS = {37, 38, 39, 40, 41, 42}
+PROFILE_REFERENCE_SCENARIOS = {43, 44, 50}
+PROFILE_REFERENCE_RESUME_SCENARIOS = {51}
+PAUSE_LATER_SCENARIOS = {45, 46, 48}
+PAUSE_LATER_RESUME_SCENARIOS = {47, 49}
 HH_COMPANY_MISSING_SCENARIOS: set[int] = set()
-HH_OPEN_COMPANY_SCENARIOS = {28, 31}
-HH_LOCATION_FORMAT_SCENARIOS = {34, 35, 36, 37, 39, 40, 41, 66, 67}
+HH_OPEN_COMPANY_SCENARIOS = {22, 25}
+HH_LOCATION_FORMAT_SCENARIOS = {28, 29, 30, 31, 33, 34, 35, 53, 54}
 HH_DISABLED_SCENARIOS: set[int] = set()
+HH_STABLE_GENERATION_SCENARIOS = {12, 15, 16, 18}
 FORCED_FALLBACK_SCENARIOS = (
     CONTACT_SOURCE_SCENARIOS
     | CONTACT_SOURCE_RESUME_SCENARIOS
@@ -475,6 +476,7 @@ FORCED_FALLBACK_SCENARIOS = (
     | HH_COMPANY_MISSING_SCENARIOS
     | HH_OPEN_COMPANY_SCENARIOS
     | HH_LOCATION_FORMAT_SCENARIOS
+    | HH_STABLE_GENERATION_SCENARIOS
 )
 HH_SPECIAL_FIXTURES = {
     "cdm_16.json",
@@ -685,17 +687,17 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Вы мошенники?",
         "Подтвердите легитимность, пожалуйста.",
     ],
-    10: [
+    9: [
         "Я сейчас живу не в РФ.",
         "Сейчас нахожусь за границей, не в России.",
         "Я живу за пределами РФ.",
     ],
-    17: [
-        "Вы уже писали мне по этой вакансии, повторно это не актуально.",
-        "Мы уже общались, не нужно снова писать по этому предложению.",
-        "Вы уже писали, повторно это не актуально.",
+    16: [
+        "Я уже принял оффер и выхожу в новую компанию, поэтому предложение больше не рассматриваю.",
+        "Контракт уже подписан, я трудоустроен и новые варианты сейчас не обсуждаю.",
+        "У меня уже есть оффер, и я завершаю переход в новую компанию.",
     ],
-    25: [
+    19: [
         "Этого опыта у меня нет, это не мой профиль.",
         "У меня другая специализация, таким не занимаюсь.",
         "Это не мой профиль, такого опыта у меня нет.",
@@ -1148,7 +1150,7 @@ def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
 def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
     return _group_has_any_scenario(
         group,
-        [7, 28, 31] + list(range(34, 68)),
+        [7, 22, 25] + list(range(28, 55)),
     )
 
 
@@ -1174,42 +1176,42 @@ def _fixture_matches_group_requirements(
         if fixture.file_name not in HH_SPECIAL_FIXTURES:
             return False
 
-    if _group_has_any_scenario(group, [28]):
+    if _group_has_any_scenario(group, [22]):
         return fixture.file_name in {"cdm_hh_02.json", "cdm_hh_08.json"}
 
-    if _group_has_any_scenario(group, [31]):
+    if _group_has_any_scenario(group, [25]):
         return fixture.file_name in {"cdm_hh_01.json", "cdm_hh_02.json"}
 
-    if _group_has_any_scenario(group, [34]):
+    if _group_has_any_scenario(group, [28]):
         return fixture.file_name == "cdm_hh_08.json"
 
-    if _group_has_any_scenario(group, [35, 39]):
+    if _group_has_any_scenario(group, [29, 33]):
         return "HYBRID" in work_format_ids and "моск" in location
 
-    if _group_has_any_scenario(group, [36]):
+    if _group_has_any_scenario(group, [30]):
         if not {"ON_SITE", "REMOTE"} & set(work_format_ids):
             return False
         return len(work_format_ids) >= 2
 
-    if _group_has_any_scenario(group, [37]):
+    if _group_has_any_scenario(group, [31]):
         return len(work_format_ids) >= 2 or "HYBRID" in work_format_ids or "ON_SITE" in work_format_ids
 
-    if _group_has_any_scenario(group, [40]):
+    if _group_has_any_scenario(group, [34]):
         return "REMOTE" in work_format_ids and "только из рф" in vacancy_description
 
-    if _group_has_any_scenario(group, [41]):
+    if _group_has_any_scenario(group, [35]):
         return "REMOTE" in work_format_ids and "важно находиться в москве" in vacancy_description
 
-    if _group_has_any_scenario(group, [66]):
+    if _group_has_any_scenario(group, [53]):
         return "FIELD_WORK" in work_format_ids
 
-    if _group_has_any_scenario(group, [67]):
+    if _group_has_any_scenario(group, [54]):
         return not location
 
-    if _group_has_any_scenario(group, [50, 51, 54, 55, 56, 57, 58, 61, 62]):
+    if _group_has_any_scenario(group, [43, 44, 45, 46, 47, 48, 49, 50, 51]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
-    if _group_has_any_scenario(group, [43, 44, 46, 47, 48, 49]):
+    if _group_has_any_scenario(group, [37, 38, 39, 40, 41, 42]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
     return True
@@ -1807,8 +1809,8 @@ def _is_repeated_dialog_scenario(scenario: Scenario) -> bool:
     idx = scenario.index
     name = scenario.name.lower()
 
-    # важно: теперь повтор ЗП у нас 29 и 30
-    if idx in (24, 27, 29, 30):
+    # важно: теперь повтор ЗП у нас 23 и 24
+    if idx in (17, 21, 23, 24):
         return True
 
     if "настойчивый" in name or "повторно" in name:
@@ -1835,8 +1837,8 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Запрещено: разжигать ненависть, унижать людей по национальности.\n"
         )
 
-    # 32 - зарплатные ожидания ниже вилки
-    if idx == 32:
+    # 26 - зарплатные ожидания ниже вилки
+    if idx == 26:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать СВОИ зарплатные ожидания конкретной суммой (числами),\n"
             "причем сумма должна звучать как более низкая и комфортная для кандидата относительно вилки вакансии.\n"
@@ -1855,124 +1857,103 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Запрещено уходить в мягкие и двусмысленные формулировки вроде «что конкретно в моем профиле подошло».\n"
         )
 
-    # 12/29/30 - про зарплату
-    if idx == 12 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
+    # 11/23/24 - про зарплату
+    if idx == 11 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
             "Это ПЕРВЫЙ запрос: запрещены маркеры повторности вроде «я уже спрашивал», «повторяю вопрос», «вы так и не ответили».\n"
         )
 
-    if idx == 29 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
+    if idx == 23 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
         return (
             "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
             "Это ПОВТОРНЫЙ запрос: обязательно укажи, что кандидат уже спрашивал и ответа не получил.\n"
         )
 
-    if idx == 30 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
+    if idx == 24 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
         return (
             "В КАЖДОЙ реплике кандидат должен ЗАДАВАТЬ вопрос про деньги/зарплату/вилку.\n"
             "Это ТРЕТИЙ запрос: обязательно укажи, что кандидат уже несколько раз спрашивал и ответа не было.\n"
         )
 
-    # 31 - компания при открытом поиске
-    if idx == 31:
+    # 25 - компания при открытом поиске
+    if idx == 25:
         return (
             "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания/как называется компания,"
             " можно ли дать сайт/ссылку на вакансию.\n"
             "Это открытый поиск: кандидат ожидает раскрытия названия компании.\n"
         )
 
-    # 23 - первый запрос о компании в скрытом поиске (без повторности)
-    if idx == 23:
-        return (
-            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
-            "Это ПЕРВЫЙ запрос: запрещены маркеры повторности ('уже спрашивал', 'повторю', 'еще раз', 'снова', 'второй раз', 'третий раз').\n"
-        )
-
-    # 24 - повторный запрос о компании в скрытом поиске (с повторностью)
-    if idx == 24:
-        return (
-            "В КАЖДОЙ реплике кандидат должен повторно спрашивать про компанию и явно указывать на повторность.\n"
-            "Обязательно добавляй маркеры повторности: 'уже спрашивал', 'повторю', 'еще раз', 'вы так и не ответили', 'ответа не было'.\n"
-        )
-
-    # fallback для нестандартных названий сценариев
-    if idx in (23, 24) or ("скрытом" in name and "компан" in name):
-        return (
-            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания? назовите компанию/дайте сайт/ссылку.\n"
-            "Если настойчивый - упомяни, что уже спрашивал и ответа нет.\n"
-        )
-
-    # 26/27 - бот
-    if idx == 26:
+    # 20/21 - бот
+    if idx == 20:
         return (
             "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
             "Это ПЕРВЫЙ такой вопрос. Не пиши, что кандидат уже спрашивал раньше, и не используй формулировки"
             " «повторяю», «в третий раз», «я уже спрашивал».\n"
         )
-    if idx == 27 or ("повторно" in name and "бот" in name):
+    if idx == 21 or ("повторно" in name and "бот" in name):
         return (
             "В КАЖДОЙ реплике кандидат должен спрашивать: вы бот/ИИ или человек?\n"
             "Это ПОВТОРНЫЙ вопрос. Явно укажи, что кандидат уже спрашивал об этом раньше и ответа не получил.\n"
         )
 
-    if idx == 10 or "географические ограничения" in name:
+    if idx == 9 or "географические ограничения" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен ЯВНО сказать, что живет вне РФ.\n"
             "Достаточно прямой формулировки: «живу не в РФ», «нахожусь за границей», «живу за пределами РФ».\n"
             "Не используй мягкие и двусмысленные формулировки.\n"
         )
 
-    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+    if idx == 16 or "оффер" in name or "трудоустроен" in name:
         return (
-            "В КАЖДОЙ реплике кандидат должен явно жаловаться на повторный контакт.\n"
-            "Допустимые формулировки: «вы уже писали», «мы уже общались», «повторно это не актуально», «не нужно снова писать».\n"
-            "Не подменяй этот триггер обычным follow-up по процессу или нейтральным вопросом.\n"
+            "В КАЖДОЙ реплике кандидат должен ЯВНО сообщать, что уже принял оффер, уже трудоустроен или уже выходит в новую компанию.\n"
+            "Допустимые формулировки: «уже принял оффер», «уже выхожу на новую работу», «уже трудоустроен», «контракт подписан».\n"
+            "Не подменяй этот триггер жалобой на повторный контакт или мягким отказом без указания оффера/трудоустройства.\n"
         )
 
-    # 33 - город совпадает с вакансией или кандидат готов к переезду
-    if idx == 33:
+    # 27 - город совпадает с вакансией или кандидат готов к переезду
+    if idx == 27:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, он уже в городе вакансии ИЛИ готов переехать в город вакансии\n"
         )
 
-    if idx == 34:
+    if idx == 28:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "При этом кандидат НЕ должен подтверждать готовность к офису/гибриду: это должен уточнить ассистент.\n"
         )
 
-    if idx == 35:
+    if idx == 29:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "Кандидат должен назвать конкретный город рядом с Москвой, без упоминания километров и без подтверждения готовности к офису/гибриду.\n"
             "Это допустимый пригород/ближняя локация, и кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
-    if idx == 36:
+    if idx == 30:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать конкретный город рядом с городом вакансии, но не сам город вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "Не указывай километры и не пиши общими словами «рядом с городом вакансии».\n"
             "Кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
-    if idx == 37:
+    if idx == 31:
         return (
             "В КАЖДОЙ реплике кандидат должен явно писать, что не готов работать в формате офис/гибрид "
             "и не готов к переезду.\n"
         )
 
-    if idx == 38:
+    if idx == 32:
         return (
             "В КАЖДОЙ реплике кандидат должен явно упоминать смерть, утрату, похороны или покойного человека.\n"
         )
 
-    if idx == 39:
+    if idx == 33:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать конкретный город, который явно далеко от города вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
         )
 
-    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+    if idx == 19 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         return (
             "В КАЖДОЙ реплике кандидат должен явно показать, что профиль не подходит целиком, а не что не хватает одной узкой технологии.\n"
             "Допустимые формулировки: «этого опыта у меня нет», «это не мой профиль», «у меня другая специализация», «таким не занимаюсь».\n"
@@ -2026,6 +2007,14 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не используй вопросы типа «что конкретно в моем профиле подошло» и другие мягкие сомнения: это не тот триггер."
         )
 
+    if idx == 13 or "техничес" in name or "алгоритм" in name:
+        parts.append(
+            "- В КАЖДОЙ реплике кандидат должен прямо просить выполнить техническое действие: написать код, решить задачу, объяснить алгоритм, оптимизировать решение или дать пример реализации."
+        )
+        parts.append(
+            "- Обязательно используй явные маркеры из сценария: «код», «пример», «напиши», «реализовать», «как сделать», «алгоритм», «реши», «задача», «оптимизируй»."
+        )
+
     # 6. Неформальное/странное
     if idx == 6 or "неформальное" in name or "странное" in name:
         parts.append(
@@ -2033,61 +2022,50 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Используй абсурдные сравнения, неожиданные ассоциации, резкие смены темы."
         )
 
-    # 10. Географические ограничения
-    if idx == 10 or "географические ограничения" in name:
+    # 9. Географические ограничения
+    if idx == 9 or "географические ограничения" in name:
         parts.append(
             "- В КАЖДОЙ реплике ЯВНО скажи, что кандидат живет вне РФ.\n"
             "- Достаточно прямой формулировки: «живу не в РФ», «нахожусь за границей», «живу за пределами РФ»."
         )
 
-    # 12. Спрашивает про зарплату
-    if idx == 12 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
+    # 11. Спрашивает про зарплату
+    if idx == 11 or "спрашивает о зарплате" in name or "зарплате или условиях" in name:
         parts.append(
             "- Кандидат ИМЕННО СПРАШИВАЕТ про вилку/зарплату, а не просто называет ожидания.\n"
             "- Обязательно явные вопросы: «какая вилка?», «сколько платите?», «какие условия?»."
         )
 
-    # 29. Повторный вопрос про зарплату
-    if idx == 29 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
+    # 23. Повторный вопрос про зарплату
+    if idx == 23 or ("повтор" in name and _has_any(name, TOPIC_SALARY)):
         parts.append(
             "- Это повторный вопрос про зарплату.\n"
             "- В реплике должно быть явно: «я уже спрашивал», «вы так и не ответили», «повторяю вопрос»."
         )
 
-    # 30. Третий вопрос про зарплату
-    if idx == 30 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
+    # 24. Третий вопрос про зарплату
+    if idx == 24 or ("трет" in name and _has_any(name, TOPIC_SALARY)):
         parts.append(
             "- Это ТРЕТИЙ по счету вопрос про зарплату в одном диалоге.\n"
             "- В реплике должно быть явно: «в третий раз спрашиваю», «вы снова не ответили»."
         )
 
     # 16. Просьба денег
-    if idx == 16 or "просьба денег" in name:
+    if "просьба денег" in name:
         parts.append(
             "- В КАЖДОЙ реплике должна явно звучать просьба о деньгах (перевести/в долг/аванс).\n"
             "- Это именно просьба кандидата дать денег ему."
         )
 
-    # 22. Созвон
-    if idx == 22 or "созвон" in name or "назначить встречу" in name:
+    # 15/18. Созвон
+    if idx in (15, 18) or "созвон" in name or "назначить встречу" in name:
         parts.append(
             "- В репликах должна быть явная попытка назначить звонок/встречу.\n"
             "- Указывай конкретные слоты времени и формат (Zoom/Teams/телефон)."
         )
 
-    # 23/24. Компания скрытый поиск
-    if idx == 23:
-        parts.append("- Кандидат прямо спрашивает, КАКАЯ это компания, просит название/сайт/ссылку.")
-        parts.append("- Это первый запрос: без повторности и без фраз 'уже спрашивал/повторю/еще раз/снова'.")
-    if idx == 24:
-        parts.append(
-            "- Это несколько сообщений подряд, кандидат настойчиво повторяет вопрос именно про компанию: "
-            "«я уже спрашивал, какая компания», «еще раз: назовите компанию или дайте ссылку»."
-        )
-        parts.append("- Это повторный запрос: обязательно упоминай, что уже спрашивал и ответа не было.")
-
-    # 31. Компания открытый поиск
-    if idx == 31:
+    # 25. Компания открытый поиск
+    if idx == 25:
         parts.append(
             "- Кандидат прямо спрашивает название компании: «какая компания?», «как называется компания?»."
         )
@@ -2095,8 +2073,8 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Можно просить сайт или ссылку на вакансию."
         )
 
-    # 32. Ожидания кандидата ниже вилки
-    if idx == 32 or ("ожидан" in name and _has_any(name, TOPIC_SALARY)):
+    # 26. Ожидания кандидата ниже вилки
+    if idx == 26 or ("ожидан" in name and _has_any(name, TOPIC_SALARY)):
         parts.append(
             "- Кандидат НЕ спрашивает вилку, а называет свои ожидания по зарплате конкретной суммой (числами)."
         )
@@ -2104,13 +2082,13 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Сумма должна звучать как комфортная для кандидата и ниже типичной вилки вакансии."
         )
 
-    # 33. Город совпадает или готовность к переезду
-    if idx == 33 or ("город" in name and "ваканси" in name):
+    # 27. Город совпадает или готовность к переезду
+    if idx == 27 or ("город" in name and "ваканси" in name):
         parts.append(
             "- Кандидат явно подтверждает, что локация подходит: он в городе вакансии ИЛИ готов переехать в город вакансии."
         )
 
-    if idx == 34:
+    if idx == 28:
         parts.append(
             "- Кандидат уже находится в городе вакансии, но не подтверждает отдельно готовность к формату офис/гибрид."
         )
@@ -2124,7 +2102,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Формулировка должна оставить ассистенту необходимость отдельно спросить, подходит ли такой формат работы."
         )
 
-    if idx == 35:
+    if idx == 29:
         parts.append(
             "- Кандидат должен назвать конкретный город рядом с Москвой: используй формулировки уровня «Живу в Королеве», «Я в Химках», «Я из Подольска»."
         )
@@ -2141,7 +2119,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
         )
 
-    if idx == 36:
+    if idx == 30:
         parts.append(
             "- Кандидат должен назвать конкретный соседний город рядом с городом вакансии, но не сам город вакансии."
         )
@@ -2158,7 +2136,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
         )
 
-    if idx == 37:
+    if idx == 31:
         parts.append(
             "- Кандидат явно пишет, что не готов работать в формате офис/гибрид и не готов к переезду."
         )
@@ -2166,7 +2144,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Это должно звучать как прямой стоп-фактор, а не как мягкое сомнение."
         )
 
-    if idx == 38:
+    if idx == 32:
         parts.append(
             "- Кандидат прямо упоминает смерть, похороны, покойного человека или утрату."
         )
@@ -2174,7 +2152,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не смешивай это с другими триггерами: основной смысл реплики должен быть именно про утрату."
         )
 
-    if idx == 39:
+    if idx == 33:
         parts.append(
             "- Кандидат должен назвать конкретный город, который явно далеко от города вакансии."
         )
@@ -2185,26 +2163,26 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Никаких дополнительных пояснений не добавляй: только текущий город кандидата и зарплатные ожидания."
         )
 
-    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+    if idx == 16 or "оффер" in name or "трудоустроен" in name:
         parts.append(
-            "- Это именно триггер про повторный контакт: используй формулировки «вы уже писали», «мы уже общались», «повторно это не актуально», «не нужно снова писать»."
+            "- Это именно триггер про уже принятый оффер или текущее трудоустройство: используй формулировки «уже принял оффер», «уже трудоустроен», «контракт подписан», «выхожу на новую работу»."
         )
         parts.append(
             "- Не превращай реплику в обычный follow-up по процессу и не задавай уточняющих вопросов."
         )
 
-    # 25. Нет опыта
-    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+    # 19. Нет опыта
+    if idx == 19 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         parts.append(
             "- Кандидат должен явно показать, что профиль не подходит целиком: «этого опыта у меня нет», «это не мой профиль», «у меня другая специализация», «таким не занимаюсь».\n"
             "- Не своди реплику к отсутствию одной узкой технологии и не добавляй «но быстро разберусь»."
         )
 
-    # 26/27. Бот
-    if idx == 26:
+    # 20/21. Бот
+    if idx == 20:
         parts.append("- Это первый вопрос про бота: «ты бот?», «это ИИ или человек?».")
         parts.append("- Не используй слова «повторно», «снова», «я уже спрашивал», «в третий раз».")
-    if idx == 27 or ("повторно" in name and "бот" in name):
+    if idx == 21 or ("повторно" in name and "бот" in name):
         parts.append("- Это повторный вопрос про бота: «я же уже спрашивал, вы бот?».")
     if not parts:
         return ""
@@ -2276,7 +2254,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 43:
+    if idx == 37:
         if min_salary is not None and max_salary is not None:
             lower = int(min_salary)
             upper = max(lower, int(max_salary))
@@ -2293,7 +2271,7 @@ def _fallback_messages(
             "300000 рублей в месяц net",
         ][:n]
 
-    if idx == 44:
+    if idx == 38:
         if max_salary is not None:
             upper = int(max_salary)
             pool = [
@@ -2308,7 +2286,7 @@ def _fallback_messages(
             "470000 рублей net в месяц",
         ][:n]
 
-    if idx == 45:
+    if idx == 100045:
         if min_salary is not None and max_salary is not None:
             lower = int(min_salary)
             upper = max(lower, int(max_salary))
@@ -2327,65 +2305,79 @@ def _fallback_messages(
             "300000-330000 руб net в месяц",
         ][:n]
 
-    if idx == 46:
+    if idx == 39:
         return ["50", "60", "70"][:n]
 
-    if idx == 47:
+    if idx == 34:
         return ["60-80", "50-70", "70-90"][:n]
 
-    if idx == 48:
+    if idx == 35:
         return ["1500 в час", "2000 руб/час", "1800 в час"][:n]
 
-    if idx == 49:
+    if idx == 42:
         return ["$4000", "3000 евро", "3500 euro"][:n]
 
-    if idx in (50, 61):
+    if idx in (43, 50):
         return [
             "По вашему вопросу про Playwright и API-автотесты на C# всё есть в резюме.",
             "Это всё указано в LinkedIn по Playwright и C#.",
             "Посмотрите, пожалуйста, резюме: там есть ответ про Playwright и API-автотесты на C#.",
         ][:n]
 
-    if idx == 51:
+    if idx == 38:
         return [
             "По опыту менторства всё есть в LinkedIn.",
             "Это указано в профиле, посмотрите по руководству командой.",
             "Всё про менторство и QA-команду уже есть в резюме.",
         ][:n]
 
-    if idx == 55:
+    if idx == 46:
         return [
             "Сейчас не время, давайте вернемся через месяц. По зарплате ориентируюсь на 300.",
             "Давайте позже обсудим, сейчас не готов. По деньгам ориентир около 320.",
             "Вернемся к этому позже, пожалуйста. По зарплате смотрю от 300.",
         ][:n]
 
-    if idx == 57:
+    if idx == 48:
         return [
             "Я в Москве, ориентир 300 на руки. Сейчас не время, позже обсудим.",
             "По зарплате 320 на руки, я в Москве. Давайте вернемся к обсуждению позже.",
             "Москва, ориентир 300. Пока не готов продолжать, напишите позже.",
         ][:n]
 
-    if idx == 54:
+    if idx == 100045:
         return [
             "Я в Москве, ориентир 300 на руки. С Playwright и API-автотестами на C# работаю 4 года, QA-команду из 5 человек менторил. Ок, буду ждать звонка.",
             "Москва, 320 на руки. По Playwright и API-автотестам на C# у меня 5 лет опыта, менторил команду из 4 QA. Жду фидбек.",
             "Я в Москве, по деньгам ориентир 300. Playwright и API-автотесты на C# делаю 4 года, QA-команду менторил. Хорошо, буду ждать звонка.",
         ][:n]
 
-    if idx in (56, 58):
+    if idx in (47, 49):
         return [
             "Давайте продолжим.",
             "Снова на связи, можем продолжить диалог.",
             "Да, продолжаем.",
         ][:n]
 
-    if idx == 62:
+    if idx == 51:
         return [
             "Да, с Playwright работаю 4 года, API-автотесты на C# тоже делал.",
             "По Playwright у меня 5 лет опыта, API-автотесты на C# писал в двух проектах.",
             "Да, Playwright использую 4 года, API-автотесты на C# тоже строил.",
+        ][:n]
+
+    if idx == 12:
+        return [
+            "Напишите пример кода для этой задачи и покажите, как бы вы реализовали решение.",
+            "Решите, пожалуйста, небольшую задачу: как бы вы написали алгоритм и оптимизировали его?",
+            "Покажите конкретный пример реализации и объясните, как сделать это решение по шагам.",
+        ][:n]
+
+    if idx in (15, 18):
+        return [
+            "Давайте сразу договоримся о звонке в Zoom завтра в 15:00, чтобы все обсудить.",
+            "Предлагаю созвониться сегодня в 18:00 по Teams и быстро пройтись по деталям.",
+            "Можете назначить телефонный звонок на ближайший вторник в 10:00, чтобы все прояснить?",
         ][:n]
 
     if idx == 7 or "недоверие" in name or "спам" in name:
@@ -2406,15 +2398,15 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 17 or "уже писали" in name or "повторное сообщение" in name:
+    if idx == 16 or "оффер" in name or "трудоустроен" in name:
         pool = [
-            "Вы уже писали мне по этой вакансии, повторно это не актуально.",
-            "Мы уже общались, не нужно снова писать по этому предложению.",
-            "Вы уже писали, повторно это не актуально.",
+            "Я уже принял оффер и выхожу в новую компанию, поэтому предложение больше не рассматриваю.",
+            "Контракт уже подписан, я трудоустроен и новые варианты сейчас не обсуждаю.",
+            "У меня уже есть оффер, и я завершаю переход в новую компанию.",
         ]
         return pool[:n]
 
-    if idx == 25 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
+    if idx == 19 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
         pool = [
             "Этого опыта у меня нет, это не мой профиль.",
             "У меня другая специализация, таким не занимаюсь.",
@@ -2422,29 +2414,29 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx in (12, 29, 30) or _has_any(name, TOPIC_SALARY):
-        if idx == 12:
+    if idx in (11, 23, 24) or _has_any(name, TOPIC_SALARY):
+        if idx == 11:
             pool = [
                 "Ок, а какая зарплатная вилка по позиции?",
                 "Сколько по деньгам на этой роли? Есть вилка?",
                 "Какая компенсация и бонусы, можно цифры?",
             ]
             return pool[:n]
-        if idx == 30:
+        if idx == 24:
             pool = [
                 "\u0412 \u0442\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u044e \u043f\u0440\u043e \u0434\u0435\u043d\u044c\u0433\u0438: \u0431\u0435\u0437 \u044d\u0442\u043e\u0439 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u0438 \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435 \u0433\u043e\u0442\u043e\u0432 \u0434\u0432\u0438\u0433\u0430\u0442\u044c\u0441\u044f, \u043a\u0430\u043a\u0430\u044f \u043a\u043e\u043d\u043a\u0440\u0435\u0442\u043d\u043e \u0432\u0438\u043b\u043a\u0430?",
                 "\u0412\u044b \u0441\u043d\u043e\u0432\u0430 \u043d\u0435 \u043e\u0442\u0432\u0435\u0442\u0438\u043b\u0438. \u0422\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0443\u0442\u043e\u0447\u043d\u044f\u044e: \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0443 \u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u043e\u0441\u043b\u0435 \u0446\u0438\u0444\u0440, \u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043f\u043b\u0430\u0442\u0438\u0442\u0435?",
                 "\u0422\u0440\u0435\u0442\u0438\u0439 \u0440\u0430\u0437 \u0432\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u044e\u0441\u044c \u043a \u0432\u0438\u043b\u043a\u0435: \u0435\u0441\u043b\u0438 \u0432\u044b \u0435\u0435 \u043d\u0435 \u0440\u0430\u0441\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0435, \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0435 \u0432\u0438\u0436\u0443 \u0441\u043c\u044b\u0441\u043b\u0430 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0430\u0442\u044c, \u043a\u0430\u043a\u0438\u0435 \u0446\u0438\u0444\u0440\u044b?",
             ]
             return pool[:n]
-        if idx == 29:
+        if idx == 23:
             pool = [
                 "Я уже спрашивал про вилку - так какая зарплата по позиции?",
                 "Вы не ответили по деньгам. Повторю: какая зарплатная вилка?",
                 "Еще раз уточню: сколько платите и какая вилка?",
             ]
             return pool[:n]
-        if idx == 30:
+        if idx == 24:
             pool = [
                 "В третий раз спрашиваю про деньги: какая конкретно вилка?",
                 "Вы снова не ответили. Третий раз уточняю: сколько платите?",
@@ -2452,7 +2444,7 @@ def _fallback_messages(
             ]
             return pool[:n]
 
-    if idx == 32:
+    if idx == 26:
         target_salary = 120_000
         if min_salary is not None:
             # Делаем ожидание заметно ниже реальной нижней границы вилки вакансии.
@@ -2472,7 +2464,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 33:
+    if idx == 27:
         city = expected_location.strip() or "город вакансии"
         city_low = city.lower()
 
@@ -2496,7 +2488,7 @@ def _fallback_messages(
             ]
         return pool[:n]
 
-    if idx == 34:
+    if idx == 28:
         city = expected_location.strip() or "город вакансии"
         salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
         pool = [
@@ -2506,7 +2498,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 35:
+    if idx == 29:
         salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
         variants = _nearby_city_variants("Москва")
         default_messages = [
@@ -2522,7 +2514,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 36:
+    if idx == 30:
         city = expected_location.strip() or "город вакансии"
         salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
         variants = _nearby_city_variants(expected_location)
@@ -2545,7 +2537,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 37:
+    if idx == 31:
         city = expected_location.strip() or "город вакансии"
         fmt_phrase = _work_format_phrase(work_format) or "в таком формате"
         pool = [
@@ -2555,7 +2547,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 38:
+    if idx == 32:
         pool = [
             "После смерти близкого человека сейчас не готов обсуждать работу.",
             "У меня недавно были похороны, пожалуйста, не беспокойте.",
@@ -2563,7 +2555,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 39:
+    if idx == 33:
         salary_text = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
         variants = _far_city_variants(expected_location)
         city_messages = [str(item.get("message") or "").strip() for item in variants if str(item.get("message") or "").strip()]
@@ -2592,7 +2584,7 @@ def _fallback_messages(
             ]
             return pool[:n]
 
-    if idx == 31:
+    if idx == 25:
         pool = [
             "Подскажите, как называется компания?",
             "Какая компания и где можно посмотреть сайт?",
@@ -2601,8 +2593,8 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx in (26, 27) or _has_any(name, TOPIC_BOT):
-        if idx == 26:
+    if idx in (20, 21) or _has_any(name, TOPIC_BOT):
+        if idx == 20:
             pool = [
                 "Скажите честно, вы бот или живой человек?",
                 "Это сообщение от ИИ? Вы реальный рекрутер?",
@@ -2634,10 +2626,20 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         "так и не ответили",
         "ответа не было",
     ]
-    if scenario_index == 26:
+    technical_markers = ["код", "пример", "напиши", "реализ", "как сделать", "алгоритм", "реши", "задач", "оптимиз"]
+    schedule_markers = ["созвон", "созвониться", "звонок", "встреч", "zoom", "teams", "телефон", "слот", "в ", ":"]
+    money_markers = ["аванс", "в долг", "перевед", "скинь", "деньг", "предоплат"]
+    offer_markers = ["оффер", "оффер", "трудоустро", "контракт подписан", "выхожу на работу", "новую компанию", "already employed"]
+    if scenario_index == 20:
         return not _contains_any_substring(low, repeated_markers)
-    if scenario_index == 27:
+    if scenario_index == 21:
         return _contains_any_substring(low, repeated_markers)
+    if scenario_index == 12:
+        return _contains_any_substring(low, technical_markers)
+    if scenario_index in (15, 18):
+        return _contains_any_substring(low, schedule_markers) and not _contains_any_substring(low, money_markers)
+    if scenario_index == 16:
+        return _contains_any_substring(low, offer_markers)
     return True
 
 
@@ -3573,13 +3575,13 @@ def enforce_prompt_v2_turn_rules(
     candidate_low = (candidate_message or "").lower()
     reply_low = (assistant_reply or "").lower()
 
-    if idx in (12, 29, 30):
-        if idx == 30:
+    if idx in (11, 23, 24):
+        if idx == 24:
             if _is_apology_end_reply(assistant_reply):
                 return 1, "Prompt v2 salary rule passed: third salary scenario ends the dialogue with apology and END."
             return 0, "Prompt v2 salary rule failed: scenario 30 must end the dialogue with apology and END."
 
-        if idx == 29:
+        if idx == 23:
             if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta):
                 return 1, "Prompt v2 salary rule passed: repeated salary scenario asks only for expectations."
             return 0, "Prompt v2 salary rule failed: scenario 29 should ask for salary expectations without END."
@@ -3588,8 +3590,8 @@ def enforce_prompt_v2_turn_rules(
             return 1, "Prompt v2 salary rule passed: first salary scenario uses the full script and asks for expectations."
         return 0, "Prompt v2 salary rule failed: scenario 12 should use the full script and ask for expectations."
 
-    if idx in (26, 27):
-        if idx == 27:
+    if idx in (20, 21):
+        if idx == 21:
             if _is_apology_end_reply(assistant_reply):
                 return 1, "Prompt v2 bot rule passed: repeated bot/AI scenario ends the dialogue."
             return 0, "Prompt v2 bot rule failed: scenario 27 must end the dialogue."
@@ -3763,7 +3765,7 @@ def enforce_salary_normalization_rules(
             return 1, "Salary rule passed: explicit monthly salary above the budget triggers the standard salary rejection END script."
         return 0, "Salary rule failed: explicit monthly salary above the budget must use the standard salary rejection END script."
 
-    if idx in (46, 47, 48, 49):
+    if idx in (39, 40, 41, 42):
         if _reply_has_end_marker(assistant_reply):
             return 0, "Salary rule failed: ambiguous/hourly/currency salary must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
@@ -3794,13 +3796,13 @@ def enforce_profile_reference_rules(
     questions = _extract_additional_questions(dialog_context_meta)
     current_question = ""
     next_question = ""
-    if idx in (50, 61):
+    if idx in (43, 50):
         current_question = questions[0] if questions else ""
         next_question = questions[1] if len(questions) > 1 else ""
-    elif idx == 51:
+    elif idx == 44:
         current_question = questions[1] if len(questions) > 1 else (questions[0] if questions else "")
         next_question = questions[2] if len(questions) > 2 else ""
-    elif idx == 62:
+    elif idx == 51:
         current_question = questions[0] if questions else ""
         next_question = questions[1] if len(questions) > 1 else ""
 
@@ -3855,7 +3857,7 @@ def enforce_pause_later_rules(
     current_question_markers = _question_markers_from_text(current_question)
     needs_work_format_ready = _is_office_or_hybrid_work_format(str(dialog_context_meta.get("work_format") or ""))
 
-    if idx == 54:
+    if idx == 45:
         if _is_finish_reply(assistant_reply):
             return 1, "Pause rule passed: once everything is already answered, the assistant finishes with END."
         return 0, "Pause rule failed: when all answers are already collected, assistant must use the final finish script with END."
@@ -3866,10 +3868,10 @@ def enforce_pause_later_rules(
         if not _has_pause_script(assistant_reply):
             return 0, "Pause rule failed: reply must contain the new merged pause script."
 
-        if idx == 55:
+        if idx == 46:
             if not _contains_any_substring(reply_low, priority_markers):
                 return 0, "Pause rule failed: before priority answers are complete, assistant must ask the next missing priority question."
-        if idx == 57:
+        if idx == 48:
             if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
                 return 1, "Pause rule passed: assistant uses the merged pause script and continues with the required work-format readiness step."
             if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
@@ -3884,9 +3886,9 @@ def enforce_pause_later_rules(
     if _looks_like_restarted_intro(assistant_reply):
         return 0, "Pause resume rule failed: assistant restarted the screening instead of resuming from the saved step."
 
-    if idx == 56 and not _contains_any_substring(reply_low, priority_markers):
+    if idx == 47 and not _contains_any_substring(reply_low, priority_markers):
         return 0, "Pause resume rule failed: assistant should resume with the missing priority question."
-    if idx == 58:
+    if idx == 49:
         if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
             return 1, "Pause resume rule passed: assistant resumes with the unresolved work-format readiness step."
         if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
@@ -3947,7 +3949,7 @@ def enforce_positive_handling_for_s32_s33(
     comment: str,
     dialog_context_meta: Dict[str, Any],
 ) -> Tuple[int, str]:
-    if scenario.index not in (32, 33):
+    if scenario.index not in (26, 27):
         return score, comment
 
     reply_low = (assistant_reply or "").lower()
@@ -4023,49 +4025,49 @@ def _fallback_messages(
             "Я в Казани, по деньгам ориентируюсь на 270000 рублей в месяц на руки.",
         ][:n]
 
-    if idx == 36:
+    if idx == 30:
         return [
             "В офис ездить не готов, но удаленный формат мне подходит. Я в Москве, ожидания 220000 рублей на руки в месяц.",
             "На месте работодателя работать не хочу, а вот удаленно готов. Сейчас я в Москве, ориентир 230000 рублей в месяц на руки.",
             "Офисный формат не рассматриваю, но remote меня устраивает. Я в Москве, по деньгам 210000 рублей на руки в месяц.",
         ][:n]
 
-    if idx == 37:
+    if idx == 31:
         return [
             "Ни офисный, ни удаленный формат не рассматриваю. К переезду тоже не готов.",
             "На месте работодателя работать не готов, удаленно тоже не хочу. Формат мне не подходит.",
             "Ни один из этих форматов мне не подходит, переезд тоже не рассматриваю.",
         ][:n]
 
-    if idx == 39:
+    if idx == 33:
         return [
             f"Я сейчас в Новосибирске, по зарплате ориентируюсь на {salary_value} рублей на руки.",
             f"Живу в Екатеринбурге, по деньгам рассматриваю {salary_value} на руки.",
             f"Я из Казани, по компенсации ориентируюсь на {salary_value} рублей.",
         ][:n]
 
-    if idx == 66:
+    if idx == 53:
         return [
             "Я в Москве, по зарплате ориентир 220000 рублей на руки в месяц.",
             "Сейчас я в Москве, ожидания 210000 рублей на руки в месяц.",
             "Я в Подольске, по деньгам ориентируюсь на 230000 рублей на руки в месяц.",
         ][:n]
 
-    if idx == 67:
+    if idx == 54:
         return [
             "Сейчас я в Самаре, по зарплате ориентир 170000 рублей на руки в месяц.",
             "Я в Нижнем Новгороде, ожидания 180000 рублей на руки в месяц.",
             "Живу в Воронеже, по деньгам ориентир 165000 рублей в месяц на руки.",
         ][:n]
 
-    if idx in (23, 24):
+    if idx in (100023, 100024):
         return [
             "Подскажите, пожалуйста, как называется компания?",
             "Какая компания и где можно посмотреть сайт или вакансию?",
             "Можно уточнить работодателя и дать ссылку на вакансию?",
         ][:n]
 
-    if idx == 28:
+    if idx == 22:
         return [
             "Подскажите, пожалуйста, что это за компания и что за вакансия?",
             "Какая компания, какие задачи и какой формат работы?",
@@ -4220,27 +4222,27 @@ def enforce_prompt_v2_turn_rules(
 ) -> Tuple[int, str]:
     idx = scenario.index
 
-    if idx in (12, 29, 30):
-        if idx == 30:
+    if idx in (11, 23, 24):
+        if idx == 24:
             return (
                 (1, "HH salary chain passed: third salary request ends the dialogue.")
                 if _is_apology_end_reply(assistant_reply)
-                else (0, "HH salary chain failed: scenario 30 must end with apology and END.")
+                else (0, "HH salary chain failed: scenario 24 must end with apology and END.")
             )
-        if idx == 29:
+        if idx == 23:
             return (
                 (1, "HH salary chain passed: repeated salary request asks only for expectations.")
                 if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta)
-                else (0, "HH salary chain failed: scenario 29 should ask only for salary expectations.")
+                else (0, "HH salary chain failed: scenario 23 should ask only for salary expectations.")
             )
         return (
             (1, "HH salary chain passed: first salary request uses the full script.")
             if _is_salary_first_reply(assistant_reply, dialog_context_meta)
-            else (0, "HH salary chain failed: scenario 12 should use the full salary script.")
+            else (0, "HH salary chain failed: scenario 11 should use the full salary script.")
         )
 
-    if idx in (26, 27):
-        if idx == 27:
+    if idx in (20, 21):
+        if idx == 21:
             return (
                 (1, "HH bot rule passed: repeated bot question ends the dialogue.")
                 if _is_apology_end_reply(assistant_reply)
@@ -4252,7 +4254,7 @@ def enforce_prompt_v2_turn_rules(
             else (0, "HH bot rule failed: first bot question should explain the role and continue.")
         )
 
-    if idx == 22:
+    if idx in (15, 18):
         return (
             (1, "HH schedule rule passed: assistant refuses scheduling and keeps screening in chat.")
             if _is_schedule_refusal_reply(assistant_reply)
@@ -4273,46 +4275,46 @@ def enforce_prompt_v2_turn_rules(
             else (0, "HH open-company rule failed: assistant should name the company from context without hidden-search wording.")
         )
 
-    if idx in (34, 35, 66):
+    if idx in (28, 29, 53):
         return (
             (1, "HH location/format rule passed: assistant asks about readiness for the allowed format.")
             if _hh_reply_asks_format_readiness(assistant_reply, dialog_context_meta)
             else (0, f"HH location/format rule failed: scenario {idx} must ask about readiness for the allowed format.")
         )
 
-    if idx == 36:
+    if idx == 30:
         if _reply_has_end_marker(assistant_reply):
             return 0, f"HH multi-format rule failed: scenario {idx} must not reject while another allowed format may fit."
         if _hh_reply_mentions_any_allowed_format(assistant_reply, list(dialog_context_meta.get('work_format_ids') or [])):
             return 1, "HH multi-format rule passed: assistant keeps the dialogue open and checks another allowed format."
         return 0, f"HH multi-format rule failed: scenario {idx} should clarify another allowed format instead of rejecting."
 
-    if idx in (39, 41):
+    if idx in (33, 35):
         return (
             (1, "HH location rule passed: assistant asks about relocation or working in the required location.")
             if _hh_reply_asks_location_or_relocation(assistant_reply, dialog_context_meta)
             else (0, f"HH location rule failed: scenario {idx} should ask about relocation or working in the required location.")
         )
 
-    if idx == 37:
+    if idx == 31:
         return (
             (1, "HH format KO passed: assistant rejects when no allowed format fits.")
             if _hh_format_refusal_reply(assistant_reply)
-            else (0, "HH format KO failed: scenario 37 must end with the format refusal script and END.")
+            else (0, "HH format KO failed: scenario 31 must end with the format refusal script and END.")
         )
 
-    if idx == 40:
+    if idx == 34:
         return (
             (1, "HH location KO passed: assistant rejects due to location restriction.")
             if _hh_location_refusal_reply(assistant_reply, dialog_context_meta)
-            else (0, "HH location KO failed: scenario 40 must end with the location refusal script and END.")
+            else (0, "HH location KO failed: scenario 34 must end with the location refusal script and END.")
         )
 
-    if idx == 38:
+    if idx == 32:
         return (
             (1, "HH death/loss rule passed: exact END script is used.")
             if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT)
-            else (0, "HH death/loss rule failed: scenario 38 must use the exact apology END script.")
+            else (0, "HH death/loss rule failed: scenario 32 must use the exact apology END script.")
         )
 
     return score, comment
@@ -4386,6 +4388,23 @@ def enforce_salary_normalization_rules(
     return 1, "HH salary rule passed: assistant accepts explicit monthly salary without unnecessary clarification."
 
 
+def enforce_incoherent_message_rules(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+) -> Tuple[int, str]:
+    if scenario.index != 3:
+        return score, comment
+
+    if _reply_has_end_marker(assistant_reply):
+        return 0, "HH incoherent-message rule failed: a single incoherent message should trigger one clarification, not END."
+
+    if "?" not in (assistant_reply or ""):
+        return 0, "HH incoherent-message rule failed: clarification reply should contain a follow-up question."
+    return 1, "HH incoherent-message rule passed: assistant asks for clarification on a single incoherent message."
+
+
 def enforce_open_company_answer_for_s31(
     scenario: Scenario,
     assistant_reply: str,
@@ -4393,7 +4412,7 @@ def enforce_open_company_answer_for_s31(
     comment: str,
     dialog_context_meta: Dict[str, Any],
 ) -> Tuple[int, str]:
-    if scenario.index != 31:
+    if scenario.index != 25:
         return score, comment
     expected_company = (
         str(dialog_context_meta.get("original_company_name") or "").strip()
@@ -4402,8 +4421,8 @@ def enforce_open_company_answer_for_s31(
     if not _is_real_company_name(expected_company):
         return score, comment
     if expected_company.lower() not in (assistant_reply or "").lower():
-        return 0, f"Scenario 31 strict check failed: assistant reply must contain company name '{expected_company}'."
-    return 1, "Scenario 31 HH relaxed check passed: company name present; extra details may vary."
+        return 0, f"Scenario 25 strict check failed: assistant reply must contain company name '{expected_company}'."
+    return 1, "Scenario 25 HH relaxed check passed: company name present; extra details may vary."
 
 
 def run_single_scenario(
@@ -4483,6 +4502,12 @@ def run_single_scenario(
             score=score,
             comment=comment,
             dialog_context_meta=dialog_context_meta,
+        )
+        score, comment = enforce_incoherent_message_rules(
+            scenario=scenario,
+            assistant_reply=reply,
+            score=score,
+            comment=comment,
         )
         score, comment = enforce_profile_reference_rules(
             scenario=scenario,
@@ -4625,6 +4650,12 @@ def run_chain_group(
                 comment=comment,
                 dialog_context_meta=dialog_context_meta,
             )
+            score, comment = enforce_incoherent_message_rules(
+                scenario=s,
+                assistant_reply=reply,
+                score=score,
+                comment=comment,
+            )
             score, comment = enforce_profile_reference_rules(
                 scenario=s,
                 assistant_reply=reply,
@@ -4737,7 +4768,7 @@ def run_scenarios(
         if scenario_indices:
             raise ValueError(
                 "No scenarios left after applying --scenario-indices and HH disabled-scenario filtering. "
-                f"Requested: {scenario_indices}. Check CSV row indices."
+                f"Requested: {scenario_indices}. Check CSV scenario indices."
             )
         raise ValueError("No scenarios loaded from CSV - nothing to run.")
 
