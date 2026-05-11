@@ -263,26 +263,26 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
                     return actual
             return ""
 
-        name_key = resolve_header("Название сценария", "РќР°Р·РІР°РЅРёРµ СЃС†РµРЅР°СЂРёСЏ")
+        name_key = resolve_header("Название сценария", "Название сценария")
         desc_key = resolve_header(
             "Краткое описание сценария",
             "Описание сценария",
-            "РљСЂР°С‚РєРѕРµ РѕРїРёСЃР°РЅРёРµ СЃС†РµРЅР°СЂРёСЏ",
-            "РћРїРёСЃР°РЅРёРµ СЃС†РµРЅР°СЂРёСЏ",
+            "Краткое описание сценария",
+            "Описание сценария",
         )
         behavior_key = resolve_header(
             "Ожидаемое поведение модели (согласно промпту)",
             "Ожидаемое поведение модели (согласно промпту) ",
             "Ожидаемое поведение модели (как она должна отработать)",
-            "РћР¶РёРґР°РµРјРѕРµ РїРѕРІРµРґРµРЅРёРµ РјРѕРґРµР»Рё (СЃРѕРіР»Р°СЃРЅРѕ РїСЂРѕРјРїС‚Сѓ)",
-            "РћР¶РёРґР°РµРјРѕРµ РїРѕРІРµРґРµРЅРёРµ РјРѕРґРµР»Рё (СЃРѕРіР»Р°СЃРЅРѕ РїСЂРѕРјРїС‚Сѓ) ",
-            "РћР¶РёРґР°РµРјРѕРµ РїРѕРІРµРґРµРЅРёРµ РјРѕРґРµР»Рё (РєР°Рє РѕРЅР° РґРѕР»Р¶РЅР° РѕС‚СЂР°Р±РѕС‚Р°С‚СЊ)",
+            "Ожидаемое поведение модели (согласно промпту)",
+            "Ожидаемое поведение модели (согласно промпту) ",
+            "Ожидаемое поведение модели (как она должна отработать)",
         )
         examples_key = resolve_header(
             "Сообщениия с примерами диалогов ",
             "Сообщения с примерами диалогов",
-            "РЎРѕРѕР±С‰РµРЅРёРёСЏ СЃ РїСЂРёРјРµСЂР°РјРё РґРёР°Р»РѕРіРѕРІ ",
-            "РЎРѕРѕР±С‰РµРЅРёСЏ СЃ РїСЂРёРјРµСЂР°РјРё РґРёР°Р»РѕРіРѕРІ",
+            "Сообщениия с примерами диалогов ",
+            "Сообщения с примерами диалогов",
         )
 
         for idx, row in enumerate(reader, start=1):
@@ -292,6 +292,73 @@ def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
             scenarios.append(
                 Scenario(
                     index=idx,
+                    name=scenario_name,
+                    description=(row.get(desc_key) or "").strip(),
+                    expected_behavior=(row.get(behavior_key) or "").strip(),
+                    examples_raw=(row.get(examples_key) or ""),
+                )
+            )
+
+    return scenarios
+
+
+def load_scenarios(csv_path: pathlib.Path) -> List[Scenario]:
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"CSV with scenarios not found: {csv_path}")
+
+    scenarios: List[Scenario] = []
+
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        normalized_fields = {
+            re.sub(r"\s+", " ", (field or "")).strip().lower(): field
+            for field in fieldnames
+        }
+
+        def resolve_header(*candidates: str) -> str:
+            for candidate in candidates:
+                key = re.sub(r"\s+", " ", candidate).strip().lower()
+                actual = normalized_fields.get(key)
+                if actual:
+                    return actual
+            return ""
+
+        index_key = resolve_header("№", "No", "N")
+        if not index_key and fieldnames:
+            index_key = fieldnames[0]
+
+        name_key = resolve_header("Название сценария", "Название сценария")
+        desc_key = resolve_header(
+            "Описание сценария",
+            "Краткое описание сценария",
+            "Описание сценария",
+            "Краткое описание сценария",
+        )
+        behavior_key = resolve_header(
+            "Ожидаемое поведение модели (согласно промпту)",
+            "Ожидаемое поведение модели (согласно промпту) ",
+            "Ожидаемое поведение модели (согласно промпту)",
+            "Ожидаемое поведение модели (согласно промпту) ",
+        )
+        examples_key = resolve_header(
+            "Сообщениия с примерами диалогов ",
+            "Сообщения с примерами диалогов",
+            "Сообщениия с примерами диалогов ",
+            "Сообщения с примерами диалогов",
+        )
+
+        for row_number, row in enumerate(reader, start=1):
+            scenario_name = (row.get(name_key) or "").strip()
+            if not scenario_name:
+                continue
+
+            raw_index = str(row.get(index_key) or "").strip()
+            scenario_index = int(raw_index) if raw_index.isdigit() else row_number
+
+            scenarios.append(
+                Scenario(
+                    index=scenario_index,
                     name=scenario_name,
                     description=(row.get(desc_key) or "").strip(),
                     expected_behavior=(row.get(behavior_key) or "").strip(),
@@ -377,26 +444,25 @@ TOPIC_COMPANY = ["компан", "название компании", "рабо�
 CHAIN_BY_INDEX: Dict[str, List[int]] = {
     "chain_salary_3x": [12, 29, 30],  # 1-й, 2-й, 3-й вопрос кандидата о ЗП
     "chain_bot_check": [26, 27],
-    "chain_company_missing": [23, 24],
 }
 
 
 CHAIN_BY_INDEX["chain_pause_resume_priority"] = [55, 56]
 CHAIN_BY_INDEX["chain_pause_resume_questions"] = [57, 58]
-CHAIN_BY_INDEX["chain_contact_source_resume"] = [59, 60]
 CHAIN_BY_INDEX["chain_profile_reference_resume"] = [61, 62]
 
-CONTACT_SOURCE_SCENARIOS = {8, 20, 59}
-CONTACT_SOURCE_RESUME_SCENARIOS = {60}
+CONTACT_SOURCE_SCENARIOS: set[int] = set()
+CONTACT_SOURCE_RESUME_SCENARIOS: set[int] = set()
 LEGITIMACY_SCENARIOS = {7, 42}
-SALARY_NORMALIZATION_SCENARIOS = {43, 44, 45, 46, 47, 48, 49, 63, 64}
+SALARY_NORMALIZATION_SCENARIOS = {43, 44, 46, 47, 48, 49}
 PROFILE_REFERENCE_SCENARIOS = {50, 51, 61}
 PROFILE_REFERENCE_RESUME_SCENARIOS = {62}
-PAUSE_LATER_SCENARIOS = {52, 53, 54, 55, 57}
+PAUSE_LATER_SCENARIOS = {54, 55, 57}
 PAUSE_LATER_RESUME_SCENARIOS = {56, 58}
-HH_COMPANY_MISSING_SCENARIOS = {23, 24}
+HH_COMPANY_MISSING_SCENARIOS: set[int] = set()
 HH_OPEN_COMPANY_SCENARIOS = {28, 31}
-HH_LOCATION_FORMAT_SCENARIOS = {34, 35, 36, 37, 39, 40, 41, 66, 67, 68}
+HH_LOCATION_FORMAT_SCENARIOS = {34, 35, 36, 37, 39, 40, 41, 66, 67}
+HH_DISABLED_SCENARIOS: set[int] = set()
 FORCED_FALLBACK_SCENARIOS = (
     CONTACT_SOURCE_SCENARIOS
     | CONTACT_SOURCE_RESUME_SCENARIOS
@@ -1044,8 +1110,6 @@ def _scenario_chain_key(s: Scenario) -> Optional[str]:
     n = s.name.lower()
     if _is_repeated_by_name(n):
         # Важно: сначала более "узкие" темы. И в любом случае bot-тема теперь безопасна.
-        if _has_any(n, TOPIC_COMPANY):
-            return "chain_company_missing"
         if _has_any(n, TOPIC_SALARY):
             return "chain_salary_3x"
         if _has_any(n, TOPIC_BOT):
@@ -1084,7 +1148,7 @@ def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
 def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
     return _group_has_any_scenario(
         group,
-        [7, 8, 20, 23, 24, 28, 31] + list(range(34, 69)),
+        [7, 28, 31] + list(range(34, 68)),
     )
 
 
@@ -1110,9 +1174,6 @@ def _fixture_matches_group_requirements(
         if fixture.file_name not in HH_SPECIAL_FIXTURES:
             return False
 
-    if _group_has_any_scenario(group, [23, 24]):
-        return not _is_real_company_name(company_name)
-
     if _group_has_any_scenario(group, [28]):
         return fixture.file_name in {"cdm_hh_02.json", "cdm_hh_08.json"}
 
@@ -1125,7 +1186,7 @@ def _fixture_matches_group_requirements(
     if _group_has_any_scenario(group, [35, 39]):
         return "HYBRID" in work_format_ids and "моск" in location
 
-    if _group_has_any_scenario(group, [36, 68]):
+    if _group_has_any_scenario(group, [36]):
         if not {"ON_SITE", "REMOTE"} & set(work_format_ids):
             return False
         return len(work_format_ids) >= 2
@@ -1145,10 +1206,10 @@ def _fixture_matches_group_requirements(
     if _group_has_any_scenario(group, [67]):
         return not location
 
-    if _group_has_any_scenario(group, [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62]):
+    if _group_has_any_scenario(group, [50, 51, 54, 55, 56, 57, 58, 61, 62]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
-    if _group_has_any_scenario(group, [43, 44, 45, 46, 47, 48, 49, 63, 64]):
+    if _group_has_any_scenario(group, [43, 44, 46, 47, 48, 49]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
     return True
@@ -2292,14 +2353,14 @@ def _fallback_messages(
             "Всё про менторство и QA-команду уже есть в резюме.",
         ][:n]
 
-    if idx in (52, 55):
+    if idx == 55:
         return [
             "Сейчас не время, давайте вернемся через месяц. По зарплате ориентируюсь на 300.",
             "Давайте позже обсудим, сейчас не готов. По деньгам ориентир около 320.",
             "Вернемся к этому позже, пожалуйста. По зарплате смотрю от 300.",
         ][:n]
 
-    if idx in (53, 57):
+    if idx == 57:
         return [
             "Я в Москве, ориентир 300 на руки. Сейчас не время, позже обсудим.",
             "По зарплате 320 на руки, я в Москве. Давайте вернемся к обсуждению позже.",
@@ -2318,20 +2379,6 @@ def _fallback_messages(
             "Давайте продолжим.",
             "Снова на связи, можем продолжить диалог.",
             "Да, продолжаем.",
-        ][:n]
-
-    if idx == 59:
-        return [
-            "Как вы нашли мой Telegram?",
-            "Откуда у вас мой номер?",
-            "Где вы нашли мой профиль и как узнали мой контакт?",
-        ][:n]
-
-    if idx == 60:
-        return [
-            "Ок, давайте продолжим.",
-            "Хорошо, можем продолжить общение.",
-            "Понял, давайте дальше.",
         ][:n]
 
     if idx == 62:
@@ -3819,10 +3866,10 @@ def enforce_pause_later_rules(
         if not _has_pause_script(assistant_reply):
             return 0, "Pause rule failed: reply must contain the new merged pause script."
 
-        if idx in (52, 55):
+        if idx == 55:
             if not _contains_any_substring(reply_low, priority_markers):
                 return 0, "Pause rule failed: before priority answers are complete, assistant must ask the next missing priority question."
-        if idx in (53, 57):
+        if idx == 57:
             if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
                 return 1, "Pause rule passed: assistant uses the merged pause script and continues with the required work-format readiness step."
             if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
@@ -3997,12 +4044,6 @@ def _fallback_messages(
             f"Я из Казани, по компенсации ориентируюсь на {salary_value} рублей.",
         ][:n]
 
-    if idx == 63:
-        return ["По договоренности", "Компенсация обсуждаема", "По зарплате договоримся"][:n]
-
-    if idx == 64:
-        return ["Обсуждаемо", "Зарплата обсуждаема", "Деньги обсуждаемы"][:n]
-
     if idx == 66:
         return [
             "Я в Москве, по зарплате ориентир 220000 рублей на руки в месяц.",
@@ -4015,13 +4056,6 @@ def _fallback_messages(
             "Сейчас я в Самаре, по зарплате ориентир 170000 рублей на руки в месяц.",
             "Я в Нижнем Новгороде, ожидания 180000 рублей на руки в месяц.",
             "Живу в Воронеже, по деньгам ориентир 165000 рублей в месяц на руки.",
-        ][:n]
-
-    if idx == 68:
-        return [
-            "В офис ездить не готов, но удаленный формат мне подходит. Сейчас я в Санкт-Петербурге, ориентир 240000 рублей на руки в месяц.",
-            "На месте работодателя работать не хочу, удаленно готов. Я в Казани, по зарплате 230000 рублей на руки в месяц.",
-            "Офис не рассматриваю, а remote подходит. Я в Екатеринбурге, ожидания 235000 рублей в месяц на руки.",
         ][:n]
 
     if idx in (23, 24):
@@ -4246,7 +4280,7 @@ def enforce_prompt_v2_turn_rules(
             else (0, f"HH location/format rule failed: scenario {idx} must ask about readiness for the allowed format.")
         )
 
-    if idx in (36, 68):
+    if idx == 36:
         if _reply_has_end_marker(assistant_reply):
             return 0, f"HH multi-format rule failed: scenario {idx} must not reject while another allowed format may fit."
         if _hh_reply_mentions_any_allowed_format(assistant_reply, list(dialog_context_meta.get('work_format_ids') or [])):
@@ -4338,7 +4372,7 @@ def enforce_salary_normalization_rules(
             else (0, "HH salary rule failed: explicit monthly salary above max must use the rejection script.")
         )
 
-    if idx in (46, 47, 48, 49, 63, 64):
+    if idx in (46, 47, 48, 49):
         if _reply_has_end_marker(assistant_reply):
             return 0, "HH salary rule failed: ambiguous salary must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
@@ -4691,10 +4725,18 @@ def run_scenarios(
             f"indices={sorted(selected)} -> loaded={len(scenarios)}"
         )
 
+    disabled_loaded = sorted(s.index for s in scenarios if s.index in HH_DISABLED_SCENARIOS)
+    if disabled_loaded:
+        scenarios = [s for s in scenarios if s.index not in HH_DISABLED_SCENARIOS]
+        print(
+            f"[init] HH disabled scenarios skipped: indices={disabled_loaded} "
+            f"-> loaded={len(scenarios)}"
+        )
+
     if not scenarios:
         if scenario_indices:
             raise ValueError(
-                "No scenarios matched --scenario-indices. "
+                "No scenarios left after applying --scenario-indices and HH disabled-scenario filtering. "
                 f"Requested: {scenario_indices}. Check CSV row indices."
             )
         raise ValueError("No scenarios loaded from CSV - nothing to run.")
