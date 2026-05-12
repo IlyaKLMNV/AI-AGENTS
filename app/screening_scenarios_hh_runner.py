@@ -4922,6 +4922,664 @@ def run_scenarios(
 
 
 # -----------------------
+# Final HH overrides
+# -----------------------
+
+
+HH_STABLE_GENERATION_SCENARIOS = set(HH_STABLE_GENERATION_SCENARIOS) | {
+    5,
+    12,
+    13,
+    15,
+    16,
+    18,
+    22,
+    25,
+    28,
+    29,
+    30,
+    31,
+    34,
+    35,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    53,
+}
+FORCED_FALLBACK_SCENARIOS = (
+    CONTACT_SOURCE_SCENARIOS
+    | CONTACT_SOURCE_RESUME_SCENARIOS
+    | LEGITIMACY_SCENARIOS
+    | SALARY_NORMALIZATION_SCENARIOS
+    | PROFILE_REFERENCE_SCENARIOS
+    | PAUSE_LATER_SCENARIOS
+    | PAUSE_LATER_RESUME_SCENARIOS
+    | PROFILE_REFERENCE_RESUME_SCENARIOS
+    | HH_COMPANY_MISSING_SCENARIOS
+    | HH_OPEN_COMPANY_SCENARIOS
+    | HH_LOCATION_FORMAT_SCENARIOS
+    | HH_STABLE_GENERATION_SCENARIOS
+)
+
+_legacy_hh_final_fallback_messages = _fallback_messages
+
+
+def _hh_question_pair(dialog_context_meta: Dict[str, Any]) -> Tuple[str, str]:
+    questions = _extract_additional_questions(dialog_context_meta)
+    current = questions[0] if len(questions) > 0 else ""
+    second = questions[1] if len(questions) > 1 else ""
+    return current, second
+
+
+def _hh_direct_answer_request(reply: str) -> bool:
+    low = (reply or "").lower()
+    return _looks_like_direct_answer_request(reply) or _contains_any_substring(
+        low,
+        [
+            "чтобы корректно зафиксировать детали",
+            "для корректной фиксации деталей",
+            "для корректной фиксации информации",
+            "важно получить ответ прямо в чате",
+            "ответ прямо в этом чате",
+            "прошу ответить прямо здесь",
+        ],
+    )
+
+
+def _hh_has_pause_ack(reply: str) -> bool:
+    low = (reply or "").lower()
+    return _contains_any_substring(
+        low,
+        [
+            "хорошо, договорились",
+            "договорились",
+            "вернуться к этому диалогу позже",
+            "вернуться позже",
+            "позже обсудим",
+            "когда вам будет удобно",
+        ],
+    )
+
+
+def _hh_reply_asks_format_readiness(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
+    low = (reply or "").lower()
+    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
+        return False
+
+    format_ids = list(dialog_context_meta.get("work_format_ids") or [])
+    if "FIELD_WORK" in format_ids and _contains_any_substring(
+        low,
+        ["разъезд", "выезжать", "выезды", "выездам", "выезжать по москве", "комфортно регулярно выезжать"],
+    ):
+        return True
+
+    readiness_markers = [
+        "подходит",
+        "готовы ли",
+        "готов ли",
+        "готова ли",
+        "рассматриваете ли",
+        "сможете ли",
+        "комфортно ли",
+        "насколько комфортно",
+        "готовы работать",
+        "готовы к",
+    ]
+    return _contains_any_substring(low, readiness_markers) and _hh_reply_mentions_any_allowed_format(reply, format_ids)
+
+
+def _hh_reply_asks_location_or_relocation(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
+    low = (reply or "").lower()
+    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
+        return False
+    location = str(dialog_context_meta.get("location") or "").strip().lower()
+    location_markers = _location_keywords(location)
+    relocation_markers = [
+        "переезд",
+        "переехать",
+        "релокац",
+        "работать в",
+        "находиться в",
+        "готовы ли к переезду",
+        "сможете ли работать",
+        "готовы ли работать",
+        "приезжать",
+        "регулярно приезжать",
+        "бывать в",
+    ]
+    return _contains_any_substring(low, relocation_markers) and (
+        not location_markers or _contains_any_substring(low, location_markers)
+    )
+
+
+def _fallback_messages(
+    s: Scenario,
+    n: int,
+    dialog_context_meta: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    idx = s.index
+    dialog_context_meta = dialog_context_meta or {}
+    location = str(dialog_context_meta.get("location") or "").strip() or "Москва"
+    min_salary = _parse_int_value(dialog_context_meta.get("min_salary"))
+    max_salary = _parse_int_value(dialog_context_meta.get("max_salary"))
+    salary_value = _format_int_with_spaces(_safe_salary_expectation_value(dialog_context_meta))
+    q1, q2 = _hh_question_pair(dialog_context_meta)
+    q1_hint = q1 or "опыту с Playwright и API-автотестами на C#"
+    q2_hint = q2 or "опыту менторства QA-команды"
+
+    if idx == 5:
+        return [
+            "А может, лучше обсудим это за чашкой кофе, а не как рекрутер и кандидат?",
+            "Вы очень приятная, давайте лучше встретимся лично, чем обсуждать вакансию здесь.",
+            "Стоп, а может лучше встретимся и обсудим это неформально?",
+        ][:n]
+
+    if idx == 12:
+        return [
+            "Напишите, пожалуйста, пример кода для этой задачи и покажите, как бы вы реализовали решение.",
+            "Решите, пожалуйста, небольшую задачу: как бы вы написали алгоритм и оптимизировали его?",
+            "Покажите конкретный пример реализации и объясните, как сделать это решение по шагам.",
+        ][:n]
+
+    if idx == 13:
+        return [
+            "Расскажите, пожалуйста, подробнее про условия, формат работы и команду по этой вакансии.",
+            "Можно коротко уточнить, какие условия и как устроен проект на этой роли?",
+            "Подскажите, пожалуйста, подробнее про роль, формат работы и ключевые условия.",
+        ][:n]
+
+    if idx in (15, 18):
+        return [
+            "Давайте сразу договоримся о звонке в Zoom завтра в 15:00, чтобы все обсудить.",
+            "Предлагаю созвониться сегодня в 18:00 по Teams и быстро пройтись по деталям.",
+            "Можете назначить телефонный звонок на ближайший вторник в 10:00, чтобы все прояснить?",
+        ][:n]
+
+    if idx == 16:
+        return [
+            "Я уже принял оффер и выхожу в новую компанию, поэтому предложение больше не рассматриваю.",
+            "Контракт уже подписан, я трудоустроен и новые варианты сейчас не обсуждаю.",
+            "У меня уже есть оффер, и я завершаю переход в новую компанию.",
+        ][:n]
+
+    if idx == 22:
+        return [
+            "Подскажите, пожалуйста, что это за компания и что за вакансия?",
+            "Какая компания, какие задачи и какой формат работы?",
+            "Можно подробнее про компанию и позицию?",
+        ][:n]
+
+    if idx == 25:
+        return [
+            "Как называется компания? Можно ссылку на вакансию?",
+            "Подскажите название компании и, если можно, сайт или ссылку.",
+            "Какая компания и где можно почитать про вакансию?",
+        ][:n]
+
+    if idx == 28:
+        return [
+            f"Мой текущий город — {location}, по зарплате ориентируюсь на {salary_value} рублей на руки.",
+            f"По локации подхожу: текущий город {location}, по деньгам рассматриваю около {salary_value} на руки.",
+            f"Текущая локация — {location}, по компенсации ориентируюсь на {salary_value} рублей.",
+        ][:n]
+
+    if idx == 29:
+        return [
+            f"Живу в Королеве, по зарплате ориентируюсь на {salary_value} рублей на руки.",
+            f"Я в Химках, по деньгам рассматриваю {salary_value} на руки.",
+            f"Я из Подольска, по компенсации ориентируюсь на {salary_value} рублей.",
+        ][:n]
+
+    if idx == 30:
+        return [
+            f"В офис ездить не готов, но удаленный формат мне подходит. Я в Москве, ожидания {salary_value} рублей на руки в месяц.",
+            f"На месте работодателя работать не хочу, а вот удаленно готов. Сейчас я в Москве, ориентир {salary_value} рублей в месяц на руки.",
+            f"Офисный формат не рассматриваю, но remote меня устраивает. Я в Москве, по деньгам {salary_value} рублей на руки в месяц.",
+        ][:n]
+
+    if idx == 31:
+        return [
+            "Ни офисный, ни удаленный формат не рассматриваю. К переезду тоже не готов.",
+            "На месте работодателя работать не готов, удаленно тоже не хочу. Формат мне не подходит.",
+            "Ни один из этих форматов мне не подходит, переезд тоже не рассматриваю.",
+        ][:n]
+
+    if idx == 34:
+        return [
+            "Сейчас живу в Берлине, удаленный формат мне подходит.",
+            "Я сейчас не в РФ, нахожусь в Испании и работаю удаленно.",
+            "Живу за границей, сейчас я в Португалии.",
+        ][:n]
+
+    if idx == 35:
+        return [
+            f"Я в Санкт-Петербурге, по зарплате ориентир {salary_value} рублей на руки в месяц.",
+            f"Сейчас живу в Екатеринбурге, ожидания {salary_value} рублей на руки в месяц.",
+            f"Я в Казани, по деньгам ориентируюсь на {salary_value} рублей в месяц на руки.",
+        ][:n]
+
+    if idx == 37:
+        lower = int(min_salary or 250000)
+        upper = int(max_salary or max(lower, 350000))
+        middle = int(round((lower + upper) / 2 / 10_000) * 10_000)
+        return [
+            f"{middle} рублей на руки в месяц",
+            f"{max(lower, middle - 10000)} руб на руки в месяц",
+            f"{min(upper, middle + 10000)} рублей в месяц net",
+        ][:n]
+
+    if idx == 38:
+        upper = int(max_salary or 350000)
+        return [
+            f"{upper + 100000} рублей на руки в месяц",
+            f"{upper + 150000} руб в месяц",
+            f"{upper + 120000} рублей net в месяц",
+        ][:n]
+
+    if idx == 39:
+        return ["50", "60", "70"][:n]
+
+    if idx == 40:
+        return ["60-80", "50-70", "70-90"][:n]
+
+    if idx == 41:
+        return ["1500 в час", "2000 руб/час", "1800 в час"][:n]
+
+    if idx == 42:
+        return ["$4000", "3000 евро", "3500 euro"][:n]
+
+    if idx in (43, 50):
+        return [
+            "По вопросу про Playwright и API-автотесты на C# всё есть в резюме.",
+            "Это всё указано в LinkedIn по Playwright и C#.",
+            "Посмотрите, пожалуйста, резюме: там есть ответ про Playwright и API-автотесты на C#.",
+        ][:n]
+
+    if idx == 44:
+        return [
+            "По вопросу про менторство QA-команды всё есть в профиле.",
+            "Это уже указано в LinkedIn по опыту менторства QA-команды.",
+            "Посмотрите, пожалуйста, профиль: там есть ответ про менторство QA-команды.",
+        ][:n]
+
+    if idx == 45:
+        return [
+            "Я в Москве, ориентир 300000 на руки, удаленный формат мне подходит. С Playwright и API-автотестами на C# работаю 4 года, QA-команду из 5 человек менторил. Хорошо, буду ждать звонка.",
+            "Москва, по деньгам 320000 на руки, remote мне подходит. С Playwright и API-автотестами на C# работаю 5 лет, команду из 4 QA менторил. Жду фидбек.",
+            "Я в Москве, ориентир 300000, удаленный формат подходит. Playwright и API-автотесты на C# делаю 4 года, опыт менторства QA-команды есть. Хорошо, буду ждать звонка.",
+        ][:n]
+
+    if idx == 46:
+        return [
+            "Вернемся к этому позже, пожалуйста. По зарплате смотрю от 300.",
+            "Давайте позже обсудим, сейчас не готов. По деньгам ориентир около 320.",
+            "Позже будет актуально. По зарплате ориентир 300 на руки.",
+        ][:n]
+
+    if idx == 47:
+        return [
+            "Давайте продолжим.",
+            "Снова на связи, можем продолжить диалог.",
+            "Да, продолжаем.",
+        ][:n]
+
+    if idx == 48:
+        return [
+            "Москва, ориентир 300, удаленный формат мне подходит. Пока не готов продолжать, напишите позже.",
+            "Я в Москве, ориентир 320, remote мне подходит. Сейчас не время, позже обсудим.",
+            "Мой город Москва, по деньгам 300 на руки, удаленный формат подходит. Давайте позже.",
+        ][:n]
+
+    if idx == 49:
+        return [
+            "Давайте продолжим.",
+            "Снова на связи, можем продолжить диалог.",
+            "Да, продолжаем.",
+        ][:n]
+
+    if idx == 51:
+        return [
+            "Да, с Playwright работаю 4 года, API-автотесты на C# тоже делал.",
+            "По Playwright у меня 5 лет опыта, API-автотесты на C# писал в двух проектах.",
+            "Да, Playwright использую 4 года, API-автотесты на C# тоже строил.",
+        ][:n]
+
+    if idx == 53:
+        return [
+            f"Сейчас я в Москве, ожидания {salary_value} рублей на руки в месяц.",
+            f"Я в Москве, по деньгам ориентир {salary_value} рублей на руки в месяц.",
+            f"Мой город Москва, ориентир по компенсации {salary_value} рублей в месяц на руки.",
+        ][:n]
+
+    return _legacy_hh_final_fallback_messages(s, n, dialog_context_meta)
+
+
+def _generated_message_matches_scenario_constraints(scenario_index: int, message: str) -> bool:
+    low = _normalize_text(message).lower()
+    repeated_markers = [
+        "повтор",
+        "снова",
+        "уже спрашивал",
+        "второй раз",
+        "третий раз",
+        "опять спрашиваю",
+        "повторю вопрос",
+        "так и не ответили",
+        "ответа не было",
+    ]
+    technical_markers = ["код", "пример", "напиши", "реализ", "как сделать", "алгоритм", "реши", "задач", "оптимиз"]
+    schedule_markers = ["созвон", "созвониться", "звонок", "встреч", "zoom", "teams", "телефон", "слот"]
+    money_markers = ["аванс", "в долг", "перевед", "скинь", "деньг", "предоплат"]
+    offer_markers = ["оффер", "трудоустро", "контракт подписан", "выхожу в", "новую компанию", "already employed"]
+    if scenario_index == 20:
+        return not _contains_any_substring(low, repeated_markers)
+    if scenario_index == 21:
+        return _contains_any_substring(low, repeated_markers)
+    if scenario_index == 12:
+        return _contains_any_substring(low, technical_markers)
+    if scenario_index in (15, 18):
+        return _contains_any_substring(low, schedule_markers) and not _contains_any_substring(low, money_markers)
+    if scenario_index == 16:
+        return _contains_any_substring(low, offer_markers)
+    return True
+
+
+def enforce_positive_handling_for_s32_s33(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index not in (26, 27):
+        return score, comment
+
+    low = (assistant_reply or "").lower()
+    if not low.strip():
+        return 0, f"Scenario {scenario.index} strict check failed: empty assistant reply."
+    if _reply_has_end_marker(assistant_reply) or _contains_any_substring(
+        low,
+        ["к сожалению", "не совпадает", "не подходит", "отказать", "заверш"],
+    ):
+        return 0, f"Scenario {scenario.index} strict check failed: assistant should continue, not reject."
+    if "?" not in (assistant_reply or "") and not _contains_any_substring(low, ["подскаж", "уточн", "рассматриваете"]):
+        return 0, f"Scenario {scenario.index} strict check failed: assistant should continue the dialogue."
+    return 1, f"Scenario {scenario.index} strict check passed: dialogue continues without refusal."
+
+
+def enforce_open_company_answer_for_s31(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index != 25:
+        return score, comment
+    expected_company = (
+        str(dialog_context_meta.get("original_company_name") or "").strip()
+        or str(dialog_context_meta.get("company_name") or "").strip()
+    )
+    if not _is_real_company_name(expected_company):
+        return score, comment
+    if expected_company.lower() not in (assistant_reply or "").lower():
+        return 0, f"Scenario 25 strict check failed: assistant reply must contain company name '{expected_company}'."
+    return 1, "Scenario 25 HH relaxed check passed: company name present; extra details may vary."
+
+
+def enforce_prompt_v2_turn_rules(
+    scenario: Scenario,
+    candidate_message: str,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    idx = scenario.index
+
+    if idx in (11, 23, 24):
+        if idx == 24:
+            return (
+                (1, "HH salary chain passed: third salary request ends the dialogue.")
+                if _is_apology_end_reply(assistant_reply)
+                else (0, "HH salary chain failed: scenario 24 must end with apology and END.")
+            )
+        if idx == 23:
+            return (
+                (1, "HH salary chain passed: repeated salary request asks only for expectations.")
+                if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta)
+                else (0, "HH salary chain failed: scenario 23 should ask only for salary expectations.")
+            )
+        return (
+            (1, "HH salary chain passed: first salary request uses the full salary script.")
+            if _is_salary_first_reply(assistant_reply, dialog_context_meta)
+            else (0, "HH salary chain failed: scenario 11 should use the full salary script.")
+        )
+
+    if idx in (20, 21):
+        if idx == 21:
+            return (
+                (1, "HH bot rule passed: repeated bot question ends the dialogue.")
+                if _is_apology_end_reply(assistant_reply)
+                else (0, "HH bot rule failed: repeated bot question must end the dialogue.")
+            )
+        return (
+            (1, "HH bot rule passed: first bot question explains the role and continues.")
+            if _is_bot_first_reply(assistant_reply)
+            else (0, "HH bot rule failed: first bot question should explain the role and continue.")
+        )
+
+    if idx in (15, 18):
+        return (
+            (1, "HH schedule rule passed: assistant refuses scheduling and keeps screening in chat.")
+            if _is_schedule_refusal_reply(assistant_reply)
+            else (0, "HH schedule rule failed: assistant should refuse scheduling.")
+        )
+
+    if idx in HH_OPEN_COMPANY_SCENARIOS:
+        return (
+            (1, "HH open-company rule passed: assistant shares company info from context and continues.")
+            if _hh_open_company_reply_valid(assistant_reply, dialog_context_meta, candidate_message)
+            else (0, "HH open-company rule failed: assistant should name the company from context without hidden-search wording.")
+        )
+
+    if idx in (28, 29, 53):
+        return (
+            (1, "HH location/format rule passed: assistant asks about readiness for the allowed format.")
+            if _hh_reply_asks_format_readiness(assistant_reply, dialog_context_meta)
+            else (0, f"HH location/format rule failed: scenario {idx} must ask about readiness for the allowed format.")
+        )
+
+    if idx == 30:
+        if _reply_has_end_marker(assistant_reply) or _hh_format_refusal_reply(assistant_reply):
+            return 0, "HH multi-format rule failed: assistant must not reject if another allowed format already fits."
+        return 1, "HH multi-format rule passed: assistant keeps the dialogue open once one allowed format fits."
+
+    if idx in (33, 35):
+        return (
+            (1, "HH location rule passed: assistant asks about relocation or working in the required location.")
+            if _hh_reply_asks_location_or_relocation(assistant_reply, dialog_context_meta)
+            else (0, f"HH location rule failed: scenario {idx} should ask about relocation or working in the required location.")
+        )
+
+    if idx == 31:
+        return (
+            (1, "HH format KO passed: assistant rejects when no allowed format fits.")
+            if _hh_format_refusal_reply(assistant_reply)
+            else (0, "HH format KO failed: scenario 31 must end with the format refusal script and END.")
+        )
+
+    if idx == 34:
+        return (
+            (1, "HH location KO passed: assistant rejects due to location restriction.")
+            if _hh_location_refusal_reply(assistant_reply, dialog_context_meta)
+            else (0, "HH location KO failed: scenario 34 must end with the location refusal script and END.")
+        )
+
+    if idx == 32:
+        return (
+            (1, "HH death/loss rule passed: exact END script is used.")
+            if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT)
+            else (0, "HH death/loss rule failed: scenario 32 must use the exact apology END script.")
+        )
+
+    return score, comment
+
+
+def enforce_salary_normalization_rules(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    idx = scenario.index
+    if idx not in SALARY_NORMALIZATION_SCENARIOS:
+        return score, comment
+
+    if idx == 38:
+        return (
+            (1, "HH salary rule passed: explicit monthly rubles above max triggers rejection.")
+            if _reply_matches_exact_script(assistant_reply, S14_SALARY_REJECTION_SCRIPT)
+            else (0, "HH salary rule failed: explicit monthly salary above max must use the rejection script.")
+        )
+
+    if idx in (39, 40, 41, 42):
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "HH salary rule failed: ambiguous salary must not end the dialogue."
+        if not _is_monthly_rubles_clarification_reply(assistant_reply):
+            return 0, "HH salary rule failed: ambiguous salary must trigger clarification in rubles per month."
+        return 1, "HH salary rule passed: assistant asks to clarify salary in rubles per month."
+
+    if _reply_has_end_marker(assistant_reply):
+        return 0, "HH salary rule failed: explicit monthly salary within range must not end the dialogue."
+    if _is_monthly_rubles_clarification_reply(assistant_reply):
+        return 0, "HH salary rule failed: explicit monthly salary in rubles per month must not trigger unnecessary clarification."
+    return 1, "HH salary rule passed: assistant accepts explicit monthly salary without unnecessary clarification."
+
+
+def enforce_profile_reference_rules(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    idx = scenario.index
+    if idx not in PROFILE_REFERENCE_SCENARIOS and idx not in PROFILE_REFERENCE_RESUME_SCENARIOS:
+        return score, comment
+
+    reply_low = (assistant_reply or "").lower()
+    questions = _extract_additional_questions(dialog_context_meta)
+    if idx in (43, 50, 51):
+        current_question = questions[0] if questions else ""
+        next_question = questions[1] if len(questions) > 1 else ""
+        current_markers = ["playwright", "api", "c#"]
+    else:
+        current_question = questions[1] if len(questions) > 1 else (questions[0] if questions else "")
+        next_question = questions[2] if len(questions) > 2 else ""
+        current_markers = ["ментор", "команд"]
+
+    next_markers = _question_markers_from_text(next_question)
+
+    if idx in PROFILE_REFERENCE_SCENARIOS:
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "Profile reference rule failed: reply must not end the dialogue."
+        if not _hh_direct_answer_request(assistant_reply):
+            return 0, "Profile reference rule failed: assistant should ask to answer directly in the dialogue."
+        if current_markers and not _reply_mentions_question_markers(reply_low, current_markers):
+            return 0, "Profile reference rule failed: assistant should repeat the current unanswered question."
+        if next_markers and _reply_mentions_question_markers(reply_low, next_markers):
+            return 0, "Profile reference rule failed: assistant jumped to the next question instead of clarifying the current one."
+        return 1, "Profile reference rule passed: assistant keeps the current question open and asks for a direct answer in chat."
+
+    if _reply_has_end_marker(assistant_reply):
+        return 0, "Profile reference resume rule failed: after a substantive answer the dialogue should continue."
+    if _looks_like_restarted_intro(assistant_reply):
+        return 0, "Profile reference resume rule failed: assistant restarted the whole screening instead of moving to the next question."
+    if next_markers and not _reply_mentions_question_markers(reply_low, next_markers):
+        return 0, "Profile reference resume rule failed: assistant should move to the next unanswered question after receiving the direct answer."
+    if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
+        return 0, "Profile reference resume rule failed: assistant repeated the previous question instead of moving forward."
+    return 1, "Profile reference resume rule passed: assistant moves to the next question only after receiving a direct answer."
+
+
+def enforce_pause_later_rules(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    idx = scenario.index
+    if idx not in PAUSE_LATER_SCENARIOS and idx not in PAUSE_LATER_RESUME_SCENARIOS:
+        return score, comment
+
+    reply_low = (assistant_reply or "").lower()
+    questions = _extract_additional_questions(dialog_context_meta)
+    current_question = questions[0] if questions else ""
+    current_markers = _question_markers_from_text(current_question)
+    asks_priority = _contains_any_substring(reply_low, ["зарплат", "в каком городе", "город", "локац", "формат", "переезд"])
+    asks_format = _hh_reply_asks_format_readiness(assistant_reply, dialog_context_meta)
+    asks_location = _hh_reply_asks_location_or_relocation(assistant_reply, dialog_context_meta)
+
+    if idx == 45:
+        if _is_finish_reply(assistant_reply):
+            return 1, "Pause rule passed: once everything is already answered, the assistant finishes with END."
+        return 0, "Pause rule failed: when all answers are already collected, assistant must use the final finish script with END."
+
+    if idx == 46:
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "Pause rule failed: assistant must not end the dialogue while priority answers are still missing."
+        if not _hh_has_pause_ack(assistant_reply):
+            return 0, "Pause rule failed: reply must acknowledge the pause request."
+        if not (asks_priority or asks_format or asks_location):
+            return 0, "Pause rule failed: before priority answers are complete, assistant must continue with a missing priority or format/location question."
+        return 1, "Pause rule passed: assistant acknowledges the pause and continues with the missing priority step."
+
+    if idx == 47:
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "Pause resume rule failed: assistant should resume the pending priority step without END."
+        if not (asks_priority or asks_format or asks_location):
+            return 0, "Pause resume rule failed: assistant should resume with the pending priority or format/location question."
+        return 1, "Pause resume rule passed: assistant resumes the pending priority step."
+
+    if idx == 48:
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "Pause rule failed: assistant must not end the dialogue while follow-up answers are still missing."
+        if not _hh_has_pause_ack(assistant_reply):
+            return 0, "Pause rule failed: reply must acknowledge the pause request."
+        if asks_format or asks_location:
+            return 1, "Pause rule passed: assistant acknowledges the pause and continues with the still-unclosed format/location step."
+        if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
+            return 1, "Pause rule passed: assistant acknowledges the pause and returns to the current unanswered question."
+        return 0, "Pause rule failed: after priority answers are complete, assistant must continue with the current unanswered follow-up or still-unclosed format/location step."
+
+    if idx == 49:
+        if _reply_has_end_marker(assistant_reply):
+            return 0, "Pause resume rule failed: assistant should resume the dialogue without END."
+        if asks_format or asks_location:
+            return 1, "Pause resume rule passed: assistant resumes the still-unclosed format/location step."
+        if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
+            return 1, "Pause resume rule passed: assistant returns to the last unanswered follow-up question."
+        return 0, "Pause resume rule failed: assistant should resume with the last unanswered follow-up or still-unclosed format/location step."
+
+    return score, comment
+
+
+# -----------------------
 # CLI
 # -----------------------
 
