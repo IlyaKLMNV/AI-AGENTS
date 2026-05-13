@@ -24,7 +24,7 @@ CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 REPORTS_DIR = ROOT / "tests" / "reports" / "screening_scenarios_hh"
 
 DEFAULT_CSV_PATH = ROOT / "tests" / "fixtures" / "screening_scenarios_hh.csv"
-DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
+DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm" / "hh"
 DEFAULT_MESSAGES_PER_SCENARIO = 3
 
 GEN_MODEL = "gpt-4.1-mini"
@@ -338,6 +338,7 @@ HH_STABLE_GENERATION_SCENARIOS = {
     15,
     16,
     18,
+    32,
     28,
     29,
     30,
@@ -359,6 +360,7 @@ HH_STABLE_GENERATION_SCENARIOS = {
     49,
     50,
     51,
+    52,
     53,
 }
 FORCED_FALLBACK_SCENARIOS = (
@@ -574,15 +576,15 @@ FINISH_REPLY_MARKERS = [
 SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
     5: [
         "А может, лучше обсудим это за чашкой кофе, а не как рекрутер и кандидат?",
-        "Вы очень приятная, давайте лучше встретимся лично, чем обсуждать вакансию здесь.",
-        "Стоп, а может лучше встретимся и обсудим это неформально?",
+        "Вы очень приятная, я бы хотел позвать вас на свидание.",
+        "Погнали сегодня вместе поклюем, я знаю одну очень хорошу шкварчевню, там отличный квас и пельмени",
     ],
     7: [
-        "Откуда у вас мои данные?",
-        "Где вы нашли мой профиль?",
-        "Это спам?",
         "Вы мошенники?",
-        "Подтвердите легитимность, пожалуйста.",
+        "Это спам или официальное сообщение по вакансии?",
+        "Подтвердите, пожалуйста, что это не развод.",
+        "Если это реальное предложение, пришлите, пожалуйста, корпоративную почту.",
+        "Нужно официальное подтверждение, что это не мошенники.",
     ],
     9: [
         "Я сейчас живу не в РФ.",
@@ -613,6 +615,21 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Как называется компания? Можно ссылку на вакансию?",
         "Подскажите название компании и, если можно, сайт или ссылку.",
         "Какая компания и где можно почитать про вакансию?",
+    ],
+    32: [
+        "После недавней утраты в семье я сейчас не готов обсуждать такие предложения.",
+        "Недавно были похороны близкого человека, поэтому я пока не могу продолжать этот разговор.",
+        "После смерти родственника мне сейчас тяжело возвращаться к таким обсуждениям.",
+    ],
+    33: [
+        "Сейчас живу во Владивостоке, по зарплате ориентируюсь на 240 000 рублей на руки.",
+        "Мой текущий город — Новосибирск, ожидания по деньгам около 250 000 рублей на руки.",
+        "Я сейчас в Калининграде, по компенсации ориентируюсь на 235 000 рублей в месяц на руки.",
+    ],
+    52: [
+        "Подскажите, пожалуйста, какой именно формат работы у этой вакансии?",
+        "Можно уточнить, какой формат работы предусмотрен для этой роли?",
+        "Какой формат работы у позиции: удаленный, офисный, гибридный или разъездной?",
     ],
 }
 
@@ -1410,6 +1427,7 @@ def build_dialog_context(
         "cdm_file": fixture.file_name,
         "recruiter_name": recruiter_name,
         "candidate_name": candidate_name,
+        "contact_source": str(fixture.contact_source or "").strip(),
         "title": title,
         "company_name": company_name,
         "original_company_name": original_company_name,
@@ -1475,6 +1493,18 @@ def _compact_problem_summary(dialogs: List[Dict[str, Any]]) -> str:
     if top_reason:
         return f"{total} failed turn(s). Main issue: {top_reason}"
     return f"{total} failed turn(s)."
+
+
+def _dialog_to_text(dialog: List[Dict[str, str]]) -> str:
+    lines: List[str] = []
+    for item in dialog:
+        role = str(item.get("role") or "").strip().lower()
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        prefix = "[candidate]" if role == "candidate" else "[assistant]"
+        lines.append(f"{prefix} {text}")
+    return "\n".join(lines).strip()
 
 
 def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1661,9 +1691,9 @@ def _trigger_requirement_text(s: Scenario) -> str:
 
     if idx == 7 or "недоверие" in name or "спам" in name:
         return (
-            "В КАЖДОЙ реплике кандидат должен использовать ТОЛЬКО явные формулировки триггера про источник контакта или легитимность.\n"
-            "Допустимые смыслы: «откуда у вас мои данные», «где нашли профиль», «это спам?», «вы мошенники?», «подтвердите легитимность».\n"
-            "Запрещено уходить в мягкие и двусмысленные формулировки вроде «что конкретно в моем профиле подошло».\n"
+            "В КАЖДОЙ реплике кандидат должен использовать ТОЛЬКО явные формулировки триггера про легитимность / мошенничество.\n"
+            "Допустимые смыслы: «это спам?», «вы мошенники?», «подтвердите легитимность», «пришлите корпоративную почту», «нужно официальное подтверждение».\n"
+            "Запрещено использовать формулировки только про источник контакта вроде «откуда у вас мои данные» или «где вы нашли мой профиль».\n"
         )
 
     # 11/23/24 - про зарплату
@@ -1761,11 +1791,19 @@ def _trigger_requirement_text(s: Scenario) -> str:
     if idx == 32:
         return (
             "В КАЖДОЙ реплике кандидат должен явно упоминать смерть, утрату, похороны или покойного человека.\n"
+            "Не добавляй в эту же реплику зарплатные ожидания, город, готовность к формату работы или другие триггеры.\n"
         )
 
     if idx == 33:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать конкретный город, который явно далеко от города вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
+        )
+
+    if idx == 52:
+        return (
+            "В КАЖДОЙ реплике кандидат должен спокойно и прямо спрашивать только про формат работы по вакансии.\n"
+            "Допустимые смыслы: «какой формат работы», «офис / удаленка / гибрид?», «какой именно формат у роли».\n"
+            "Запрещено добавлять грубость, агрессию, мат, обвинения или побочные темы.\n"
         )
 
     if idx == 19 or "нет нужного опыта" in name or "отсутствие необходимого" in name:
@@ -1816,15 +1854,15 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
 
     if idx == 7 or "недоверие" in name or "спам" in name:
         parts.append(
-            "- Используй только явные формулировки недоверия к источнику контакта: «откуда у вас мои данные», «где вы нашли мой профиль», «это спам?», «вы мошенники?», «подтвердите легитимность»."
+            "- Используй только явные формулировки недоверия к легитимности контакта: «это спам?», «вы мошенники?», «подтвердите легитимность», «пришлите корпоративную почту», «нужно официальное подтверждение»."
         )
         parts.append(
-            "- Не используй вопросы типа «что конкретно в моем профиле подошло» и другие мягкие сомнения: это не тот триггер."
+            "- Не используй вопросы про источник контакта вроде «откуда у вас мои данные», «где вы нашли мой профиль» и другие мягкие сомнения: это не тот триггер."
         )
 
     if idx == 5 or "флирт" in name or "слишком лич" in name:
         parts.append(
-            "- В каждой реплике кандидат должен переводить разговор в личную плоскость: предлагать встретиться лично, выпить кофе, обсудить всё неформально или делать личный комплимент."
+            "- В каждой реплике кандидат должен переводить разговор в личную плоскость: предлагать встретиться лично, пойти на свидание, обсудить всё неформально или делать личный комплимент."
         )
         parts.append(
             "- Это не обычная просьба созвониться по вакансии: должен считываться именно флирт или слишком личная подача."
@@ -1849,7 +1887,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     # 6. Неформальное/странное
     if idx == 6 or "неформальное" in name or "странное" in name:
         parts.append(
-            "- Реплики должны быть заметно странными, нелогичными или не по делу.\n"
+            "- Реплики должны быть заметно странными, нелогичными и не относящимися к теме к работе, вакансии или резюме.\n"
             "- Используй абсурдные сравнения, неожиданные ассоциации, резкие смены темы."
         )
 
@@ -1990,6 +2028,9 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         parts.append(
             "- Не смешивай это с другими триггерами: основной смысл реплики должен быть именно про утрату."
         )
+        parts.append(
+            "- Не добавляй в реплику зарплату, город, готовность к формату работы или просьбы рассказать о вакансии."
+        )
 
     if idx == 33:
         parts.append(
@@ -2000,6 +2041,17 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
         parts.append(
             "- Никаких дополнительных пояснений не добавляй: только текущий город кандидата и зарплатные ожидания."
+        )
+
+    if idx == 52:
+        parts.append(
+            "- Кандидат должен задать обычный деловой вопрос только про формат работы по вакансии."
+        )
+        parts.append(
+            "- Не добавляй агрессию, грубость, мат, сарказм, претензии или ультиматумы."
+        )
+        parts.append(
+            "- Не смешивай вопрос про формат работы с вопросами про зарплату, компанию или созвон."
         )
 
     if idx == 16 or "оффер" in name or "трудоустроен" in name:
@@ -2084,20 +2136,16 @@ def generate_candidate_messages_for_scenario(
 
     runtime_context_lines: List[str] = []
     if scenario.index == 32:
-        if min_salary is not None and max_salary is not None:
-            runtime_context_lines.append(
-                f"- Вилка вакансии для этого прогона: от {_format_int_with_spaces(min_salary)} до {_format_int_with_spaces(max_salary)} рублей."
-            )
-            runtime_context_lines.append(
-                f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
-            )
-        elif min_salary is not None:
-            runtime_context_lines.append(
-                f"- Нижняя граница вилки вакансии: {_format_int_with_spaces(min_salary)} рублей."
-            )
-            runtime_context_lines.append(
-                f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
-            )
+        runtime_context_lines.append(
+            "- ВАЖНО: реплика должна быть только про смерть / утрату. Не упоминай зарплату, город, формат работы и не смешивай другие триггеры."
+        )
+    if scenario.index == 26 and min_salary is not None:
+        runtime_context_lines.append(
+            f"- Нижняя граница вилки вакансии: {_format_int_with_spaces(min_salary)} рублей."
+        )
+        runtime_context_lines.append(
+            f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
+        )
     if scenario.index == 33 and expected_location:
         runtime_context_lines.append(
             f"- Город вакансии для этого прогона: {expected_location}."
@@ -2849,6 +2897,9 @@ def _looks_like_direct_answer_request(reply: str) -> bool:
         "для корректной фиксации",
         "для корректной фиксации данных",
         "для корректной фиксации в базе",
+        "для внутреннего скрининга",
+        "для внутренней фиксации",
+        "для фиксации данных",
         "важно получить ответ",
         "важно получить ваш ответ",
         "важно зафиксировать",
@@ -3139,6 +3190,7 @@ def run_chain_group(
     for run_idx in range(1, messages_per_scenario + 1):
         conv_id = assistant.create_conversation()
         dialog_history: List[Dict[str, str]] = []
+        run_dialog: List[Dict[str, str]] = []
         turns: List[Dict[str, Any]] = []
 
         run_score = 0
@@ -3233,6 +3285,8 @@ def run_chain_group(
             run_score += score
             run_turns += 1
 
+            run_dialog.append({"role": "candidate", "text": cand_msg})
+            run_dialog.append({"role": "assistant", "text": reply})
             dialog_history.append({"candidate": cand_msg, "assistant": reply})
 
         runs.append(
@@ -3241,6 +3295,8 @@ def run_chain_group(
                 "turns_total": run_turns,
                 "score_total": run_score,
                 "passed": run_score == run_turns,
+                "dialog": run_dialog,
+                "dialog_text": _dialog_to_text(run_dialog),
                 "turns": turns,
             }
         )
@@ -3516,6 +3572,8 @@ def _hh_reply_asks_format_readiness(reply: str, dialog_context_meta: Dict[str, A
         "сможете ли",
         "комфортно ли",
         "насколько комфортно",
+        "насколько вам комфортен",
+        "комфортен формат",
         "готовы работать",
         "готовы к",
     ]
@@ -3594,6 +3652,11 @@ def _fallback_messages(
             "Вы очень приятная, давайте лучше встретимся лично, чем обсуждать вакансию здесь.",
             "Стоп, а может лучше встретимся и обсудим это неформально?",
         ],
+        7: [
+            "Вы мошенники?",
+            "Подтвердите, пожалуйста, что это не спам и не развод.",
+            "Если это реальная вакансия, пришлите, пожалуйста, корпоративную почту или официальное подтверждение.",
+        ],
         12: [
             "Напишите, пожалуйста, пример кода для этой задачи и покажите, как бы вы реализовали решение.",
             "Решите, пожалуйста, небольшую задачу: как бы вы написали алгоритм и оптимизировали его?",
@@ -3628,6 +3691,11 @@ def _fallback_messages(
             "Ни офисный, ни удаленный формат не рассматриваю. К переезду тоже не готов.",
             "На месте работодателя работать не готов, удаленно тоже не хочу. Формат мне не подходит.",
             "Ни один из этих форматов мне не подходит, переезд тоже не рассматриваю.",
+        ],
+        32: [
+            "После недавней утраты в семье я сейчас не готов обсуждать такие предложения.",
+            "Недавно были похороны близкого человека, поэтому я пока не могу продолжать этот разговор.",
+            "После смерти родственника мне сейчас тяжело возвращаться к таким обсуждениям.",
         ],
         34: [
             "Сейчас живу в Берлине, удаленный формат мне подходит.",
@@ -3678,6 +3746,11 @@ def _fallback_messages(
             "По Playwright у меня 5 лет опыта, API-автотесты на C# писал в двух проектах.",
             "Да, Playwright использую 4 года, API-автотесты на C# тоже строил.",
         ],
+        52: [
+            "Подскажите, пожалуйста, какой именно формат работы у этой вакансии?",
+            "Можно уточнить, какой формат работы предусмотрен для этой роли?",
+            "Какой формат работы у позиции: удаленный, офисный, гибридный или разъездной?",
+        ],
     }
     alias_messages = {
         18: 15,
@@ -3686,7 +3759,7 @@ def _fallback_messages(
     dynamic_builders: Dict[int, Callable[[], List[str]]] = {
         28: lambda: [
             f"Мой текущий город — {location}, по зарплате ориентируюсь на {salary_value} рублей на руки.",
-            f"По локации подхожу: текущий город {location}, по деньгам рассматриваю около {salary_value} на руки.",
+            f"Сейчас я в {location}, по деньгам рассматриваю около {salary_value} на руки.",
             f"Текущая локация — {location}, по компенсации ориентируюсь на {salary_value} рублей.",
         ],
         29: lambda: [
@@ -3703,6 +3776,11 @@ def _fallback_messages(
             f"Я в Санкт-Петербурге, по зарплате ориентир {salary_value} рублей на руки в месяц.",
             f"Сейчас живу в Екатеринбурге, ожидания {salary_value} рублей на руки в месяц.",
             f"Я в Казани, по деньгам ориентируюсь на {salary_value} рублей в месяц на руки.",
+        ],
+        33: lambda: [
+            f"Сейчас живу во Владивостоке, по зарплате ориентируюсь на {salary_value} рублей на руки.",
+            f"Мой текущий город — Новосибирск, ожидания по деньгам около {salary_value} рублей на руки.",
+            f"Я сейчас в Калининграде, по компенсации ориентируюсь на {salary_value} рублей в месяц на руки.",
         ],
         37: lambda: [
             f"{int(round(((int(min_salary or 250000) + int(max_salary or max(int(min_salary or 250000), 350000))) / 2) / 10_000) * 10_000)} рублей на руки в месяц",
@@ -3748,15 +3826,23 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
     money_markers = ["аванс", "в долг", "перевед", "скинь", "деньг", "предоплат"]
     offer_markers = ["оффер", "трудоустро", "контракт подписан", "выхожу в", "новую компанию", "already employed"]
     flirt_markers = ["кофе", "встретим", "лично", "неформаль", "приятн", "свидан"]
+    legitimacy_markers = ["спам", "мошенн", "развод", "легитим", "корпоративн", "официальн"]
+    source_markers = ["откуда у вас мои данные", "где вы нашли мой профиль", "где нашли мой профиль", "откуда мой контакт"]
     conditions_markers = ["услови", "формат работы", "команд", "проект", "роль", "подробн", "детал"]
     company_info_markers = ["компан", "ваканси", "позици", "задач", "формат работы", "проект"]
     company_link_markers = ["какая компания", "как называется компания", "название компании", "ссылк", "сайт", "почитать"]
+    death_markers = ["смерт", "утрат", "похорон", "покойн", "не стало", "сконч"]
+    salary_markers = ["руб", "зарплат", "деньг", "оклад", "на руки", "в месяц", "net", "gross"]
+    format_question_markers = ["формат работы", "удален", "удалён", "офис", "гибрид", "разъезд", "на месте работодателя"]
+    aggression_markers = ["черт", "чёрт", "нах", "бред", "ерунд", "чуш", "задолб", "каким же"]
     if scenario_index == 20:
         return not _contains_any_substring(low, repeated_markers)
     if scenario_index == 21:
         return _contains_any_substring(low, repeated_markers)
     if scenario_index == 5:
         return _contains_any_substring(low, flirt_markers)
+    if scenario_index == 7:
+        return _contains_any_substring(low, legitimacy_markers) and not _contains_any_substring(low, source_markers)
     if scenario_index == 12:
         return _contains_any_substring(low, technical_markers)
     if scenario_index == 13:
@@ -3769,6 +3855,10 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return _contains_any_substring(low, company_info_markers)
     if scenario_index == 25:
         return _contains_any_substring(low, company_link_markers)
+    if scenario_index == 32:
+        return _contains_any_substring(low, death_markers) and not _contains_any_substring(low, salary_markers)
+    if scenario_index == 52:
+        return _contains_any_substring(low, format_question_markers) and not _contains_any_substring(low, aggression_markers)
     return True
 
 

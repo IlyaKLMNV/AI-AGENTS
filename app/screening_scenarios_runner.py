@@ -24,7 +24,7 @@ CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 REPORTS_DIR = ROOT / "tests" / "reports" / "screening_scenarios"
 
 DEFAULT_CSV_PATH = ROOT / "tests" / "fixtures" / "screening_scenarios.csv"
-DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
+DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm" / "std"
 DEFAULT_MESSAGES_PER_SCENARIO = 3
 
 GEN_MODEL = "gpt-4.1-mini"
