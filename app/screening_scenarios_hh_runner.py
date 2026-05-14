@@ -332,10 +332,12 @@ HH_OPEN_COMPANY_SCENARIOS = {22, 25}
 HH_LOCATION_FORMAT_SCENARIOS = {28, 29, 30, 31, 33, 34, 35, 51, 52}
 HH_DISABLED_SCENARIOS: set[int] = set()
 HH_STABLE_GENERATION_SCENARIOS = {
+    8,
     12,
     15,
     16,
     18,
+    27,
     32,
     28,
     29,
@@ -380,6 +382,41 @@ HH_SPECIAL_FIXTURES = {
     "cdm_hh_07.json",
     "cdm_hh_08.json",
 }
+
+RAW_WORK_FORMAT_IDS = ("ON_SITE", "REMOTE", "HYBRID", "FIELD_WORK")
+CONTEXT_LEAK_MARKERS = [
+    "ваше имя:",
+    "имя кандидата:",
+    "детали вакансии:",
+    "должность:",
+    "название компании:",
+    "формат работы:",
+    "локация:",
+    "описание вакансии:",
+    "зарплатная вилка:",
+    "приоритетные вопросы:",
+    "дополнительные вопросы:",
+    "[questions]",
+]
+RUDE_TONE_ALLOWED_SCENARIOS = {2, 8}
+UNWANTED_RUDENESS_MARKERS = [
+    "черт",
+    "чёрт",
+    "к черту",
+    "к чёрту",
+    "нах",
+    "хер",
+    "бред",
+    "ерунд",
+    "чуш",
+    "задолб",
+    "идиот",
+    "туп",
+    "урод",
+    "каким же",
+    "что за хрень",
+    "возьми",
+]
 
 
 def _has_any(hay: str, needles: List[str]) -> bool:
@@ -546,28 +583,6 @@ KW_WORK_FORMAT_NOT_READY = [
     "не рассматриваю переезд",
 ]
 
-S10_RF_ONLY_SCRIPT = (
-    "Спасибо за информацию. В настоящий момент рассматриваются только кандидаты, "
-    "проживающие на территории РФ. Прошу прощения за беспокойство. END"
-)
-S38_DEATH_LOSS_SCRIPT = "Прошу прощения за беспокойство. END"
-
-S7_LEGITIMACY_SCRIPT = "Прошу прощения за беспокойство. END"
-S14_SALARY_REJECTION_SCRIPT = (
-    "Понимаю ваши ожидания, но, к сожалению, бюджет на эту позицию не позволяет "
-    "их рассмотреть. Желаю вам удачи в дальнейших поисках! END"
-)
-PAUSE_SCRIPT_MARKERS = [
-    "готова вернуться к этому диалогу позже",
-    "корректно зафиксировать диалог в базе",
-    "ключевые ответы по вакансии",
-]
-FINISH_REPLY_MARKERS = [
-    "это вся информация, которая была мне нужна",
-    "передам ее внутреннему рекрутеру",
-    "свяжется с вами по поводу следующих шагов",
-]
-
 SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
     5: [
         "Вы очень приятная, я бы хотел пригласить вас на свидание.",
@@ -581,6 +596,11 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Если это реальное предложение, пришлите, пожалуйста, корпоративную почту.",
         "Нужно официальное подтверждение, что это не мошенники.",
     ],
+    8: [
+        "Описание вакансии выглядит слишком расплывчатым и непрофессиональным, не понимаю, что это за роль.",
+        "Процесс выглядит сомнительно: по описанию вообще непонятно, какие тут реальные задачи.",
+        "Вакансия сформулирована слишком слабо, поэтому впечатление от процесса сейчас скорее негативное.",
+    ],
     9: [
         "Я сейчас живу не в РФ.",
         "Сейчас нахожусь за границей, не в России.",
@@ -590,6 +610,11 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Расскажите, пожалуйста, подробнее про условия, формат работы и команду по этой вакансии.",
         "Можно коротко уточнить, какие условия и как устроен проект на этой роли?",
         "Подскажите, пожалуйста, подробнее про роль, формат работы и ключевые условия.",
+    ],
+    14: [
+        "Подскажите, пожалуйста, какие задачи и обязанности у этой позиции?",
+        "Можно подробнее рассказать про вакансию, проект и требования к кандидату?",
+        "Хотелось бы уточнить, в чем основная суть роли и какие задачи будут в работе.",
     ],
     16: [
         "Я уже принял оффер и выхожу в новую компанию, поэтому предложение больше не рассматриваю.",
@@ -610,6 +635,11 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Как называется компания? Можно ссылку на вакансию?",
         "Подскажите название компании и, если можно, сайт или ссылку.",
         "Какая компания и где можно почитать про вакансию?",
+    ],
+    27: [
+        "Сейчас живу в Москве, локация для меня подходит.",
+        "Я нахожусь в Москве и могу рассматривать эту позицию.",
+        "Проживаю в Москве, с локацией вакансии проблем нет.",
     ],
     32: [
         "После недавней утраты в семье я сейчас не готов обсуждать такие предложения.",
@@ -891,112 +921,6 @@ def _sanitize_additional_questions(raw_questions: str) -> str:
         return "-"
 
     return "\n".join(f"{idx}. {content}" for idx, content in enumerate(kept, start=1))
-
-
-QUESTION_MARKER_STOPWORDS = {
-    "есть",
-    "если",
-    "или",
-    "вас",
-    "вам",
-    "ваш",
-    "ваша",
-    "ваше",
-    "ваши",
-    "был",
-    "была",
-    "были",
-    "это",
-    "эти",
-    "этот",
-    "прямо",
-    "диалоге",
-    "пожалуйста",
-    "опыт",
-    "работы",
-    "работал",
-    "работали",
-    "насколько",
-    "уверенно",
-    "каком",
-    "какая",
-    "какие",
-    "городе",
-    "сейчас",
-    "сумму",
-    "рублях",
-    "руки",
-    "месяц",
-    "месяца",
-    "подходит",
-}
-
-QUESTION_MARKER_SPECIALS = [
-    "playwright",
-    "c#",
-    "php",
-    "symfony",
-    "sql",
-    "api",
-    "qa",
-    "ментор",
-    "команд",
-    "руковод",
-    "лид",
-    "bot",
-    "rpa",
-    "nlu",
-    "rag",
-    "llm",
-]
-
-
-def _extract_additional_questions(dialog_context_meta: Optional[Dict[str, Any]] = None) -> List[str]:
-    dialog_context_meta = dialog_context_meta or {}
-    raw_questions = str(dialog_context_meta.get("questions") or "")
-    questions: List[str] = []
-    for line in raw_questions.splitlines():
-        content = QUESTION_PREFIX_RE.sub("", str(line).strip()).strip()
-        if not content or content == "-":
-            continue
-        questions.append(content)
-    return questions
-
-
-def _question_markers_from_text(question: str) -> List[str]:
-    low = _normalize_text(question).lower()
-    if not low:
-        return []
-
-    markers: List[str] = []
-    for special in QUESTION_MARKER_SPECIALS:
-        if special in low:
-            markers.append(special)
-
-    for token in re.findall(r"[a-zа-яё#\+]{3,}", low):
-        if token in QUESTION_MARKER_STOPWORDS:
-            continue
-        if token in QUESTION_MARKER_SPECIALS:
-            continue
-        if token.isascii():
-            markers.append(token)
-            continue
-        if len(token) >= 5:
-            markers.append(token[:6])
-
-    unique: List[str] = []
-    seen = set()
-    for marker in markers:
-        if marker and marker not in seen:
-            unique.append(marker)
-            seen.add(marker)
-    return unique
-
-
-def _reply_mentions_question_markers(reply_low: str, markers: List[str]) -> bool:
-    if not markers:
-        return False
-    return any(marker in reply_low for marker in markers)
 
 
 def _has_death_loss_marker(text: str) -> bool:
@@ -1784,7 +1708,8 @@ def _trigger_requirement_text(s: Scenario) -> str:
     # 27 - город совпадает с вакансией или кандидат готов к переезду
     if idx == 27:
         return (
-            "В КАЖДОЙ реплике кандидат должен явно указать, он уже в городе вакансии ИЛИ готов переехать в город вакансии\n"
+            "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии.\n"
+            "Предпочтительно прямо назвать сам город вакансии и не использовать другие города.\n"
         )
 
     if idx == 28:
@@ -1885,6 +1810,14 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не используй вопросы про источник контакта вроде «откуда у вас мои данные», «где вы нашли мой профиль» и другие мягкие сомнения: это не тот триггер."
         )
 
+    if idx == 8 or "критика" in name or "процесса" in name:
+        parts.append(
+            "- Реплика должна содержать явную негативную оценку вакансии, описания, компании или процесса: расплывчато, сомнительно, непрофессионально, слабое описание, плохое впечатление."
+        )
+        parts.append(
+            "- Это не нейтральный запрос деталей. Кандидат именно критикует или выражает недовольство."
+        )
+
     if idx == 5 or "флирт" in name or "слишком лич" in name:
         parts.append(
             "- В каждой реплике кандидат должен переводить разговор в личную плоскость: делать личный комплимент, предлагать свидание, знакомство или романтическую встречу."
@@ -1907,6 +1840,13 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
         )
         parts.append(
             "- Запрещено просить писать код, решать задачи, требовать созвон или переводить разговор в конфликт."
+        )
+    if idx == 14 or "ваканси" in name or "задач" in name:
+        parts.append(
+            "- В каждой реплике кандидат должен спокойно и по-деловому спрашивать про вакансию, задачи, проект, требования или обязанности по роли."
+        )
+        parts.append(
+            "- Запрещено добавлять грубость, мат, сарказм, ультиматумы или негативные претензии к рекрутеру."
         )
 
     # 6. Неформальное/странное
@@ -1987,7 +1927,10 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
     # 27. Город совпадает или готовность к переезду
     if idx == 27 or ("город" in name and "ваканси" in name):
         parts.append(
-            "- Кандидат явно подтверждает, что локация подходит: он в городе вакансии ИЛИ готов переехать в город вакансии."
+            "- Кандидат явно подтверждает, что уже находится в городе вакансии."
+        )
+        parts.append(
+            "- Предпочтительно прямо называть сам город вакансии и не использовать другие города."
         )
 
     if idx == 28:
@@ -2260,6 +2203,11 @@ def generate_candidate_messages_for_scenario(
                 "Верни ответ строго в виде JSON-массива строк, без пояснений.\n"
             )
 
+        base_prompt += (
+            "\nНе добавляй грубость, мат, сарказм, резкие претензии или лишнюю негативность, если сценарий не требует именно агрессии или оскорблений.\n"
+            "Если сценарий нейтральный или информационный, кандидат должен звучать естественно, по-деловому и без лишней конфликтности.\n"
+        )
+
         if is_repeated:
             base_prompt += (
                 "\n\nСчитай, что эти {n} реплик - это сообщения одного и того же кандидата в ОДНОМ диалоге, "
@@ -2492,65 +2440,189 @@ def create_conversation_assistant(
 # -----------------------
 
 
-def evaluate_turn(
+def _case_evaluation_context(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "title": str(dialog_context_meta.get("title") or "").strip(),
+        "company_name": str(dialog_context_meta.get("company_name") or "").strip(),
+        "location": str(dialog_context_meta.get("location") or "").strip(),
+        "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
+        "work_format_ids": list(dialog_context_meta.get("work_format_ids") or []),
+        "vacancy_description": str(dialog_context_meta.get("vacancy_description") or "").strip(),
+        "vacancy_url": str(dialog_context_meta.get("vacancy_url") or "").strip(),
+        "min_salary": dialog_context_meta.get("min_salary"),
+        "max_salary": dialog_context_meta.get("max_salary"),
+        "salary": str(dialog_context_meta.get("salary") or "").strip(),
+        "questions": str(dialog_context_meta.get("questions") or "").strip(),
+    }
+
+
+def _safe_eval_score(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return 0
+    return 1 if parsed == 1 else 0
+
+
+def _evaluate_single_case(
     client: OpenAI,
     scenario: Scenario,
-    step: int,
-    candidate_message: str,
-    assistant_reply: str,
+    turns: List[Dict[str, Any]],
+    dialog_context_meta: Dict[str, Any],
     usage_bucket: Dict[str, int],
-    dialog_history: Optional[List[Dict[str, str]]] = None,
-) -> Tuple[int, str]:
-    eval_instruction = (
-        "Ты выступаешь в роли строгого QA-ревьюера для ассистента-рекрутера.\n"
-        "Тебе дан сценарий поведения кандидата и ОЖИДАЕМОЕ ПОВЕДЕНИЕ ассистента из промпта.\n"
-        "Твоя задача - проверить конкретный ответ ассистента на строгое соответствие ожидаемому поведению.\n\n"
-        "Очень важно: expected_behavior воспринимай как ТЗ.\n"
-        "Если ассистент делает что-то иначе, чем в expected_behavior, ставь score=0.\n\n"
-        "Если есть dialog_history, учитывай, что это один и тот же диалог.\n\n"
-        "Верни JSON:\n"
+) -> Dict[int, Tuple[int, str]]:
+    instruction = (
+        "You are a QA reviewer for a recruiting chat assistant.\n"
+        "Evaluate each step semantically against expected_behavior.\n"
+        "Be strict on behavior, but not brittle on wording.\n"
+        "Equivalent wording counts as pass.\n"
+        "Do not fail only because wording is different, clauses are reordered, or an otherwise correct fixed script is wrapped in quotation marks.\n"
+        "Each step is an independent one-turn case. Do not carry history between steps.\n"
+        "Step numbers do not imply first/second/third message in one conversation. Never infer repetition from step order in a single case.\n"
+        "If expected_behavior mentions first time versus repeated behavior, use only the content of the current step. Without explicit dialog history, treat the step as an independent sample.\n"
+        "For unintelligible-message scenarios in a single case, a valid pass is a clarification like 'не совсем поняла вас' followed by the next appropriate screening question. Do not require ending the dialogue unless the current candidate message itself explicitly indicates repetition.\n"
+        "Natural questions about readiness for office, hybrid, remote, field work, commuting, relocation, or working from the required location count as valid if the meaning matches.\n"
+        "REMOTE does not cancel location restrictions. If vacancy_context has a non-empty location or an explicit geo restriction in vacancy_description, a location-based refusal may still be valid.\n"
+        "For location-refusal scenarios, accept any semantically correct refusal with END; do not require the assistant to cite the exact same wording or the most specific geographic label unless expected_behavior explicitly demands it.\n"
+        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Fail only if it jumps to a different question.\n"
+        "Ignore awkwardness of synthetic candidate phrasing and judge only the assistant behavior.\n"
+        "Return JSON only in this format:\n"
         "{\n"
-        '  "score": 0 или 1,\n'
-        '  "comment": "краткое объяснение"\n'
-        "}\n\n"
-        "Правила:\n"
-        "1) Если expected_behavior требует прекратить общение - ассистент не должен задавать новые вопросы.\n"
-        "2) Если expected_behavior требует END - END обязан быть в ответе.\n"
-        "3) Допустимые эквивалентные завершения считать score=1:\n"
-        "   - END\n"
-        "   - Прошу прощения за беспокойство. END\n"
-        "   - Прошу прощения общение может вестись только в деловом формате. END\n"
-        "4) Никакого текста вне JSON.\n"
+        '  "turns": [\n'
+        '    {"step": 1, "score": 0 or 1, "comment": "short reason"}\n'
+        "  ]\n"
+        "}\n"
     )
-
-    payload_obj: Dict[str, Any] = {
-        "scenario_name": scenario.name,
-        "scenario_description": scenario.description,
-        "expected_behavior": scenario.expected_behavior,
-        "step": step,
-        "candidate_message": candidate_message,
-        "assistant_reply": assistant_reply,
+    payload_obj = {
+        "case_type": "single",
+        "vacancy_context": _case_evaluation_context(dialog_context_meta),
+        "turns": [
+            {
+                "step": int(turn.get("step") or 0),
+                "scenario_index": scenario.index,
+                "scenario_name": scenario.name,
+                "scenario_description": scenario.description,
+                "expected_behavior": scenario.expected_behavior,
+                "candidate_message": str(turn.get("candidate_message") or ""),
+                "assistant_reply": str(turn.get("assistant_reply") or ""),
+            }
+            for turn in turns
+        ],
     }
-    if dialog_history is not None:
-        payload_obj["dialog_history"] = dialog_history
-
-    payload = eval_instruction + "\n\n" + json.dumps(payload_obj, ensure_ascii=False)
-
+    payload = instruction + "\n\n" + json.dumps(payload_obj, ensure_ascii=False)
     response = client.responses.create(model=EVAL_MODEL, input=payload)
     _accumulate_usage(usage_bucket, getattr(response, "usage", None))
     text = (getattr(response, "output_text", "") or "").strip()
 
+    default_results = {
+        int(turn.get("step") or 0): (0, "Case judge missing result for this step.")
+        for turn in turns
+    }
     try:
         data = _safe_json_loads(text)
-        score = int(data.get("score", 0))
-        if score not in (0, 1):
-            score = 0
-        comment = str(data.get("comment", "")).strip() or "No comment."
+        for item in data.get("turns") or []:
+            step = int(item.get("step") or 0)
+            if step not in default_results:
+                continue
+            score = _safe_eval_score(item.get("score"))
+            comment = str(item.get("comment") or "").strip() or "No comment."
+            default_results[step] = (score, comment)
     except Exception:
-        score = 0
-        comment = f"Failed to parse eval output: {text[:200]}"
+        for step in list(default_results):
+            default_results[step] = (0, f"Failed to parse case eval output: {text[:200]}")
+    return default_results
 
-    return score, comment
+
+def _evaluate_chain_case(
+    client: OpenAI,
+    group: ScenarioGroup,
+    runs: List[Dict[str, Any]],
+    dialog_context_meta: Dict[str, Any],
+    usage_bucket: Dict[str, int],
+) -> Dict[Tuple[int, int], Tuple[int, str]]:
+    instruction = (
+        "You are a QA reviewer for a recruiting chat assistant.\n"
+        "Evaluate each run as one full conversation and score each step semantically against expected_behavior.\n"
+        "Be strict on behavior, but not brittle on wording.\n"
+        "Equivalent wording counts as pass.\n"
+        "Do not fail only because wording is different, clauses are reordered, or an otherwise correct fixed script is wrapped in quotation marks.\n"
+        "Use dialog_text and step order inside each run. Different runs are independent.\n"
+        "Natural questions about readiness for office, hybrid, remote, field work, commuting, relocation, or working from the required location count as valid if the meaning matches.\n"
+        "REMOTE does not cancel location restrictions. If vacancy_context has a non-empty location or an explicit geo restriction in vacancy_description, a location-based refusal may still be valid.\n"
+        "For location-refusal scenarios, accept any semantically correct refusal with END; do not require the assistant to cite the exact same wording or the most specific geographic label unless expected_behavior explicitly demands it.\n"
+        "For pause/resume cases, a resume phrase is not an answer. Pass only if the assistant returns to the last unresolved question.\n"
+        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Fail only if it jumps to a different question.\n"
+        "Ignore awkwardness of synthetic candidate phrasing and judge only the assistant behavior.\n"
+        "Return JSON only in this format:\n"
+        "{\n"
+        '  "runs": [\n'
+        '    {\n'
+        '      "run_index": 1,\n'
+        '      "turns": [\n'
+        '        {"step": 1, "score": 0 or 1, "comment": "short reason"}\n'
+        "      ]\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+    )
+    payload_obj = {
+        "case_type": "chain",
+        "group_id": group.group_id,
+        "vacancy_context": _case_evaluation_context(dialog_context_meta),
+        "runs": [
+            {
+                "run_index": int(run.get("run_index") or 0),
+                "dialog_text": str(run.get("dialog_text") or ""),
+                "turns": [
+                    {
+                        "step": int(turn.get("step") or 0),
+                        "scenario_index": int(turn.get("scenario_index") or 0),
+                        "scenario_name": str(turn.get("scenario_name") or ""),
+                        "scenario_description": next(
+                            (scenario.description for scenario in group.scenarios if scenario.index == int(turn.get("scenario_index") or 0)),
+                            "",
+                        ),
+                        "expected_behavior": next(
+                            (scenario.expected_behavior for scenario in group.scenarios if scenario.index == int(turn.get("scenario_index") or 0)),
+                            "",
+                        ),
+                        "candidate_message": str(turn.get("candidate_message") or ""),
+                        "assistant_reply": str(turn.get("assistant_reply") or ""),
+                    }
+                    for turn in run.get("turns") or []
+                ],
+            }
+            for run in runs
+        ],
+    }
+    payload = instruction + "\n\n" + json.dumps(payload_obj, ensure_ascii=False)
+    response = client.responses.create(model=EVAL_MODEL, input=payload)
+    _accumulate_usage(usage_bucket, getattr(response, "usage", None))
+    text = (getattr(response, "output_text", "") or "").strip()
+
+    default_results: Dict[Tuple[int, int], Tuple[int, str]] = {}
+    for run in runs:
+        run_index = int(run.get("run_index") or 0)
+        for turn in run.get("turns") or []:
+            step = int(turn.get("step") or 0)
+            default_results[(run_index, step)] = (0, "Case judge missing result for this step.")
+
+    try:
+        data = _safe_json_loads(text)
+        for run_item in data.get("runs") or []:
+            run_index = int(run_item.get("run_index") or 0)
+            for turn_item in run_item.get("turns") or []:
+                step = int(turn_item.get("step") or 0)
+                key = (run_index, step)
+                if key not in default_results:
+                    continue
+                score = _safe_eval_score(turn_item.get("score"))
+                comment = str(turn_item.get("comment") or "").strip() or "No comment."
+                default_results[key] = (score, comment)
+    except Exception:
+        for key in list(default_results):
+            default_results[key] = (0, f"Failed to parse case eval output: {text[:200]}")
+    return default_results
 
 
 def _reply_has_end_marker(text: str) -> bool:
@@ -2562,401 +2634,24 @@ def _contains_any_substring(text: str, parts: List[str]) -> bool:
     return any(part in low for part in parts)
 
 
-def _reveals_salary_context(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    values = [
-        str(dialog_context_meta.get("min_salary") or "").strip().lower(),
-        str(dialog_context_meta.get("max_salary") or "").strip().lower(),
-        str(dialog_context_meta.get("salary") or "").strip().lower(),
-    ]
-    return any(value and value in low for value in values)
+def _assistant_reply_has_context_leak(reply: str) -> bool:
+    low = _normalize_text(reply).lower()
+    return any(marker in low for marker in CONTEXT_LEAK_MARKERS)
 
 
-def _is_apology_end_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
+def _assistant_reply_has_raw_work_format_ids(reply: str) -> bool:
+    return bool(re.search(r"\b(?:ON_SITE|REMOTE|HYBRID|FIELD_WORK)\b", reply or "", flags=re.IGNORECASE))
+
+
+def _message_has_unwanted_rudeness(message: str, scenario_index: int) -> bool:
+    if scenario_index in RUDE_TONE_ALLOWED_SCENARIOS:
         return False
-    return (
-        low.strip() == "end"
-        or "\u043f\u0440\u043e\u0448\u0443 \u043f\u0440\u043e\u0449\u0435\u043d\u0438\u044f" in low
-        or "\u0438\u0437\u0432\u0438\u043d" in low
-        or "\u0431\u0435\u0441\u043f\u043e\u043a\u043e\u0439\u0441\u0442\u0432" in low
-        or "\u0434\u0435\u043b\u043e\u0432\u043e\u043c \u0444\u043e\u0440\u043c\u0430\u0442\u0435" in low
-    )
-
-
-def _normalize_reply_for_compare(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", (text or "").strip())
-    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized)
-    return normalized.lower()
-
-
-def _strip_wrapping_quotes(text: str) -> str:
-    value = (text or "").strip()
-    quote_pairs = [
-        ("«", "»"),
-        ('"', '"'),
-        ("“", "”"),
-        ("„", "“"),
-        ("'", "'"),
-    ]
-    changed = True
-    while value and changed:
-        changed = False
-        for left, right in quote_pairs:
-            if value.startswith(left) and value.endswith(right) and len(value) >= len(left) + len(right):
-                value = value[len(left) : len(value) - len(right)].strip()
-                changed = True
-                break
-    return value
-
-
-def _reply_matches_exact_script(reply: str, expected: str) -> bool:
-    return _normalize_reply_for_compare(_strip_wrapping_quotes(reply)) == _normalize_reply_for_compare(
-        _strip_wrapping_quotes(expected)
-    )
-
-
-def _asks_work_format_readiness(
-    reply: str,
-    dialog_context_meta: Dict[str, Any],
-) -> bool:
-    low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
-        return False
-
-    readiness_markers = [
-        "подходит",
-        "готов",
-        "готовы",
-        "сможете",
-        "удобно",
-        "комфортно",
-        "рассматриваете",
-        "рассматриваете ли",
-        "рассмотреть",
-        "есть ли возможность",
-        "есть возможность",
-        "возможность ездить",
-        "возможность бывать",
-        "возможность присутствовать",
-        "частичное присутствие",
-        "частичным присутствием",
-        "бывать в офисе",
-        "ездить в офис",
-        "присутствовать в офисе",
-        "такой формат",
-        "формат работы",
-    ]
-    format_markers = [
-        "офис",
-        "office",
-        "гибрид",
-        "hybrid",
-        "формат",
-    ]
-    hard_stop_markers = [
-        "к сожалению",
-        "не подойд",
-        "не подход",
-        "вынужден",
-        "вынуждены",
-        "фиксированная локация",
-        "важно находиться",
-    ]
-    readiness_context_markers = [
-        "работу в",
-        "работать в",
-        "работы",
-        "в офисе",
-        "в офис",
-        "в гибридном формате",
-        "гибридном формате",
-        "присутствием в офисе",
-    ]
-    work_format = str(dialog_context_meta.get("work_format") or "").strip()
-    canonical = _canonical_work_format(work_format)
-    if canonical == "office":
-        format_markers.append("офисный")
-    if canonical == "hybrid":
-        format_markers.append("гибридный")
-
-    return (
-        _contains_any_substring(low, readiness_markers)
-        and _contains_any_substring(low, format_markers)
-        and _contains_any_substring(low, readiness_context_markers)
-        and not _contains_any_substring(low, hard_stop_markers)
-    )
-
-
-def _asks_relocation_and_office_visit(
-    reply: str,
-    dialog_context_meta: Dict[str, Any],
-) -> bool:
-    low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
-        return False
-
-    location = str(dialog_context_meta.get("location") or "").strip()
-    location_markers = _location_keywords(location)
-    relocation_markers = [
-        "переезд",
-        "переезду",
-        "переехать",
-        "переехать в",
-        "релокац",
-        "перебраться",
-    ]
-    readiness_markers = [
-        "готов",
-        "готовы",
-        "сможете",
-        "рассматриваете",
-        "рассматриваете ли",
-        "есть ли возможность",
-        "есть возможность",
-        "возможность",
-        "получится",
-        "получится ли",
-        "удобно",
-        "комфортно",
-    ]
-    format_markers = [
-        "офис",
-        "office",
-        "в офис",
-        "в офисе",
-        "офисный",
-        "посещ",
-        "ездить",
-        "бывать",
-        "присутств",
-        "выходить",
-        "гибрид",
-        "hybrid",
-        "гибридный",
-        "гибридном формате",
-        "формат работы",
-    ]
-    canonical = _canonical_work_format(str(dialog_context_meta.get("work_format") or "").strip())
-    if canonical == "hybrid":
-        format_markers.extend(["работу в гибридном формате", "работать в гибридном формате"])
-    if canonical == "office":
-        format_markers.extend(["работу в офисе", "работать в офисе"])
-    has_location = True if not location_markers else _contains_any_substring(low, location_markers)
-
-    return (
-        has_location
-        and _contains_any_substring(low, relocation_markers)
-        and _contains_any_substring(low, readiness_markers)
-        and _contains_any_substring(low, format_markers)
-    )
-
-
-def _is_location_or_format_refusal_reply(
-    reply: str,
-    dialog_context_meta: Dict[str, Any],
-) -> bool:
-    low = (reply or "").lower()
-    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
-        return False
-
-    reason_markers = [
-        "к сожалению",
-        "важно находиться",
-        "фиксированная локация",
-        "предполагается",
-        "спасибо за уделенное время",
-        "спасибо за уделённое время",
-    ]
-    format_markers = [
-        "формат",
-        "локац",
-        "переезд",
-        "офис",
-        "office",
-        "гибрид",
-        "hybrid",
-    ]
-    work_format = str(dialog_context_meta.get("work_format") or "").strip()
-    canonical = _canonical_work_format(work_format)
-    if canonical == "office":
-        format_markers.append("офисный")
-    if canonical == "hybrid":
-        format_markers.append("гибридный")
-
-    return _contains_any_substring(low, reason_markers) and _contains_any_substring(low, format_markers)
-
-
-def _is_salary_expectation_question_reply(
-    reply: str,
-    dialog_context_meta: Dict[str, Any],
-) -> bool:
-    low = (reply or "").lower()
-    expectation_markers = [
-        "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
-        "\u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
-        "\u0441\u0443\u043c\u043c\u0443 \u0432 \u0440\u0443\u0431\u043b\u044f\u0445",
-        "\u0437\u0430\u0440\u043f\u043b\u0430\u0442\u043d\u044b\u0435 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u044f",
-        "\u043e\u0440\u0438\u0435\u043d\u0442\u0438\u0440\u0443\u0435\u0442\u0435\u0441\u044c",
-    ]
-    return (
-        not _reply_has_end_marker(reply)
-        and "?" in (reply or "")
-        and _contains_any_substring(low, expectation_markers)
-        and not _reveals_salary_context(reply, dialog_context_meta)
-    )
-
-
-def _is_salary_first_reply(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    explanation_markers = [
-        "\u0444\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0435 \u0446\u0438\u0444\u0440\u044b",
-        "\u0443\u0441\u043b\u043e\u0432\u0438\u044f \u043e\u0431\u0441\u0443\u0436\u0434\u0430\u044e\u0442\u0441\u044f",
-        "\u043f\u043e\u0441\u043b\u0435 \u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0441\u043e\u0431\u0435\u0441\u0435\u0434\u043e\u0432\u0430\u043d\u0438\u044f",
-        "\u043e\u0431\u0441\u0443\u0436\u0434\u0430\u044e\u0442\u0441\u044f \u0441 \u043a\u043e\u043c\u0430\u043d\u0434\u043e\u0439",
-        "\u0437\u0430\u0432\u0438\u0441\u044f\u0442 \u043e\u0442 \u0443\u0440\u043e\u0432\u043d\u044f",
-    ]
-    return _is_salary_expectation_question_reply(reply, dialog_context_meta) and _contains_any_substring(
-        low, explanation_markers
-    )
-
-
-def _is_bot_first_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    role_markers = [
-        "\u0432\u043d\u0435\u0448\u043d\u0438\u0439 \u0440\u0435\u043a\u0440\u0443\u0442\u0435\u0440",
-        "\u043f\u0435\u0440\u0432\u0438\u0447\u043d\u044b\u0439 \u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433",
-    ]
-    continue_markers = [
-        "\u043f\u043e\u0434\u0441\u043a\u0430\u0436\u0438\u0442\u0435",
-        "\u0443\u0442\u043e\u0447\u043d\u044e",
-        "\u043d\u0430 \u043a\u0430\u043a\u0443\u044e \u0441\u0443\u043c\u043c\u0443",
-        "\u0432 \u043a\u0430\u043a\u043e\u043c \u0433\u043e\u0440\u043e\u0434\u0435",
-    ]
-    return (
-        not _reply_has_end_marker(reply)
-        and _contains_any_substring(low, role_markers)
-        and ("?" in (reply or "") or _contains_any_substring(low, continue_markers))
-    )
-
-
-def _is_schedule_refusal_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    refusal_markers = [
-        "\u0437\u0430\u043d\u0438\u043c\u0430\u044e\u0441\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u0435\u0440\u0432\u0438\u0447\u043d\u044b\u043c \u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433\u043e\u043c",
-        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0441\u043e\u0437\u0432\u043e\u043d\u044b",
-        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0437\u0432\u043e\u043d\u043a\u0438",
-        "\u043d\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0430\u044e \u0432\u0441\u0442\u0440\u0435\u0447\u0438",
-    ]
-    bad_markers = [
-        "\u0441\u043e\u0437\u0432\u043e\u043d\u0438\u043c\u0441\u044f",
-        "\u043d\u0430\u0437\u043d\u0430\u0447\u0438\u043c",
-        "\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044e \u0432\u0440\u0435\u043c\u044f",
-    ]
-    return (
-        _contains_any_substring(low, refusal_markers)
-        and not _contains_any_substring(low, bad_markers)
-        and ("?" in (reply or "") or _reply_has_end_marker(reply))
-    )
+    low = _normalize_text(message).lower()
+    return any(marker in low for marker in UNWANTED_RUDENESS_MARKERS)
 
 
 def _question_mark_count(text: str) -> int:
     return (text or "").count("?")
-
-
-def _contains_markers(text: str, markers: List[str], minimum: int = 1) -> bool:
-    low = (text or "").lower()
-    matched = sum(1 for marker in markers if marker and marker in low)
-    return matched >= minimum
-
-
-def _looks_like_restarted_intro(reply: str) -> bool:
-    low = (reply or "").lower()
-    intro_markers = [
-        "меня зовут",
-        "я внешний рекрутер",
-        "обратила внимание",
-        "сейчас открыта вакансия",
-        "хотела бы предложить",
-    ]
-    return _contains_any_substring(low, intro_markers)
-
-
-def _is_monthly_rubles_clarification_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    clarify_markers = [
-        "уточните",
-        "укажите",
-        "подскажите",
-        "корректно ли я понимаю",
-        "правильно ли я понимаю",
-        "имеете в виду",
-        "речь о сумме",
-        "речь идет о сумме",
-        "речь идёт о сумме",
-        "речь идет о зарплате",
-        "речь идёт о зарплате",
-    ]
-    monthly_markers = [
-        "в рублях",
-        "на руки",
-        "в месяц",
-        "за месяц",
-    ]
-    return (
-        not _reply_has_end_marker(reply)
-        and "?" in (reply or "")
-        and _contains_any_substring(low, clarify_markers)
-        and _contains_any_substring(low, monthly_markers)
-    )
-
-
-def _is_finish_reply(reply: str) -> bool:
-    return (
-        _reply_has_end_marker(reply)
-        and "?" not in (reply or "")
-        and _contains_markers(reply, FINISH_REPLY_MARKERS, minimum=2)
-    )
-
-
-def _has_pause_script(reply: str) -> bool:
-    low = (reply or "").lower()
-    if _contains_markers(reply, PAUSE_SCRIPT_MARKERS, minimum=2):
-        return True
-    return _contains_any_substring(low, ["хорошо, договорились", "договорились"]) and _contains_any_substring(
-        low,
-        [
-            "вернуться к этому диалогу позже",
-            "вернуться позже",
-            "позже обсудим",
-            "когда вам будет удобно",
-        ],
-    )
-
-
-def _looks_like_direct_answer_request(reply: str) -> bool:
-    low = (reply or "").lower()
-    direct_markers = [
-        "прямо в диалоге",
-        "прямо здесь",
-        "ответить прямо",
-        "для корректной фиксации",
-        "для корректной фиксации данных",
-        "для корректной фиксации в базе",
-        "для внутреннего скрининга",
-        "для внутренней фиксации",
-        "для фиксации данных",
-        "важно получить ответ",
-        "важно получить ваш ответ",
-        "важно зафиксировать",
-        "прошу коротко подтвердить",
-        "кратко подтвердить",
-        "прошу уточнить",
-        "кратко описать",
-        "кратко рассказать",
-    ]
-    return _contains_any_substring(low, direct_markers)
 
 
 def enforce_prompt_v2_hard_rules(
@@ -2964,29 +2659,18 @@ def enforce_prompt_v2_hard_rules(
     score: int,
     comment: str,
 ) -> Tuple[int, str]:
+    if not str(assistant_reply or "").strip():
+        return 0, "Prompt v2 hard rule failed: assistant reply is empty."
+    if _question_mark_count(assistant_reply) > 2:
+        return 0, "Prompt v2 hard rule failed: assistant reply contains more than two question marks."
     if _reply_has_end_marker(assistant_reply) and "?" in (assistant_reply or ""):
         return 0, "Prompt v2 hard rule failed: END cannot be combined with questions."
+    if _assistant_reply_has_raw_work_format_ids(assistant_reply):
+        return 0, "Prompt v2 hard rule failed: assistant leaked raw work format ids."
+    if _assistant_reply_has_context_leak(assistant_reply):
+        return 0, "Prompt v2 hard rule failed: assistant leaked prompt context labels."
 
     return score, comment
-
-
-
-
-def enforce_legitimacy_rules(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-) -> Tuple[int, str]:
-    if scenario.index not in LEGITIMACY_SCENARIOS:
-        return score, comment
-
-    if _reply_matches_exact_script(assistant_reply, S7_LEGITIMACY_SCRIPT):
-        return 1, "Legitimacy rule passed: assistant uses the exact apology END script."
-    return 0, "Legitimacy rule failed: legitimacy/fraud scenario must use the exact apology END script."
-
-
-
 
 
 
@@ -2999,144 +2683,6 @@ def enforce_legitimacy_rules(
 # -----------------------
 # Запуск single и chain
 # -----------------------
-
-
-
-
-def _hh_reply_mentions_any_allowed_format(reply: str, format_ids: List[str]) -> bool:
-    low = (reply or "").lower()
-    marker_map = {
-        "ON_SITE": ["на месте работодателя", "в офисе", "офис", "офисный"],
-        "REMOTE": ["удаленно", "удалённо", "удаленный", "удалённый", "удаленный формат", "удалённый формат"],
-        "HYBRID": ["гибрид", "гибридный формат"],
-        "FIELD_WORK": ["разъезд", "разъездной формат"],
-    }
-    return any(_contains_any_substring(low, marker_map.get(fmt, [])) for fmt in format_ids)
-
-
-
-
-
-
-def _hh_location_refusal_reply(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
-        return False
-    location = str(dialog_context_meta.get("location") or "").strip().lower()
-    if "к сожалению" not in low:
-        return False
-    if not _contains_any_substring(
-        low,
-        [
-            "локац",
-            "по локационным требованиям",
-            "важна локация",
-            "важно находиться",
-        ],
-    ):
-        return False
-    if location and location not in low and "по локационным требованиям" not in low:
-        return False
-    return "спасибо за уделенное время" in low
-
-
-def _hh_format_refusal_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    return (
-        _reply_has_end_marker(reply)
-        and "?" not in (reply or "")
-        and "по формату работы" in low
-        and "не совпадает" in low
-    )
-
-
-def _hh_open_company_reply_valid(
-    reply: str,
-    dialog_context_meta: Dict[str, Any],
-    candidate_message: str = "",
-) -> bool:
-    low = (reply or "").lower()
-    company_name = (
-        str(dialog_context_meta.get("original_company_name") or "").strip()
-        or str(dialog_context_meta.get("company_name") or "").strip()
-    ).lower()
-    vacancy_url = str(dialog_context_meta.get("vacancy_url") or "").strip().lower()
-    if _reply_has_end_marker(reply) or "скрытый поиск" in low:
-        return False
-    if not company_name or not _is_real_company_name(company_name):
-        return False
-    if company_name not in low:
-        return False
-    if "ссыл" in (candidate_message or "").lower() and vacancy_url:
-        return vacancy_url in low or "уточню этот момент у коллег" in low
-    return True
-
-
-def _hh_general_info_reply_valid(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply):
-        return False
-    factual_markers = [
-        str(dialog_context_meta.get("company_name") or "").strip().lower(),
-        str(dialog_context_meta.get("title") or "").strip().lower(),
-        str(dialog_context_meta.get("location") or "").strip().lower(),
-        "удален",
-        "удалён",
-        "гибрид",
-        "разъезд",
-        "на месте работодателя",
-        "python",
-        "api",
-        "инфраструктур",
-        "команд",
-        "backend",
-        "рф",
-    ]
-    has_fact = any(marker and marker in low for marker in factual_markers)
-    asks_colleagues = _contains_any_substring(
-        low,
-        ["уточню у коллег", "уточню этот момент у коллег", "уточню детали у коллег", "вернусь с ответом"],
-    )
-    continues_screening = "?" in (reply or "") and _contains_any_substring(
-        low,
-        ["какую сумму", "в каком городе", "на какую сумму", "где сейчас", "городе сейчас"],
-    )
-    return (has_fact or asks_colleagues) and continues_screening
-
-
-def _hh_salary_rejection_reply(reply: str) -> bool:
-    low = (reply or "").lower()
-    if not _reply_has_end_marker(reply) or "?" in (reply or ""):
-        return False
-    if "бюджет" not in low:
-        return False
-    return _contains_any_substring(
-        low,
-        [
-            "к сожалению",
-            "не позволяет",
-            "не позволяет их рассмотреть",
-            "не позволяет рассмотреть",
-            "не сможем рассмотреть",
-            "не сможем их рассмотреть",
-        ],
-    )
-
-def enforce_incoherent_message_rules(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-) -> Tuple[int, str]:
-    if scenario.index != 3:
-        return score, comment
-
-    if _reply_has_end_marker(assistant_reply):
-        return 0, "HH incoherent-message rule failed: a single incoherent message should trigger one clarification, not END."
-
-    if "?" not in (assistant_reply or ""):
-        return 0, "HH incoherent-message rule failed: clarification reply should contain a follow-up question."
-    return 1, "HH incoherent-message rule passed: assistant asks for clarification on a single incoherent message."
 
 
 
@@ -3161,94 +2707,38 @@ def run_single_scenario(
     )
 
     turns: List[Dict[str, Any]] = []
-    scenario_score = 0
-    turns_total = 0
 
     for step_idx, cand_msg in enumerate(candidate_messages, start=1):
         reply = assistant.reply_one_turn(cand_msg)
         _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
 
-        score, comment = evaluate_turn(
-            client=client,
-            scenario=scenario,
-            step=step_idx,
-            candidate_message=cand_msg,
-            assistant_reply=reply,
-            usage_bucket=usage["evaluator"],
-            dialog_history=None,
-        )
-        score, comment = enforce_open_company_answer_for_s31(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_positive_handling_for_s32_s33(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_prompt_v2_turn_rules(
-            scenario=scenario,
-            candidate_message=cand_msg,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_legitimacy_rules(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-        )
-        score, comment = enforce_salary_normalization_rules(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_incoherent_message_rules(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-        )
-        score, comment = enforce_profile_reference_rules(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_pause_later_rules(
-            scenario=scenario,
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
-        )
-        score, comment = enforce_prompt_v2_hard_rules(
-            assistant_reply=reply,
-            score=score,
-            comment=comment,
-        )
-
         turn = {
             "step": step_idx,
             "candidate_message": cand_msg,
             "assistant_reply": reply,
-            "score": score,
-            "comment": comment,
         }
         turns.append(turn)
 
+    case_results = _evaluate_single_case(
+        client=client,
+        scenario=scenario,
+        turns=turns,
+        dialog_context_meta=dialog_context_meta,
+        usage_bucket=usage["evaluator"],
+    )
+    scenario_score = 0
+    turns_total = len(turns)
+    for turn in turns:
+        step = int(turn.get("step") or 0)
+        score, comment = case_results.get(step, (0, "Case judge missing result for this step."))
+        score, comment = enforce_prompt_v2_hard_rules(
+            assistant_reply=str(turn.get("assistant_reply") or ""),
+            score=score,
+            comment=comment,
+        )
+        turn["score"] = score
+        turn["comment"] = comment
         scenario_score += score
-        turns_total += 1
 
     case = {
         "case_id": f"S{scenario.index}",
@@ -3291,8 +2781,6 @@ def run_chain_group(
         candidate_variants[s.index] = msgs
 
     runs: List[Dict[str, Any]] = []
-    total_score = 0
-    total_turns = 0
 
     # messages_per_scenario здесь - количество прогонов диалога
     for run_idx in range(1, messages_per_scenario + 1):
@@ -3300,9 +2788,6 @@ def run_chain_group(
         dialog_history: List[Dict[str, str]] = []
         run_dialog: List[Dict[str, str]] = []
         turns: List[Dict[str, Any]] = []
-
-        run_score = 0
-        run_turns = 0
 
         if group.group_id == "chain_pause_resume_questions":
             for seed_msg in _hh_pause_questions_seed_messages(dialog_context_meta):
@@ -3317,89 +2802,14 @@ def run_chain_group(
             reply = assistant.reply_in_conversation(conv_id, cand_msg)
             _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
 
-            score, comment = evaluate_turn(
-                client=client,
-                scenario=s,
-                step=step_idx,
-                candidate_message=cand_msg,
-                assistant_reply=reply,
-                usage_bucket=usage["evaluator"],
-                dialog_history=dialog_history,
-            )
-            score, comment = enforce_open_company_answer_for_s31(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_positive_handling_for_s32_s33(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_prompt_v2_turn_rules(
-                scenario=s,
-                candidate_message=cand_msg,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_legitimacy_rules(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-            )
-            score, comment = enforce_salary_normalization_rules(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_incoherent_message_rules(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-            )
-            score, comment = enforce_profile_reference_rules(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_pause_later_rules(
-                scenario=s,
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
-            score, comment = enforce_prompt_v2_hard_rules(
-                assistant_reply=reply,
-                score=score,
-                comment=comment,
-            )
-
             turn = {
                 "step": step_idx,
                 "scenario_index": s.index,
                 "scenario_name": s.name,
                 "candidate_message": cand_msg,
                 "assistant_reply": reply,
-                "score": score,
-                "comment": comment,
             }
             turns.append(turn)
-
-            run_score += score
-            run_turns += 1
 
             run_dialog.append({"role": "candidate", "text": cand_msg})
             run_dialog.append({"role": "assistant", "text": reply})
@@ -3408,15 +2818,38 @@ def run_chain_group(
         runs.append(
             {
                 "run_index": run_idx,
-                "turns_total": run_turns,
-                "score_total": run_score,
-                "passed": run_score == run_turns,
                 "dialog": run_dialog,
                 "dialog_text": _dialog_to_text(run_dialog),
                 "turns": turns,
             }
         )
 
+    case_results = _evaluate_chain_case(
+        client=client,
+        group=group,
+        runs=runs,
+        dialog_context_meta=dialog_context_meta,
+        usage_bucket=usage["evaluator"],
+    )
+    total_score = 0
+    total_turns = 0
+    for run in runs:
+        run_score = 0
+        run_turns = len(run.get("turns") or [])
+        for turn in run.get("turns") or []:
+            key = (int(run.get("run_index") or 0), int(turn.get("step") or 0))
+            score, comment = case_results.get(key, (0, "Case judge missing result for this step."))
+            score, comment = enforce_prompt_v2_hard_rules(
+                assistant_reply=str(turn.get("assistant_reply") or ""),
+                score=score,
+                comment=comment,
+            )
+            turn["score"] = score
+            turn["comment"] = comment
+            run_score += score
+        run["turns_total"] = run_turns
+        run["score_total"] = run_score
+        run["passed"] = run_score == run_turns
         total_score += run_score
         total_turns += run_turns
 
@@ -3629,144 +3062,6 @@ def run_scenarios(
 
     return out_path
 
-
-def _hh_question_pair(dialog_context_meta: Dict[str, Any]) -> Tuple[str, str]:
-    questions = _extract_additional_questions(dialog_context_meta)
-    current = questions[0] if len(questions) > 0 else ""
-    second = questions[1] if len(questions) > 1 else ""
-    return current, second
-
-
-def _hh_direct_answer_request(reply: str) -> bool:
-    low = (reply or "").lower()
-    return _looks_like_direct_answer_request(reply) or _contains_any_substring(
-        low,
-        [
-            "чтобы корректно зафиксировать детали",
-            "для корректной фиксации деталей",
-            "для корректной фиксации информации",
-            "важно получить ответ прямо в чате",
-            "ответ прямо в этом чате",
-            "прошу ответить прямо здесь",
-        ],
-    )
-
-
-def _hh_has_pause_ack(reply: str) -> bool:
-    low = (reply or "").lower()
-    return _contains_any_substring(
-        low,
-        [
-            "хорошо, договорились",
-            "договорились",
-            "вернуться к этому диалогу позже",
-            "вернуться позже",
-            "позже обсудим",
-            "когда вам будет удобно",
-        ],
-    )
-
-
-def _hh_reply_asks_format_readiness(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
-        return False
-
-    format_ids = list(dialog_context_meta.get("work_format_ids") or [])
-    if not format_ids:
-        return False
-
-    if "FIELD_WORK" in format_ids and _contains_any_substring(
-        low,
-        ["разъезд", "выезжать", "выезды", "выездам", "выезжать по москве", "комфортно регулярно выезжать"],
-    ):
-        return True
-
-    readiness_markers = [
-        "подходит",
-        "готовы ли",
-        "готов ли",
-        "готова ли",
-        "рассматриваете ли",
-        "сможете ли",
-        "комфортно ли",
-        "насколько комфортно",
-        "насколько вам комфортен",
-        "комфортен формат",
-        "готовы работать",
-        "готовы к",
-    ]
-    if not _contains_any_substring(low, readiness_markers):
-        return False
-
-    # Allow natural HR phrasing for HH cases instead of requiring only a narrow
-    # set of exact format markers.
-    if "ON_SITE" in format_ids and _contains_any_substring(
-        low,
-        [
-            "на месте работодателя",
-            "формат работы на месте работодателя",
-            "работы на месте работодателя",
-            "работать на месте работодателя",
-            "в офисе",
-            "офисный формат",
-            "офис",
-        ],
-    ):
-        return True
-
-    if "HYBRID" in format_ids and _contains_any_substring(
-        low,
-        [
-            "гибрид",
-            "гибридный формат",
-            "гибридном формате",
-            "поездками в офис",
-            "приезжать в офис",
-            "регулярными поездками в офис",
-            "несколько дней в неделю",
-        ],
-    ):
-        return True
-
-    if "REMOTE" in format_ids and _contains_any_substring(
-        low,
-        [
-            "удаленн",
-            "удалённ",
-            "удаленный формат",
-            "удалённый формат",
-        ],
-    ):
-        return True
-
-    return _hh_reply_mentions_any_allowed_format(reply, format_ids)
-
-
-def _hh_reply_asks_location_or_relocation(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
-    low = (reply or "").lower()
-    if not low.strip() or _reply_has_end_marker(reply) or "?" not in (reply or ""):
-        return False
-    location = str(dialog_context_meta.get("location") or "").strip().lower()
-    location_markers = _location_keywords(location)
-    relocation_markers = [
-        "переезд",
-        "переехать",
-        "релокац",
-        "работать в",
-        "находиться в",
-        "готовы ли к переезду",
-        "сможете ли работать",
-        "готовы ли работать",
-        "приезжать",
-        "регулярно приезжать",
-        "бывать в",
-    ]
-    return _contains_any_substring(low, relocation_markers) and (
-        not location_markers or _contains_any_substring(low, location_markers)
-    )
-
-
 def _repeat_or_trim(messages: List[str], n: int) -> List[str]:
     if not messages or n <= 0:
         return []
@@ -3815,6 +3110,11 @@ def _fallback_messages(
             "Если честно, мне хотелось бы познакомиться с вами лично, а не только обсуждать вакансию.",
             "Вы мне понравились, давайте лучше поужинаем вместе и познакомимся поближе.",
         ],
+        8: [
+            "Описание вакансии выглядит слишком расплывчатым и непрофессиональным, не понимаю, что это за роль.",
+            "Процесс выглядит сомнительно: по описанию вообще непонятно, какие тут реальные задачи.",
+            "Вакансия сформулирована слишком слабо, поэтому впечатление от процесса сейчас скорее негативное.",
+        ],
         7: [
             "Вы мошенники?",
             "Подтвердите, пожалуйста, что это не спам и не развод.",
@@ -3849,6 +3149,11 @@ def _fallback_messages(
             "Как называется компания? Можно ссылку на вакансию?",
             "Подскажите название компании и, если можно, сайт или ссылку.",
             "Какая компания и где можно почитать про вакансию?",
+        ],
+        27: [
+            f"Сейчас живу в {location}, локация для меня подходит.",
+            f"Я нахожусь в {location} и могу рассматривать эту позицию.",
+            f"Проживаю в {location}, с локацией вакансии проблем нет.",
         ],
         31: [
             "Ни офисный, ни удаленный формат не рассматриваю. К переезду тоже не готов.",
@@ -3967,6 +3272,8 @@ def _fallback_messages(
 
 def _generated_message_matches_scenario_constraints(scenario_index: int, message: str) -> bool:
     low = _normalize_text(message).lower()
+    if _message_has_unwanted_rudeness(message, scenario_index):
+        return False
     repeated_markers = [
         "повтор",
         "снова",
@@ -3984,6 +3291,7 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
     offer_markers = ["оффер", "трудоустро", "контракт подписан", "выхожу в", "новую компанию", "already employed"]
     flirt_markers = ["кофе", "встретим", "лично", "неформаль", "приятн", "свидан"]
     legitimacy_markers = ["спам", "мошенн", "развод", "легитим", "корпоративн", "официальн"]
+    criticism_markers = ["расплыв", "сомн", "непрофессион", "слаб", "негатив", "ужасн", "странн", "плох", "непонятн"]
     source_markers = ["откуда у вас мои данные", "где вы нашли мой профиль", "где нашли мой профиль", "откуда мой контакт"]
     conditions_markers = ["услови", "формат работы", "команд", "проект", "роль", "подробн", "детал"]
     company_info_markers = ["компан", "ваканси", "позици", "задач", "формат работы", "проект"]
@@ -3991,7 +3299,7 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
     death_markers = ["смерт", "утрат", "похорон", "покойн", "не стало", "сконч"]
     salary_markers = ["руб", "зарплат", "деньг", "оклад", "на руки", "в месяц", "net", "gross"]
     format_question_markers = ["формат работы", "удален", "удалён", "офис", "гибрид", "разъезд", "на месте работодателя"]
-    aggression_markers = ["черт", "чёрт", "нах", "бред", "ерунд", "чуш", "задолб", "каким же"]
+    aggression_markers = UNWANTED_RUDENESS_MARKERS
     if scenario_index == 20:
         return not _contains_any_substring(low, repeated_markers)
     if scenario_index == 21:
@@ -4000,10 +3308,14 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return _contains_any_substring(low, flirt_markers)
     if scenario_index == 7:
         return _contains_any_substring(low, legitimacy_markers) and not _contains_any_substring(low, source_markers)
+    if scenario_index == 8:
+        return _contains_any_substring(low, criticism_markers)
     if scenario_index == 12:
         return _contains_any_substring(low, technical_markers)
     if scenario_index == 13:
         return _contains_any_substring(low, conditions_markers) and not _contains_any_substring(low, technical_markers)
+    if scenario_index == 14:
+        return _contains_any_substring(low, company_info_markers) and not _contains_any_substring(low, technical_markers)
     if scenario_index in (15, 18):
         return _contains_any_substring(low, schedule_markers) and not _contains_any_substring(low, money_markers)
     if scenario_index == 16:
@@ -4012,312 +3324,13 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return _contains_any_substring(low, company_info_markers)
     if scenario_index == 25:
         return _contains_any_substring(low, company_link_markers)
+    if scenario_index == 27:
+        return "москв" in low
     if scenario_index == 32:
         return _contains_any_substring(low, death_markers) and not _contains_any_substring(low, salary_markers)
     if scenario_index == 50:
         return _contains_any_substring(low, format_question_markers) and not _contains_any_substring(low, aggression_markers)
     return True
-
-
-def enforce_positive_handling_for_s32_s33(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    if scenario.index not in (26, 27):
-        return score, comment
-
-    low = (assistant_reply or "").lower()
-    if not low.strip():
-        return 0, f"Scenario {scenario.index} strict check failed: empty assistant reply."
-    if _reply_has_end_marker(assistant_reply) or _contains_any_substring(
-        low,
-        ["к сожалению", "не совпадает", "не подходит", "отказать", "заверш"],
-    ):
-        return 0, f"Scenario {scenario.index} strict check failed: assistant should continue, not reject."
-    if "?" not in (assistant_reply or "") and not _contains_any_substring(low, ["подскаж", "уточн", "рассматриваете"]):
-        return 0, f"Scenario {scenario.index} strict check failed: assistant should continue the dialogue."
-    return 1, f"Scenario {scenario.index} strict check passed: dialogue continues without refusal."
-
-
-def enforce_open_company_answer_for_s31(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    if scenario.index != 25:
-        return score, comment
-    expected_company = (
-        str(dialog_context_meta.get("original_company_name") or "").strip()
-        or str(dialog_context_meta.get("company_name") or "").strip()
-    )
-    if not _is_real_company_name(expected_company):
-        return score, comment
-    if expected_company.lower() not in (assistant_reply or "").lower():
-        return 0, f"Scenario 25 strict check failed: assistant reply must contain company name '{expected_company}'."
-    return 1, "Scenario 25 HH relaxed check passed: company name present; extra details may vary."
-
-
-def enforce_prompt_v2_turn_rules(
-    scenario: Scenario,
-    candidate_message: str,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    idx = scenario.index
-
-    if idx in (11, 23, 24):
-        if idx == 24:
-            return (
-                (1, "HH salary chain passed: third salary request ends the dialogue.")
-                if _is_apology_end_reply(assistant_reply)
-                else (0, "HH salary chain failed: scenario 24 must end with apology and END.")
-            )
-        if idx == 23:
-            return (
-                (1, "HH salary chain passed: repeated salary request asks only for expectations.")
-                if _is_salary_expectation_question_reply(assistant_reply, dialog_context_meta)
-                else (0, "HH salary chain failed: scenario 23 should ask only for salary expectations.")
-            )
-        return (
-            (1, "HH salary chain passed: first salary request uses the full salary script.")
-            if _is_salary_first_reply(assistant_reply, dialog_context_meta)
-            else (0, "HH salary chain failed: scenario 11 should use the full salary script.")
-        )
-
-    if idx in (20, 21):
-        if idx == 21:
-            return (
-                (1, "HH bot rule passed: repeated bot question ends the dialogue.")
-                if _is_apology_end_reply(assistant_reply)
-                else (0, "HH bot rule failed: repeated bot question must end the dialogue.")
-            )
-        return (
-            (1, "HH bot rule passed: first bot question explains the role and continues.")
-            if _is_bot_first_reply(assistant_reply)
-            else (0, "HH bot rule failed: first bot question should explain the role and continue.")
-        )
-
-    if idx in (15, 18):
-        return (
-            (1, "HH schedule rule passed: assistant refuses scheduling and keeps screening in chat.")
-            if _is_schedule_refusal_reply(assistant_reply)
-            else (0, "HH schedule rule failed: assistant should refuse scheduling.")
-        )
-
-    if idx in HH_OPEN_COMPANY_SCENARIOS:
-        return (
-            (1, "HH open-company rule passed: assistant shares company info from context and continues.")
-            if _hh_open_company_reply_valid(assistant_reply, dialog_context_meta, candidate_message)
-            else (0, "HH open-company rule failed: assistant should name the company from context without hidden-search wording.")
-        )
-
-    if idx in (13, 14):
-        reply_low = (assistant_reply or "").lower()
-        return (
-            (1, "HH vacancy-info rule passed: assistant answers with context facts and may defer missing details to colleagues.")
-            if _hh_general_info_reply_valid(assistant_reply, dialog_context_meta)
-            or (
-                "?" in (assistant_reply or "")
-                and _contains_any_substring(
-                    reply_low,
-                    [
-                        "уточню у коллег",
-                        "уточню этот момент у коллег",
-                        "уточню детали у коллег",
-                        "вернусь с ответом",
-                    ],
-                )
-            )
-            else (score, comment)
-        )
-
-    if idx in (28, 29, 51):
-        return (
-            (1, "HH location/format rule passed: assistant asks about readiness for the allowed format.")
-            if _hh_reply_asks_format_readiness(assistant_reply, dialog_context_meta)
-            else (0, f"HH location/format rule failed: scenario {idx} must ask about readiness for the allowed format.")
-        )
-
-    if idx == 30:
-        if _reply_has_end_marker(assistant_reply) or _hh_format_refusal_reply(assistant_reply):
-            return 0, "HH multi-format rule failed: assistant must not reject if another allowed format already fits."
-        return 1, "HH multi-format rule passed: assistant keeps the dialogue open once one allowed format fits."
-
-    if idx in (33, 35):
-        return (
-            (1, "HH location rule passed: assistant asks about relocation or working in the required location.")
-            if _hh_reply_asks_location_or_relocation(assistant_reply, dialog_context_meta)
-            else (0, f"HH location rule failed: scenario {idx} should ask about relocation or working in the required location.")
-        )
-
-    if idx == 31:
-        return (
-            (1, "HH format KO passed: assistant rejects when no allowed format fits.")
-            if _hh_format_refusal_reply(assistant_reply)
-            else (0, "HH format KO failed: scenario 31 must end with the format refusal script and END.")
-        )
-
-    if idx == 34:
-        return (
-            (1, "HH location KO passed: assistant rejects due to location restriction.")
-            if _hh_location_refusal_reply(assistant_reply, dialog_context_meta)
-            else (0, "HH location KO failed: scenario 34 must end with the location refusal script and END.")
-        )
-
-    if idx == 32:
-        return (
-            (1, "HH death/loss rule passed: exact END script is used.")
-            if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT)
-            else (0, "HH death/loss rule failed: scenario 32 must use the exact apology END script.")
-        )
-
-    return score, comment
-
-
-def enforce_salary_normalization_rules(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    idx = scenario.index
-    if idx not in SALARY_NORMALIZATION_SCENARIOS:
-        return score, comment
-
-    if idx == 38:
-        return (
-            (1, "HH salary rule passed: explicit monthly rubles above max triggers rejection.")
-            if _reply_matches_exact_script(assistant_reply, S14_SALARY_REJECTION_SCRIPT)
-            or _hh_salary_rejection_reply(assistant_reply)
-            or (
-                _reply_has_end_marker(assistant_reply)
-                and "?" not in (assistant_reply or "")
-                and _contains_any_substring((assistant_reply or "").lower(), ["бюджет", "не позволяет", "рассмотреть"])
-            )
-            else (0, "HH salary rule failed: explicit monthly salary above max must use the rejection script.")
-        )
-
-    if idx in (39, 40, 41, 42):
-        if _reply_has_end_marker(assistant_reply):
-            return 0, "HH salary rule failed: ambiguous salary must not end the dialogue."
-        if not _is_monthly_rubles_clarification_reply(assistant_reply):
-            return 0, "HH salary rule failed: ambiguous salary must trigger clarification in rubles per month."
-        return 1, "HH salary rule passed: assistant asks to clarify salary in rubles per month."
-
-    if _reply_has_end_marker(assistant_reply):
-        return 0, "HH salary rule failed: explicit monthly salary within range must not end the dialogue."
-    if _is_monthly_rubles_clarification_reply(assistant_reply):
-        return 0, "HH salary rule failed: explicit monthly salary in rubles per month must not trigger unnecessary clarification."
-    return 1, "HH salary rule passed: assistant accepts explicit monthly salary without unnecessary clarification."
-
-
-def enforce_profile_reference_rules(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    idx = scenario.index
-    if idx not in PROFILE_REFERENCE_SCENARIOS:
-        return score, comment
-
-    reply_low = (assistant_reply or "").lower()
-    questions = _extract_additional_questions(dialog_context_meta)
-    if idx == 43:
-        current_question = questions[0] if questions else ""
-        next_question = questions[1] if len(questions) > 1 else ""
-        current_markers = ["playwright", "api", "c#"]
-    else:
-        current_question = questions[1] if len(questions) > 1 else (questions[0] if questions else "")
-        next_question = questions[2] if len(questions) > 2 else ""
-        current_markers = ["ментор", "команд"]
-
-    next_markers = _question_markers_from_text(next_question)
-
-    if idx == 43 and current_markers and _reply_mentions_question_markers(reply_low, current_markers) and "?" in (assistant_reply or ""):
-        return 1, "Profile reference rule passed: assistant keeps the technical question open and continues collecting the answer in chat."
-
-    if _reply_has_end_marker(assistant_reply):
-        return 0, "Profile reference rule failed: reply must not end the dialogue."
-    if not _hh_direct_answer_request(assistant_reply):
-        return 0, "Profile reference rule failed: assistant should ask to answer directly in the dialogue."
-    if current_markers and not _reply_mentions_question_markers(reply_low, current_markers):
-        return 0, "Profile reference rule failed: assistant should repeat the current unanswered question."
-    if idx == 44 and next_markers and _reply_mentions_question_markers(reply_low, next_markers):
-        return 0, "Profile reference rule failed: assistant jumped to the next question instead of clarifying the current one."
-    return 1, "Profile reference rule passed: assistant keeps the current question open and asks for a direct answer in chat."
-
-
-def enforce_pause_later_rules(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    idx = scenario.index
-    if idx not in PAUSE_LATER_SCENARIOS and idx not in PAUSE_LATER_RESUME_SCENARIOS:
-        return score, comment
-
-    reply_low = (assistant_reply or "").lower()
-    questions = _extract_additional_questions(dialog_context_meta)
-    current_question = questions[0] if questions else ""
-    current_markers = _question_markers_from_text(current_question)
-    asks_priority = _contains_any_substring(reply_low, ["зарплат", "в каком городе", "город", "локац", "формат", "переезд"])
-    asks_format = _hh_reply_asks_format_readiness(assistant_reply, dialog_context_meta)
-    asks_location = _hh_reply_asks_location_or_relocation(assistant_reply, dialog_context_meta)
-
-    if idx == 45:
-        if _is_finish_reply(assistant_reply):
-            return 1, "Pause rule passed: once everything is already answered, the assistant finishes with END."
-        return 0, "Pause rule failed: when all answers are already collected, assistant must use the final finish script with END."
-
-    if idx == 46:
-        if _reply_has_end_marker(assistant_reply):
-            return 0, "Pause rule failed: assistant must not end the dialogue while priority answers are still missing."
-        if not _hh_has_pause_ack(assistant_reply):
-            return 0, "Pause rule failed: reply must acknowledge the pause request."
-        if not (asks_priority or asks_format or asks_location):
-            return 0, "Pause rule failed: before priority answers are complete, assistant must continue with a missing priority or format/location question."
-        return 1, "Pause rule passed: assistant acknowledges the pause and continues with the missing priority step."
-
-    if idx == 47:
-        if _reply_has_end_marker(assistant_reply):
-            return 0, "Pause resume rule failed: assistant should resume the pending priority step without END."
-        if not (asks_priority or asks_format or asks_location):
-            return 0, "Pause resume rule failed: assistant should resume with the pending priority or format/location question."
-        return 1, "Pause resume rule passed: assistant resumes the pending priority step."
-
-    if idx == 48:
-        if _reply_has_end_marker(assistant_reply):
-            return 0, "Pause rule failed: assistant must not end the dialogue while follow-up answers are still missing."
-        if not _hh_has_pause_ack(assistant_reply):
-            return 0, "Pause rule failed: reply must acknowledge the pause request."
-        if asks_format or asks_location:
-            return 1, "Pause rule passed: assistant acknowledges the pause and continues with the still-unclosed format/location step."
-        if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
-            return 1, "Pause rule passed: assistant acknowledges the pause and returns to the current unanswered question."
-        return 0, "Pause rule failed: after priority answers are complete, assistant must continue with the current unanswered follow-up or still-unclosed format/location step."
-
-    if idx == 49:
-        if _reply_has_end_marker(assistant_reply):
-            return 0, "Pause resume rule failed: assistant should resume the dialogue without END."
-        if asks_format or asks_location:
-            return 1, "Pause resume rule passed: assistant resumes the still-unclosed format/location step."
-        if current_markers and _reply_mentions_question_markers(reply_low, current_markers):
-            return 1, "Pause resume rule passed: assistant returns to the last unanswered follow-up question."
-        return 0, "Pause resume rule failed: assistant should resume with the last unanswered follow-up or still-unclosed format/location step."
-
-    return score, comment
 
 
 # -----------------------
