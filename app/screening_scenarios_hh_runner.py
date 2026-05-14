@@ -570,9 +570,9 @@ FINISH_REPLY_MARKERS = [
 
 SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
     5: [
-        "А может, лучше обсудим это за чашкой кофе, а не как рекрутер и кандидат?",
-        "Вы очень приятная, я бы хотел позвать вас на свидание.",
-        "Погнали сегодня вместе поклюем, я знаю одну очень хорошу шкварчевню, там отличный квас и пельмени",
+        "Вы очень приятная, я бы хотел пригласить вас на свидание.",
+        "Если честно, мне хотелось бы познакомиться с вами лично, а не только обсуждать вакансию.",
+        "Вы мне понравились, давайте лучше поужинаем вместе и познакомимся поближе.",
     ],
     7: [
         "Вы мошенники?",
@@ -1887,10 +1887,10 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
 
     if idx == 5 or "флирт" in name or "слишком лич" in name:
         parts.append(
-            "- В каждой реплике кандидат должен переводить разговор в личную плоскость: предлагать встретиться лично, пойти на свидание, обсудить всё неформально или делать личный комплимент."
+            "- В каждой реплике кандидат должен переводить разговор в личную плоскость: делать личный комплимент, предлагать свидание, знакомство или романтическую встречу."
         )
         parts.append(
-            "- Это не обычная просьба созвониться по вакансии: должен считываться именно флирт или слишком личная подача."
+            "- Это не обычная просьба созвониться или обсудить вакансию: должен считываться именно флирт или слишком личная подача."
         )
 
     if idx == 12 or "техничес" in name or "алгоритм" in name:
@@ -2591,8 +2591,30 @@ def _normalize_reply_for_compare(text: str) -> str:
     return normalized.lower()
 
 
+def _strip_wrapping_quotes(text: str) -> str:
+    value = (text or "").strip()
+    quote_pairs = [
+        ("«", "»"),
+        ('"', '"'),
+        ("“", "”"),
+        ("„", "“"),
+        ("'", "'"),
+    ]
+    changed = True
+    while value and changed:
+        changed = False
+        for left, right in quote_pairs:
+            if value.startswith(left) and value.endswith(right) and len(value) >= len(left) + len(right):
+                value = value[len(left) : len(value) - len(right)].strip()
+                changed = True
+                break
+    return value
+
+
 def _reply_matches_exact_script(reply: str, expected: str) -> bool:
-    return _normalize_reply_for_compare(reply) == _normalize_reply_for_compare(expected)
+    return _normalize_reply_for_compare(_strip_wrapping_quotes(reply)) == _normalize_reply_for_compare(
+        _strip_wrapping_quotes(expected)
+    )
 
 
 def _asks_work_format_readiness(
@@ -3651,6 +3673,9 @@ def _hh_reply_asks_format_readiness(reply: str, dialog_context_meta: Dict[str, A
         return False
 
     format_ids = list(dialog_context_meta.get("work_format_ids") or [])
+    if not format_ids:
+        return False
+
     if "FIELD_WORK" in format_ids and _contains_any_substring(
         low,
         ["разъезд", "выезжать", "выезды", "выездам", "выезжать по москве", "комфортно регулярно выезжать"],
@@ -3671,7 +3696,51 @@ def _hh_reply_asks_format_readiness(reply: str, dialog_context_meta: Dict[str, A
         "готовы работать",
         "готовы к",
     ]
-    return _contains_any_substring(low, readiness_markers) and _hh_reply_mentions_any_allowed_format(reply, format_ids)
+    if not _contains_any_substring(low, readiness_markers):
+        return False
+
+    # Allow natural HR phrasing for HH cases instead of requiring only a narrow
+    # set of exact format markers.
+    if "ON_SITE" in format_ids and _contains_any_substring(
+        low,
+        [
+            "на месте работодателя",
+            "формат работы на месте работодателя",
+            "работы на месте работодателя",
+            "работать на месте работодателя",
+            "в офисе",
+            "офисный формат",
+            "офис",
+        ],
+    ):
+        return True
+
+    if "HYBRID" in format_ids and _contains_any_substring(
+        low,
+        [
+            "гибрид",
+            "гибридный формат",
+            "гибридном формате",
+            "поездками в офис",
+            "приезжать в офис",
+            "регулярными поездками в офис",
+            "несколько дней в неделю",
+        ],
+    ):
+        return True
+
+    if "REMOTE" in format_ids and _contains_any_substring(
+        low,
+        [
+            "удаленн",
+            "удалённ",
+            "удаленный формат",
+            "удалённый формат",
+        ],
+    ):
+        return True
+
+    return _hh_reply_mentions_any_allowed_format(reply, format_ids)
 
 
 def _hh_reply_asks_location_or_relocation(reply: str, dialog_context_meta: Dict[str, Any]) -> bool:
@@ -3742,9 +3811,9 @@ def _fallback_messages(
 
     static_messages: Dict[int, List[str]] = {
         5: [
-            "А может, лучше обсудим это за чашкой кофе, а не как рекрутер и кандидат?",
-            "Вы очень приятная, давайте лучше встретимся лично, чем обсуждать вакансию здесь.",
-            "Стоп, а может лучше встретимся и обсудим это неформально?",
+            "Вы очень приятная, я бы хотел пригласить вас на свидание.",
+            "Если честно, мне хотелось бы познакомиться с вами лично, а не только обсуждать вакансию.",
+            "Вы мне понравились, давайте лучше поужинаем вместе и познакомимся поближе.",
         ],
         7: [
             "Вы мошенники?",
