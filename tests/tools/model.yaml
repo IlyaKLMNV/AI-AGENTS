@@ -30,7 +30,7 @@ screening_autofill:
 
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
-  prompt_version: 8
+  prompt_version: 9
   seed: 1234
 
 extractor_agent:

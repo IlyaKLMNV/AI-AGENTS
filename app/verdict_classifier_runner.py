@@ -27,6 +27,44 @@ DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
 DIALOGUE_GEN_MAX_RETRIES = 1
 
 VERDICTS = ("passed", "failed", "deadlock")
+RECRUITER_PREFIX = "Рекрутер:"
+CANDIDATE_PREFIX = "Кандидат:"
+FORBIDDEN_RECRUITER_STYLE_MARKERS = (
+    "вы подходите",
+    "отлично подходите",
+    "ваш профиль подходит",
+    "ваш профиль отлично подходит",
+    "подходите на эту позицию",
+    "подходите по опыту",
+    "зарплатный диапазон",
+    "наш бюджет",
+    "вилка",
+    "бюджет для этой позиции",
+)
+FOREIGN_LANGUAGE_DEADLOCK_BAD_MARKERS = (
+    "уровень английского",
+    "английского не ниже",
+    "необходимы базовые навыки английского",
+    "не подходит из-за английского",
+    "не подойдете из-за английского",
+)
+WRONG_CONTACT_DEADLOCK_REQUIRED_MARKERS = (
+    "не тот человек",
+    "ошиблись номером",
+    "ошиблись контактом",
+    "это не я",
+    "не по адресу",
+    "написали не тому человеку",
+)
+WRONG_CONTACT_DEADLOCK_BAD_MARKERS = (
+    "уже общались",
+    "уже проходил",
+    "повторно",
+    "не пишите мне повторно",
+    "второй раз",
+    "неактуален процесс",
+    "по этой вакансии уже",
+)
 
 
 def _log(quiet: bool, msg: str) -> None:
@@ -199,9 +237,9 @@ SCENARIO_HINTS_BY_VERDICT: Dict[str, List[str]] = {
     ],
     "deadlock": [
         # Deadlock = procedural break (legitimacy, wrong contact, can't proceed).
-        "Не тот человек/ошибка контакта/уже общались/не писать: диалог обрывается процедурно, END.",
+        "Не тот человек/ошибка контакта: кандидат говорит, что это не он или вы ошиблись контактом, скрининг по сути не начинается, END.",
         "Неразборчиво два раза: рекрутер один раз уточняет.",
-        "Иностранный язык так, что скрининг не идет: END.",        
+        "Иностранный язык так, что скрининг не идет: коммуникация срывается из-за языка, но не из-за явного несоответствия требованиям вакансии. END.",
         "Источник контакта/легитимность/корпоративная почта: кандидат требует подтверждений и не идет по скринингу, диалог заканчивается END.",
     ],
 }
@@ -262,6 +300,10 @@ class DialogueSynthesizer:
             "Требование к разметке истины:\n"
             "- Тебе будет задан TARGET_VERDICT: passed / failed / deadlock.\n"
             "- Сгенерируй диалог так, чтобы по смыслу он ОДНОЗНАЧНО соответствовал TARGET_VERDICT.\n"
+            "- После первой реплики рекрутера с END больше не должно быть никаких строк. END может стоять только в последней строке.\n"
+            "- Не раскрывай кандидату точную зарплатную вилку, бюджет, диапазон оплаты или другие внутренние пороги из контекста.\n"
+            "- Не используй фразы вроде 'вы подходите', 'вы отлично подходите', 'ваш профиль подходит'.\n"
+            "- Для passed заверши диалог нейтрально: поблагодари за ответы и скажи, что информация будет передана дальше, без оценки кандидата как подходящего.\n"
             "\n"
             "Определения:\n"
             "- passed: скрининг успешно завершен, рекрутер собрал ответы на приоритетные вопросы и вопросы из [questions], затем корректно завершил END.\n"
@@ -308,10 +350,13 @@ class DialogueSynthesizer:
             f"1) TARGET_VERDICT = {target_verdict}\n"
             f"2) SCENARIO_HINT = {scenario_hint}\n"
             f"3) Учитывай контекст вакансии и кандидата.\n"
-            "4) Для passed: обязательно пройди по приоритетам (зарплата/город) и нескольким вопросам из questions, затем END.\n"
-            "5) Для failed: сделай явный отказ по требованиям/KO или отказ кандидата по сути вакансии, затем END.\n"
-            "6) Для deadlock: сделай процедурный тупик (легитимность/не тот человек/не писать/неразборчиво повторно/и т.п.), затем END.\n"
-            "7) В итоге верни только диалог в нужном формате.\n"
+            "4) Для passed: обязательно пройди по приоритетам (зарплата/город) и нескольким вопросам из questions, затем нейтрально заверши END без фраз о том, что кандидат подходит.\n"
+            "5) Для failed: сделай явный отказ по требованиям/KO или отказ кандидата по сути вакансии, затем END, но без раскрытия вилки/бюджета числом.\n"
+            "6) Для deadlock: сделай процедурный тупик (легитимность/не тот человек/неразборчиво повторно/иностранный язык и т.п.), затем END.\n"
+            "7) Для deadlock не превращай сценарий в failed: не вводи явное несоответствие по опыту, зарплате, локации, английскому или дубликату процесса, если этого не требует TARGET_VERDICT.\n"
+            "8) Если SCENARIO_HINT про иностранный язык, причина остановки должна быть именно в срыве коммуникации, а не в том, что английский обязателен для роли.\n"
+            "9) Если SCENARIO_HINT про не тот человек/ошибку контакта, используй именно ошибку контакта ('это не я', 'ошиблись номером'), а не повторный процесс, неактуальность или просьбу не писать повторно.\n"
+            "10) В итоге верни только диалог в нужном формате.\n"
         )
 
     def synthesize_one(self, cdm: Dict[str, Any], target_verdict: str, scenario_hint: str, noise_level: int) -> str:
@@ -324,11 +369,12 @@ class DialogueSynthesizer:
         )
         self.last_usage = getattr(resp, "usage", None)
         text = (getattr(resp, "output_text", "") or "").strip()
-
-        # minimal sanitation: ensure it contains speaker tags and END
-        if "Рекрутер:" not in text or "Кандидат:" not in text or "END" not in text:
-            raise ValueError("dialogue generator returned invalid dialogue (missing tags or END)")
-        return text
+        return _validate_generated_dialogue(
+            text=text,
+            cdm=cdm,
+            target_verdict=target_verdict,
+            scenario_hint=scenario_hint,
+        )
 
 
 class VerdictClassifierRunner:
@@ -404,6 +450,100 @@ def _fmt_pct(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
     return f"{value:.2f}%"
+
+
+def _split_dialogue_lines(text: str) -> List[str]:
+    normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in normalized.split("\n") if line.strip()]
+
+    for idx, line in enumerate(lines):
+        if line.startswith(RECRUITER_PREFIX) and "END" in line:
+            return lines[: idx + 1]
+
+    return lines
+
+
+def _speaker_for_line(line: str) -> Optional[str]:
+    if line.startswith(RECRUITER_PREFIX):
+        return "recruiter"
+    if line.startswith(CANDIDATE_PREFIX):
+        return "candidate"
+    return None
+
+
+def _contains_context_salary_disclosure(lines: List[str], cdm: Dict[str, Any]) -> bool:
+    vacancy = cdm.get("vacancy") or {}
+    salary_from = vacancy.get("salary_range_from")
+    salary_to = vacancy.get("salary_range_to")
+    salary_raw = str(vacancy.get("salary") or "").strip().lower()
+
+    for line in lines:
+        if not line.startswith(RECRUITER_PREFIX):
+            continue
+        lower = line.lower()
+        if any(marker in lower for marker in FORBIDDEN_RECRUITER_STYLE_MARKERS):
+            return True
+        if salary_from is not None and salary_to is not None:
+            if str(salary_from) in line and str(salary_to) in line:
+                return True
+        if salary_raw and salary_raw in lower:
+            return True
+    return False
+
+
+def _validate_deadlock_dialogue(lines: List[str], scenario_hint: str) -> None:
+    hint_lower = scenario_hint.lower()
+    dialogue_lower = "\n".join(lines).lower()
+    candidate_lines = [line for line in lines if line.startswith(CANDIDATE_PREFIX)]
+
+    if "иностранный язык" in hint_lower:
+        if any(marker in dialogue_lower for marker in FOREIGN_LANGUAGE_DEADLOCK_BAD_MARKERS):
+            raise ValueError("foreign-language deadlock turned into explicit failed by English-requirement wording")
+        if not any(re.search(r"[A-Za-z]{4,}", line) for line in candidate_lines):
+            raise ValueError("foreign-language deadlock dialogue is missing substantive foreign-language candidate turns")
+
+    if "не тот человек" in hint_lower or "ошибка контакта" in hint_lower:
+        if not any(marker in dialogue_lower for marker in WRONG_CONTACT_DEADLOCK_REQUIRED_MARKERS):
+            raise ValueError("wrong-contact deadlock dialogue is missing explicit wrong-contact markers")
+        if any(marker in dialogue_lower for marker in WRONG_CONTACT_DEADLOCK_BAD_MARKERS):
+            raise ValueError("wrong-contact deadlock dialogue drifted into duplicate-process/failed semantics")
+
+
+def _validate_generated_dialogue(
+    text: str,
+    cdm: Dict[str, Any],
+    target_verdict: str,
+    scenario_hint: str,
+) -> str:
+    lines = _split_dialogue_lines(text)
+    if not lines:
+        raise ValueError("dialogue generator returned empty dialogue")
+
+    previous_speaker: Optional[str] = None
+    for idx, line in enumerate(lines):
+        speaker = _speaker_for_line(line)
+        if speaker is None:
+            raise ValueError("dialogue generator returned a line without speaker prefix")
+        if idx == 0 and speaker != "recruiter":
+            raise ValueError("dialogue must start with recruiter")
+        if previous_speaker == speaker:
+            raise ValueError("dialogue must strictly alternate recruiter and candidate turns")
+        previous_speaker = speaker
+
+    if not lines[-1].startswith(RECRUITER_PREFIX):
+        raise ValueError("dialogue must end with recruiter line")
+    if "END" not in lines[-1]:
+        raise ValueError("dialogue must end with recruiter line containing END")
+    if any("END" in line for line in lines[:-1]):
+        raise ValueError("END may appear only in the final recruiter line")
+
+    if _contains_context_salary_disclosure(lines, cdm):
+        raise ValueError("dialogue exposes salary range/budget or uses forbidden recruiter fit-markers")
+
+    if target_verdict == "deadlock":
+        _validate_deadlock_dialogue(lines, scenario_hint)
+
+    return "\n".join(lines)
 
 
 def run_verdict_classifier_dataset(
