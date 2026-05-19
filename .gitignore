@@ -13,6 +13,8 @@ tests/fixtures/*
 !tests/fixtures/screening_scenarios_hh.csv
 !tests/fixtures/cdm/
 !tests/fixtures/cdm/**
+!tests/fixtures/verdict_classifier/
+!tests/fixtures/verdict_classifier/**
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/

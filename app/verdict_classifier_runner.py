@@ -19,6 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
+DEFAULT_REGRESSION_CASES_PATH = ROOT / "tests" / "fixtures" / "verdict_classifier" / "regression_cases.json"
 REPORTS_DIR = ROOT / "tests" / "reports" / "verdict_classifier"
 
 DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
@@ -58,6 +59,51 @@ def load_cdm_files(cdm_dir: pathlib.Path, cdm_count: Optional[int]) -> List[path
         paths = paths[:cdm_count]
 
     return paths
+
+
+def load_regression_cases(path: pathlib.Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Regression cases file not found: {path}")
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("Regression cases JSON must be a list")
+
+    cases: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for idx, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Regression case #{idx} must be an object")
+
+        case_id = str(item.get("id") or "").strip()
+        target_verdict = str(item.get("target_verdict") or "").strip().lower()
+        dialogue = str(item.get("dialogue") or "").strip()
+
+        if not case_id:
+            raise ValueError(f"Regression case #{idx} is missing required field 'id'")
+        if case_id in seen_ids:
+            raise ValueError(f"Duplicate regression case id: {case_id}")
+        if target_verdict not in VERDICTS:
+            raise ValueError(
+                f"Regression case '{case_id}' has invalid target_verdict={target_verdict!r}; "
+                f"expected one of {VERDICTS}"
+            )
+        if not dialogue:
+            raise ValueError(f"Regression case '{case_id}' is missing required field 'dialogue'")
+
+        seen_ids.add(case_id)
+        cases.append(
+            {
+                "id": case_id,
+                "target_verdict": target_verdict,
+                "scenario": str(item.get("scenario") or "").strip(),
+                "description": str(item.get("description") or "").strip(),
+                "dialogue": dialogue,
+            }
+        )
+
+    return cases
 
 
 def _blank_usage() -> Dict[str, int]:
@@ -165,6 +211,7 @@ def _pick_scenario_hint(
     rng: random.Random,
     scenario_mode: str,
     scenario_count_per_verdict: Optional[int],
+    cycle_state: Optional[Dict[str, int]] = None,
 ) -> str:
     pool = SCENARIO_HINTS_BY_VERDICT.get(target_verdict) or ["Нормальный диалог."]
     if scenario_count_per_verdict is not None and scenario_count_per_verdict > 0:
@@ -175,10 +222,11 @@ def _pick_scenario_hint(
     if scenario_mode == "random":
         return rng.choice(pool)
 
-    # cycle: deterministic-ish rotation
-    # We emulate cycling by using rng but on a running counter outside would be cleaner;
-    # here we just use a stable selection based on rng state.
-    idx = rng.randrange(0, len(pool))
+    if cycle_state is None:
+        cycle_state = {}
+    idx = int(cycle_state.get(target_verdict, 0))
+    cycle_state[target_verdict] = idx + 1
+    idx = idx % len(pool)
     return pool[idx]
 
 
@@ -293,6 +341,7 @@ class VerdictClassifierRunner:
         if prompt_version:
             self.prompt["version"] = str(prompt_version)
         self.last_usage: Any = None
+        self.last_raw_output: str = ""
 
     def classify(self, dialogue: str) -> str:
         resp = self.client.responses.create(
@@ -301,6 +350,7 @@ class VerdictClassifierRunner:
         )
         self.last_usage = getattr(resp, "usage", None)
         raw = (getattr(resp, "output_text", "") or "").strip()
+        self.last_raw_output = raw
         verdict = _extract_verdict(raw)
         if verdict not in VERDICTS:
             raise ValueError(f"verdict_classifier returned invalid output: {raw!r}")
@@ -341,10 +391,20 @@ def _per_class_accuracy(cases: List[Dict[str, Any]]) -> Dict[str, float]:
     return out
 
 
+def _counts_by_key(cases: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+    return dict(Counter(str(c.get(key)) for c in cases if c.get(key) in VERDICTS))
+
+
+def _mismatches_from_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [c for c in cases if not c.get("match")]
+
+
 def run_verdict_classifier_dataset(
     cdm_dir: pathlib.Path,
     cdm_count: Optional[int],
     dialogs_per_verdict: int,
+    mode: str,
+    regression_cases_path: Optional[pathlib.Path],
     prompt_id: Optional[str],
     prompt_version: Optional[str],
     dialogue_gen_model: Optional[str],
@@ -357,8 +417,10 @@ def run_verdict_classifier_dataset(
 ) -> pathlib.Path:
     ensure_dirs()
 
-    if dialogs_per_verdict <= 0:
-        raise ValueError("--dialogs-per-verdict must be > 0")
+    if mode not in ("synthetic", "regression", "all"):
+        raise ValueError("--mode must be synthetic|regression|all")
+    if mode in ("synthetic", "all") and dialogs_per_verdict <= 0:
+        raise ValueError("--dialogs-per-verdict must be > 0 when mode includes synthetic")
     if scenario_mode not in ("random", "cycle"):
         raise ValueError("--scenario-mode must be random|cycle")
     if max_attempts_multiplier <= 0:
@@ -392,14 +454,22 @@ def run_verdict_classifier_dataset(
     final_seed = seed if seed is not None else cfg_seed
     final_gen_model = dialogue_gen_model or cfg_gen_model or DEFAULT_DIALOGUE_GEN_MODEL
 
-    cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count)
-    if not cdm_paths:
-        raise FileNotFoundError("No CDM fixtures resolved")
+    cdm_paths: List[pathlib.Path] = []
+    if mode in ("synthetic", "all"):
+        cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count)
+        if not cdm_paths:
+            raise FileNotFoundError("No CDM fixtures resolved")
+
+    final_regression_cases_path = regression_cases_path or DEFAULT_REGRESSION_CASES_PATH
+    regression_cases: List[Dict[str, Any]] = []
+    if mode in ("regression", "all"):
+        regression_cases = load_regression_cases(final_regression_cases_path)
 
     _log(
         quiet,
         "[init] "
         f"run_id={run_id} "
+        f"mode={mode} "
         f"cdm_count={cdm_count} "
         f"dialogs_per_verdict={dialogs_per_verdict} "
         f"noise_level={noise_level} "
@@ -416,134 +486,201 @@ def run_verdict_classifier_dataset(
         f"dialogue_gen_model={final_gen_model} "
         f"dialogue_gen_retries={DIALOGUE_GEN_MAX_RETRIES}",
     )
+    if mode in ("regression", "all"):
+        _log(
+            quiet,
+            "[init] "
+            f"regression_cases_path={final_regression_cases_path} "
+            f"regression_cases={len(regression_cases)}",
+        )
 
     rng = random.Random(final_seed)
-    synth = DialogueSynthesizer(model=final_gen_model, seed=final_seed)
+    cycle_state: Dict[str, int] = {}
+    synth = DialogueSynthesizer(model=final_gen_model, seed=final_seed) if mode in ("synthetic", "all") else None
     clf = VerdictClassifierRunner(prompt_id=final_pid, prompt_version=final_pver)
 
     token_usage_total = _blank_usage()
+    token_usage = {
+        "dialogue_generator": _blank_usage(),
+        "verdict_classifier": _blank_usage(),
+    }
 
     cases: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
 
-    # sequential fill: passed -> failed -> deadlock
-    for target in VERDICTS:
-        need = dialogs_per_verdict
-        attempts_limit = dialogs_per_verdict * max_attempts_multiplier
+    if mode in ("synthetic", "all"):
+        assert synth is not None
+        # sequential fill: passed -> failed -> deadlock
+        for target in VERDICTS:
+            need = dialogs_per_verdict
+            attempts_limit = dialogs_per_verdict * max_attempts_multiplier
 
-        # don't show attempts as "progress"
-        _log(quiet, f"[target] {target}: need={need}")
+            _log(quiet, f"[target] {target}: need={need}")
 
-        got = 0
-        attempts = 0
+            got = 0
+            attempts = 0
 
-        while got < need and attempts < attempts_limit:
-            attempts += 1
+            while got < need and attempts < attempts_limit:
+                attempts += 1
 
-            cdm_path = rng.choice(cdm_paths)
-            cdm = load_json(cdm_path)
-            vacancy = cdm.get("vacancy") or {}
-            v_title = vacancy.get("title")
-            v_company = vacancy.get("company_name")
+                cdm_path = rng.choice(cdm_paths)
+                cdm = load_json(cdm_path)
+                vacancy = cdm.get("vacancy") or {}
+                v_title = vacancy.get("title")
+                v_company = vacancy.get("company_name")
 
-            scenario_hint = _pick_scenario_hint(
-                target_verdict=target,
-                rng=rng,
-                scenario_mode=scenario_mode,
-                scenario_count_per_verdict=scenario_count_per_verdict,
-            )
+                scenario_hint = _pick_scenario_hint(
+                    target_verdict=target,
+                    rng=rng,
+                    scenario_mode=scenario_mode,
+                    scenario_count_per_verdict=scenario_count_per_verdict,
+                    cycle_state=cycle_state,
+                )
 
-            # neutral "generation" log (no fake progress numbers)
-            _log(
-                quiet,
-                f"  [gen] target={target} cdm={cdm_path.name} title={v_title} company={v_company}",
-            )
-            _log(quiet, f"    [hint] {scenario_hint}")
+                _log(
+                    quiet,
+                    f"  [gen] target={target} cdm={cdm_path.name} title={v_title} company={v_company}",
+                )
+                _log(quiet, f"    [hint] {scenario_hint}")
 
-            dialogue = ""
+                dialogue = ""
+                predicted: Optional[str] = None
+                raw_error: Optional[str] = None
+
+                try:
+                    dialogue = synth.synthesize_one(
+                        cdm=cdm,
+                        target_verdict=target,
+                        scenario_hint=scenario_hint,
+                        noise_level=noise_level,
+                    )
+                    _accumulate_usage(token_usage_total, synth.last_usage)
+                    _accumulate_usage(token_usage["dialogue_generator"], synth.last_usage)
+
+                    predicted = clf.classify(dialogue)
+                    _accumulate_usage(token_usage_total, clf.last_usage)
+                    _accumulate_usage(token_usage["verdict_classifier"], clf.last_usage)
+
+                except Exception as e:
+                    raw_error = repr(e)
+
+                if raw_error is not None:
+                    errors.append(
+                        {
+                            "case_type": "synthetic",
+                            "target_verdict": target,
+                            "cdm_file": str(cdm_path),
+                            "scenario_hint": scenario_hint,
+                            "error": raw_error,
+                        }
+                    )
+                    _log(quiet, f"    [err] {raw_error}")
+                    continue
+
+                assert predicted is not None
+
+                case = {
+                    "case_type": "synthetic",
+                    "target_verdict": target,
+                    "predicted_verdict": predicted,
+                    "match": bool(predicted == target),
+                    "scenario_hint": scenario_hint,
+                    "cdm_file": str(cdm_path),
+                    "vacancy_title": v_title,
+                    "vacancy_company": v_company,
+                    "dialogue": dialogue,
+                    "raw_classifier_output": clf.last_raw_output,
+                }
+                cases.append(case)
+
+                got += 1
+                _log(quiet, f"    [ok] case={got}/{need} predicted={predicted} match={case['match']}")
+
+            if got < need:
+                raise RuntimeError(
+                    f"Could not generate enough dialogues for target={target}: got {got}/{need} "
+                    f"within {attempts_limit} attempts. Consider increasing --max-attempts-multiplier "
+                    f"or adjusting scenario hints."
+                )
+
+    if mode in ("regression", "all"):
+        _log(quiet, f"[regression] cases={len(regression_cases)}")
+        for idx, regression_case in enumerate(regression_cases, start=1):
             predicted: Optional[str] = None
             raw_error: Optional[str] = None
 
             try:
-                dialogue = synth.synthesize_one(
-                    cdm=cdm,
-                    target_verdict=target,
-                    scenario_hint=scenario_hint,
-                    noise_level=noise_level,
-                )
-                _accumulate_usage(token_usage_total, synth.last_usage)
-
-                predicted = clf.classify(dialogue)
+                predicted = clf.classify(regression_case["dialogue"])
                 _accumulate_usage(token_usage_total, clf.last_usage)
-
+                _accumulate_usage(token_usage["verdict_classifier"], clf.last_usage)
             except Exception as e:
                 raw_error = repr(e)
 
             if raw_error is not None:
                 errors.append(
                     {
-                        "target_verdict": target,
-                        "cdm_file": str(cdm_path),
-                        "scenario_hint": scenario_hint,
+                        "case_type": "regression",
+                        "id": regression_case["id"],
+                        "target_verdict": regression_case["target_verdict"],
+                        "scenario": regression_case["scenario"],
                         "error": raw_error,
                     }
                 )
-                _log(quiet, f"    [err] {raw_error}")
+                _log(quiet, f"  [reg-err] id={regression_case['id']} error={raw_error}")
                 continue
 
             assert predicted is not None
 
             case = {
-                "target_verdict": target,               # ground truth label (what we intended to generate)
-                "predicted_verdict": predicted,         # what verdict_classifier returned
-                "match": bool(predicted == target),
-                "scenario_hint": scenario_hint,
-                "cdm_file": str(cdm_path),
-                "vacancy_title": v_title,
-                "vacancy_company": v_company,
-                "dialogue": dialogue,
-                "raw_classifier_output": predicted,
+                "case_type": "regression",
+                "id": regression_case["id"],
+                "description": regression_case["description"],
+                "scenario": regression_case["scenario"],
+                "target_verdict": regression_case["target_verdict"],
+                "predicted_verdict": predicted,
+                "match": bool(predicted == regression_case["target_verdict"]),
+                "dialogue": regression_case["dialogue"],
+                "raw_classifier_output": clf.last_raw_output,
             }
             cases.append(case)
-
-            got += 1
-            # real progress: saved cases count
-            _log(quiet, f"    [ok] case={got}/{need} predicted={predicted} match={case['match']}")
-
-        if got < need:
-            # hard fail: we didn't manage to generate enough cases for this target verdict
-            raise RuntimeError(
-                f"Could not generate enough dialogues for target={target}: got {got}/{need} "
-                f"within {attempts_limit} attempts. Consider increasing --max-attempts-multiplier "
-                f"or adjusting scenario hints."
+            _log(
+                quiet,
+                f"  [reg-ok] case={idx}/{len(regression_cases)} id={regression_case['id']} "
+                f"predicted={predicted} match={case['match']}",
             )
 
-    # Metrics
-    accuracy = _accuracy(cases)
-    per_class_acc = _per_class_accuracy(cases)
-    cm = _confusion_matrix(cases)
+    synthetic_cases = [c for c in cases if c.get("case_type") == "synthetic"]
+    regression_result_cases = [c for c in cases if c.get("case_type") == "regression"]
 
-    counts_target = Counter(c.get("target_verdict") for c in cases)
-    counts_pred = Counter(c.get("predicted_verdict") for c in cases)
+    overall_accuracy = _accuracy(cases)
+    synthetic_accuracy = _accuracy(synthetic_cases)
+    regression_accuracy = _accuracy(regression_result_cases)
 
-    mismatches = [
-        {
-            "target_verdict": c["target_verdict"],
-            "predicted_verdict": c["predicted_verdict"],
-            "scenario_hint": c["scenario_hint"],
-            "cdm_file": c["cdm_file"],
-            "vacancy_title": c["vacancy_title"],
-            "vacancy_company": c["vacancy_company"],
-            "dialogue": c["dialogue"],
-        }
-        for c in cases
-        if not c.get("match")
-    ]
+    overall_per_class_acc = _per_class_accuracy(cases)
+    synthetic_per_class_acc = _per_class_accuracy(synthetic_cases)
+    regression_per_class_acc = _per_class_accuracy(regression_result_cases)
+
+    overall_cm = _confusion_matrix(cases)
+    synthetic_cm = _confusion_matrix(synthetic_cases)
+    regression_cm = _confusion_matrix(regression_result_cases)
+
+    overall_counts_target = _counts_by_key(cases, "target_verdict")
+    overall_counts_pred = _counts_by_key(cases, "predicted_verdict")
+    synthetic_counts_target = _counts_by_key(synthetic_cases, "target_verdict")
+    synthetic_counts_pred = _counts_by_key(synthetic_cases, "predicted_verdict")
+    regression_counts_target = _counts_by_key(regression_result_cases, "target_verdict")
+    regression_counts_pred = _counts_by_key(regression_result_cases, "predicted_verdict")
+
+    mismatches = _mismatches_from_cases(cases)
+    synthetic_mismatches = _mismatches_from_cases(synthetic_cases)
+    regression_mismatches = _mismatches_from_cases(regression_result_cases)
 
     report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
+        "mode": mode,
         "cdm_count": cdm_count,
+        "regression_cases_path": str(final_regression_cases_path) if mode in ("regression", "all") else None,
         "dialogs_per_verdict": dialogs_per_verdict,
         "noise_level": noise_level,
         "seed": final_seed,
@@ -554,18 +691,37 @@ def run_verdict_classifier_dataset(
         "dialogue_gen_model": final_gen_model,
         "dialogue_gen_retries": DIALOGUE_GEN_MAX_RETRIES,
         "token_usage_total": token_usage_total,
+        "token_usage": token_usage,
         "summary": {
             "total_cases": len(cases),
-            "accuracy": accuracy,  # aka pass_rate, but this is accuracy vs target labels
-            "per_class_accuracy": per_class_acc,
-            "counts_target": dict(counts_target),
-            "counts_predicted": dict(counts_pred),
-            "confusion_matrix": cm,
+            "synthetic_cases_total": len(synthetic_cases),
+            "regression_cases_total": len(regression_result_cases),
+            "accuracy": overall_accuracy,
+            "overall_accuracy": overall_accuracy,
+            "synthetic_accuracy": synthetic_accuracy,
+            "regression_accuracy": regression_accuracy,
+            "per_class_accuracy": overall_per_class_acc,
+            "overall_per_class_accuracy": overall_per_class_acc,
+            "synthetic_per_class_accuracy": synthetic_per_class_acc,
+            "regression_per_class_accuracy": regression_per_class_acc,
+            "counts_target": overall_counts_target,
+            "counts_predicted": overall_counts_pred,
+            "synthetic_counts_target": synthetic_counts_target,
+            "synthetic_counts_predicted": synthetic_counts_pred,
+            "regression_counts_target": regression_counts_target,
+            "regression_counts_predicted": regression_counts_pred,
+            "confusion_matrix": overall_cm,
+            "synthetic_confusion_matrix": synthetic_cm,
+            "regression_confusion_matrix": regression_cm,
             "errors_count": len(errors),
             "mismatches_count": len(mismatches),
+            "synthetic_mismatches_count": len(synthetic_mismatches),
+            "regression_mismatches_count": len(regression_mismatches),
         },
         "cases": cases,
         "mismatches": mismatches,
+        "synthetic_mismatches": synthetic_mismatches,
+        "regression_mismatches": regression_mismatches,
         "errors": errors,
     }
 
@@ -576,7 +732,9 @@ def run_verdict_classifier_dataset(
         quiet,
         "[summary] "
         f"total_cases={len(cases)} "
-        f"accuracy={accuracy:.2f}% "
+        f"overall_accuracy={overall_accuracy:.2f}% "
+        f"synthetic_accuracy={synthetic_accuracy:.2f}% "
+        f"regression_accuracy={regression_accuracy:.2f}% "
         f"mismatches={len(mismatches)} "
         f"errors={len(errors)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
@@ -590,6 +748,13 @@ def run_verdict_classifier_dataset(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate dialogues with known TARGET verdicts and evaluate verdict_classifier prompt accuracy."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="synthetic",
+        choices=["synthetic", "regression", "all"],
+        help="Dataset mode: generate synthetic cases, run manual regression cases, or both.",
     )
     parser.add_argument(
         "--cdm-dir",
@@ -606,8 +771,14 @@ def main() -> None:
     parser.add_argument(
         "--dialogs-per-verdict",
         type=int,
-        required=True,
-        help="How many dialogues to generate for EACH target verdict (passed, failed, deadlock).",
+        default=0,
+        help="How many dialogues to generate for EACH target verdict in synthetic mode.",
+    )
+    parser.add_argument(
+        "--regression-cases",
+        type=str,
+        default=str(DEFAULT_REGRESSION_CASES_PATH),
+        help=f"Path to manual regression cases JSON (default: {DEFAULT_REGRESSION_CASES_PATH}).",
     )
     parser.add_argument(
         "--noise-level",
@@ -670,6 +841,8 @@ def main() -> None:
         cdm_dir=pathlib.Path(args.cdm_dir),
         cdm_count=args.cdm_count,
         dialogs_per_verdict=int(args.dialogs_per_verdict),
+        mode=str(args.mode),
+        regression_cases_path=pathlib.Path(args.regression_cases) if args.regression_cases else None,
         prompt_id=args.prompt_id,
         prompt_version=args.prompt_version,
         dialogue_gen_model=args.dialogue_gen_model,
