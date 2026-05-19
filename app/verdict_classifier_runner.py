@@ -21,6 +21,7 @@ CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
 DEFAULT_REGRESSION_CASES_PATH = ROOT / "tests" / "fixtures" / "verdict_classifier" / "regression_cases.json"
 REPORTS_DIR = ROOT / "tests" / "reports" / "verdict_classifier"
+TEXT_FILE_ENCODING = "utf-8-sig"
 
 DEFAULT_DIALOGUE_GEN_MODEL = "gpt-4.1-mini"
 DIALOGUE_GEN_MAX_RETRIES = 1
@@ -38,11 +39,11 @@ def ensure_dirs() -> None:
 
 
 def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return yaml.safe_load(path.read_text(encoding=TEXT_FILE_ENCODING))
 
 
 def load_json(path: pathlib.Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding=TEXT_FILE_ENCODING))
 
 
 def load_cdm_files(cdm_dir: pathlib.Path, cdm_count: Optional[int]) -> List[pathlib.Path]:
@@ -65,7 +66,7 @@ def load_regression_cases(path: pathlib.Path) -> List[Dict[str, Any]]:
     if not path.is_file():
         raise FileNotFoundError(f"Regression cases file not found: {path}")
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(path.read_text(encoding=TEXT_FILE_ENCODING))
     if not isinstance(raw, list):
         raise ValueError("Regression cases JSON must be a list")
 
@@ -367,24 +368,24 @@ def _confusion_matrix(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
     return m
 
 
-def _accuracy(cases: List[Dict[str, Any]]) -> float:
+def _accuracy(cases: List[Dict[str, Any]]) -> Optional[float]:
     if not cases:
-        return 0.0
+        return None
     ok = sum(1 for c in cases if c.get("target_verdict") == c.get("predicted_verdict"))
     return round(ok / len(cases) * 100.0, 2)
 
 
-def _per_class_accuracy(cases: List[Dict[str, Any]]) -> Dict[str, float]:
+def _per_class_accuracy(cases: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
     by_t: Dict[str, List[Dict[str, Any]]] = {v: [] for v in VERDICTS}
     for c in cases:
         t = c.get("target_verdict")
         if t in by_t:
             by_t[t].append(c)
 
-    out: Dict[str, float] = {}
+    out: Dict[str, Optional[float]] = {}
     for v, items in by_t.items():
         if not items:
-            out[v] = 0.0
+            out[v] = None
             continue
         ok = sum(1 for c in items if c.get("target_verdict") == c.get("predicted_verdict"))
         out[v] = round(ok / len(items) * 100.0, 2)
@@ -397,6 +398,12 @@ def _counts_by_key(cases: List[Dict[str, Any]], key: str) -> Dict[str, int]:
 
 def _mismatches_from_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [c for c in cases if not c.get("match")]
+
+
+def _fmt_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}%"
 
 
 def run_verdict_classifier_dataset(
@@ -726,15 +733,15 @@ def run_verdict_classifier_dataset(
     }
 
     out_path = REPORTS_DIR / f"verdict_classifier_report_{run_id}.json"
-    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding=TEXT_FILE_ENCODING)
 
     _log(
         quiet,
         "[summary] "
         f"total_cases={len(cases)} "
-        f"overall_accuracy={overall_accuracy:.2f}% "
-        f"synthetic_accuracy={synthetic_accuracy:.2f}% "
-        f"regression_accuracy={regression_accuracy:.2f}% "
+        f"overall_accuracy={_fmt_pct(overall_accuracy)} "
+        f"synthetic_accuracy={_fmt_pct(synthetic_accuracy)} "
+        f"regression_accuracy={_fmt_pct(regression_accuracy)} "
         f"mismatches={len(mismatches)} "
         f"errors={len(errors)} "
         f"tokens_total={token_usage_total.get('total_tokens', 0)}",
