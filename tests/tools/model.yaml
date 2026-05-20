@@ -10,7 +10,7 @@ first_touch_event_invite:
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
-  prompt_version: 9
+  prompt_version: 10
   seed: 1234
 
 screening_assistant:

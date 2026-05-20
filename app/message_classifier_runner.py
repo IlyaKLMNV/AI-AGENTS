@@ -1,4 +1,4 @@
-# message_classifier_runner.py
+﻿# message_classifier_runner.py
 from __future__ import annotations
 
 import argparse
@@ -295,19 +295,68 @@ SCENARIO_HINTS_BY_CLASS: Dict[str, List[str]] = {
         "Кандидат заинтересован и просит детали по вилке/графику/формату.",
         "Кандидат задает релевантный вопрос по вакансии (обязанности/команда/стек) и выражает интерес.",
         "Кандидат просит прислать описание и подтверждает интерес.",
-        "Кандидат первым вопросом спрашивают сколько платят (в грубой форме).",
-        "Кандидат задает вопросы по вакансии (обязанности/команда/стек).",
-        "Смешанное намерение: вроде интересно, но много сомнений и условий, не дает ясного 'да'.",
-
+        "Кандидат просит ссылку на вакансию или название компании в нейтральной деловой форме.",
+        "Кандидат задает спокойные вопросы по вакансии (обязанности/команда/стек) без негатива и подозрений.",
+        "Кандидат вежливо спрашивает про формат работы и ориентир по компенсации.",
     ],
     "human_needed": [
         "Раздражение/жалоба/негатив к рекрутеру или компании.",
         "Странные или нерелевантные вопросы (не про вакансию), либо непонятный смысл.",
         "Просьба денег/мошеннический оттенок/обвинения, без явного согласия или отказа.",
         "Сообщение не по теме или набор слов/эмодзи так, что смысл неясен.",
-        "Резкий вопрос откуда нашли контакт.",
+        "Резкий или подозрительный вопрос о том, откуда взяли контакт.",
+        "Нейтральные вопросы про вакансию здесь запрещены: нужен явный дискомфорт, подозрение или странность.",
     ],
 }
+
+
+def _class_generation_requirements(target_class: str) -> str:
+    if target_class == "reason_farewell":
+        return (
+            "Hard requirements for reason_farewell:\n"
+            "- Include an explicit refusal.\n"
+            "- Use direct refusal wording such as 'не рассматриваю', 'вынужден отказаться', 'мне не подходит', 'не готов'.\n"
+            "- Add one short concrete reason: salary, format, location, stack, sphere, accepted offer, already working, not looking now.\n"
+            "- Do not ask questions.\n"
+            "- Do not sound ambiguous."
+        )
+    if target_class == "no_reason":
+        return (
+            "Hard requirements for no_reason:\n"
+            "- Include an explicit refusal.\n"
+            "- Do not include any reason or explanation.\n"
+            "- Do not mention salary, format, location, stack, current work, offers, or plans.\n"
+            "- Do not ask questions.\n"
+            "- Keep it short and final."
+        )
+    if target_class == "acceptance":
+        return (
+            "Hard requirements for acceptance:\n"
+            "- Show clear interest in the vacancy.\n"
+            "- You may ask 1-2 normal business questions.\n"
+            "- Allowed topics: company name, vacancy link, vacancy description, team, responsibilities, stack, format, schedule, salary range, next steps.\n"
+            "- Tone must be calm, constructive, and business-like.\n"
+            "- No irritation, suspicion, accusations, contact-source complaints, money requests, nonsense, or hostility.\n"
+            "- Do not make it mixed or borderline."
+        )
+    return (
+        "Hard requirements for human_needed:\n"
+        "- The message must require manual handling because it is suspicious, irritated, accusatory, confusing, scam-like, off-topic, or strange.\n"
+        "- It must not look like a normal vacancy clarification.\n"
+        "- Avoid ordinary neutral questions about company name, vacancy link, salary, format, team, stack, or responsibilities unless they are clearly framed with irritation or suspicion.\n"
+        "- If using contact-source theme, make it sharp or uncomfortable, not neutral.\n"
+        "- Do not turn it into a clean refusal."
+    )
+
+
+def _class_generation_examples(target_class: str) -> str:
+    if target_class == "reason_farewell":
+        return "Example: Спасибо за предложение, но мне не подходит офисный формат, поэтому вынужден отказаться."
+    if target_class == "no_reason":
+        return "Example: Спасибо, но вынужден отказаться."
+    if target_class == "acceptance":
+        return "Example: Здравствуйте! Вакансия выглядит интересно. Можете прислать ссылку на описание позиции и уточнить формат работы?"
+    return "Example: Откуда вы вообще взяли мой контакт и почему пишете без предупреждения?"
 
 
 def _pick_scenario_hint(
@@ -348,26 +397,22 @@ class CandidateMessageSynthesizer:
 
     def _instruction(self) -> str:
         return (
-            "Ты генерируешь одно входящее сообщение кандидата на русском языке после первого касания рекрутера.\n"
-            "Тебе будет задан TARGET_CLASS: reason_farewell / no_reason / acceptance / human_needed.\n"
-            "Сгенерируй ОДНО сообщение кандидата так, чтобы оно ОДНОЗНАЧНО соответствовало TARGET_CLASS.\n\n"
-            "Правила:\n"
-            "- Верни только текст сообщения кандидата, без JSON, без кавычек, без markdown, без пояснений.\n"
-            "- Не упоминай названия классов.\n"
-            "- Сообщение должно быть естественным и реалистичным.\n"
-            "- Избегай двусмысленности: message_classifier должен легко распознать класс.\n\n"
-            "Критерии:\n"
-            "- acceptance: явный интерес/согласие, можно с релевантными вопросами по вакансии (вилка, график, формат, обязанности, команда, условия).\n"
-            "- no_reason: отказ без причины.\n"
-            "- reason_farewell: отказ с причиной.\n"
-            "- human_needed: сомнения/смешанное намерение/негатив/странные вопросы/неясный смысл.\n"
+            "You generate exactly ONE candidate message in Russian after the recruiter's first outreach.\n"
+            "You will be given TARGET_CLASS: reason_farewell / no_reason / acceptance / human_needed.\n"
+            "Generate one message so that it is unambiguous and easy to classify into TARGET_CLASS.\n\n"
+            "Global rules:\n"
+            "- Return only the candidate message text.\n"
+            "- No JSON, no quotes, no markdown, no explanations.\n"
+            "- Keep the message realistic and concise.\n"
+            "- Avoid class ambiguity.\n"
+            "- Follow the class-specific hard requirements exactly.\n"
         )
 
     def _payload(self, cdm: Dict[str, Any], target_class: str, scenario_hint: str, noise_level: int) -> str:
         vacancy = cdm.get("vacancy") or {}
         candidate = cdm.get("candidate") or {}
 
-        noise_desc = ["низкий", "средний", "высокий"][min(max(noise_level, 0), 2)]
+        noise_desc = ["low", "medium", "high"][min(max(noise_level, 0), 2)]
 
         ctx = {
             "TARGET_CLASS": target_class,
@@ -398,12 +443,11 @@ class CandidateMessageSynthesizer:
             "INSTRUCTIONS:\n"
             f"1) TARGET_CLASS = {target_class}\n"
             f"2) SCENARIO_HINT = {scenario_hint}\n"
-            "3) Учитывай контекст вакансии (название, формат, город, вилка) чтобы сообщение выглядело правдоподобно.\n"
-            "4) Для acceptance: добавь 1-2 релевантных вопроса по вакансии или предложи созвон.\n"
-            "5) Для no_reason: отказ без объяснений.\n"
-            "6) Для reason_farewell: отказ и краткая причина.\n"
-            "7) Для human_needed: сделай сомнения/негатив/нерелевантность или неясный смысл.\n"
-            "8) Верни только одно сообщение кандидата.\n"
+            "3) Use vacancy context only to make the message realistic.\n"
+            "4) Do not invent a different class than requested.\n"
+            f"5) {_class_generation_requirements(target_class)}\n"
+            f"6) {_class_generation_examples(target_class)}\n"
+            "7) Return exactly one message in Russian.\n"
         )
 
     def synthesize_one(self, cdm: Dict[str, Any], target_class: str, scenario_hint: str, noise_level: int) -> str:
@@ -420,7 +464,6 @@ class CandidateMessageSynthesizer:
         if not text or len(text) < 1:
             raise ValueError("message generator returned empty message")
         if "\n" in text.strip():
-            # Keep it strict: one message, no multi-line dialogues.
             text = " ".join(x.strip() for x in text.splitlines() if x.strip()).strip()
         return text
 

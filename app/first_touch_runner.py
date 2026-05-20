@@ -321,7 +321,7 @@ def _required_keys(expected_facts_report: Dict[str, str], include_salary: bool) 
 
 
 def _load_cdm_paths(cdm_dir: pathlib.Path) -> List[pathlib.Path]:
-    all_files = _load_cdm_paths(cdm_dir)
+    all_files = sorted(cdm_dir.glob("*.json"))
     if not all_files and (cdm_dir / "std").is_dir():
         all_files = sorted((cdm_dir / "std").glob("*.json"))
     return all_files
@@ -463,19 +463,23 @@ def _compute_summary(
     fixtures_found: int,
     company_leaks_count: int,
 ) -> Dict[str, Any]:
-    total = len(cases)
-    cdm_cases = sum(1 for c in cases if c.get("case_type") == "cdm")
-    source_possessive_cases = sum(1 for c in cases if c.get("case_type") == "candidate_source_possessive")
-    hidden_cases = sum(1 for c in cases if c.get("company_hidden"))
+    result_cases = [c for c in cases if "result" in c]
+    error_cases = [c for c in cases if "error" in c]
+
+    total = len(result_cases)
+    cdm_cases = sum(1 for c in result_cases if c.get("case_type") == "cdm")
+    source_possessive_cases = sum(1 for c in result_cases if c.get("case_type") == "candidate_source_possessive")
+    hidden_cases = sum(1 for c in result_cases if c.get("company_hidden"))
     visible_cases = total - hidden_cases
 
-    pass_count = sum(1 for c in cases if c.get("result", {}).get("passed"))
-    strict_pass_count = sum(1 for c in cases if c.get("result", {}).get("passed_strict"))
-    question_count = sum(1 for c in cases if c.get("result", {}).get("question_present"))
-    halluc_free_count = sum(1 for c in cases if not (c.get("result", {}).get("hallucinated_facts") or []))
+    pass_count = sum(1 for c in result_cases if c.get("result", {}).get("passed"))
+    failed_count = total - pass_count
+    strict_pass_count = sum(1 for c in result_cases if c.get("result", {}).get("passed_strict"))
+    question_count = sum(1 for c in result_cases if c.get("result", {}).get("question_present"))
+    halluc_free_count = sum(1 for c in result_cases if not (c.get("result", {}).get("hallucinated_facts") or []))
     source_possessive_failures = sum(
         1
-        for c in cases
+        for c in result_cases
         if c.get("case_type") == "candidate_source_possessive"
         and not c.get("result", {}).get("source_possessive_ok", True)
     )
@@ -485,7 +489,7 @@ def _compute_summary(
     hallucinated_dist: Dict[str, int] = {}
     fail_reasons_dist: Dict[str, int] = {}
 
-    for c in cases:
+    for c in result_cases:
         r = c.get("result") or {}
         for k in r.get("missing_required_keys", []) or []:
             missing_required_dist[k] = missing_required_dist.get(k, 0) + 1
@@ -504,11 +508,14 @@ def _compute_summary(
     return {
         "requested_limit": requested_limit,
         "fixtures_found": fixtures_found,
-        "actual_cases": total,
+        "total_cases": total,
         "cdm_cases": cdm_cases,
         "candidate_source_possessive_cases": source_possessive_cases,
         "hidden_cases": hidden_cases,
         "visible_cases": visible_cases,
+        "passed_cases": pass_count,
+        "failed_cases": failed_count,
+        "errors_count": len(error_cases),
         "pass_rate": rate,
         "strict_pass_rate": strict_rate,
         "question_rate": q_rate,
@@ -547,48 +554,12 @@ def _report_definitions(require_question: bool) -> Dict[str, Any]:
     }
 
 
-def _status_digest(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
-    passed_count = 0
-    failed: List[Dict[str, Any]] = []
-    errors: List[Dict[str, Any]] = []
+def _collect_failures(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [c for c in cases if "result" in c and not c.get("result", {}).get("passed")]
 
-    for c in cases:
-        if "error" in c:
-            errors.append(
-                {
-                    "case_type": c.get("case_type"),
-                    "case_id": c.get("case_id"),
-                    "cdm_file": c.get("cdm_file"),
-                    "candidate_source": c.get("candidate_source"),
-                    "error": c.get("error"),
-                }
-            )
-            continue
 
-        r = c.get("result") or {}
-        if r.get("passed"):
-            passed_count += 1
-            continue
-
-        failed.append(
-            {
-                "case_type": c.get("case_type"),
-                "case_id": c.get("case_id"),
-                "cdm_file": c.get("cdm_file"),
-                "candidate_source": c.get("candidate_source"),
-                "company_hidden": c.get("company_hidden"),
-                "vacancy": c.get("vacancy"),
-                "fail_reasons": r.get("fail_reasons") or [],
-            }
-        )
-
-    return {
-        "passed_count": passed_count,
-        "failed_count": len(failed),
-        "error_count": len(errors),
-        "failed": failed,
-        "errors": errors,
-    }
+def _collect_errors(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [c for c in cases if "error" in c]
 
 
 def run_suite(
@@ -610,7 +581,7 @@ def run_suite(
 
     prompt_id = _resolve_prompt_id()
 
-    all_files = sorted(cdm_dir.glob("*.json"))
+    all_files = _load_cdm_paths(cdm_dir)
     fixtures_found = len(all_files)
     if not all_files:
         raise FileNotFoundError(f"No CDM fixtures found in {cdm_dir}")
@@ -817,23 +788,31 @@ def run_suite(
 
     finished_at = datetime.datetime.now()
 
-    summary = _compute_summary(
-        cases=[c for c in cases if "result" in c],
-        requested_limit=limit,
-        fixtures_found=fixtures_found,
-        company_leaks_count=company_leaks_count,
-    )
+    failures = _collect_failures(cases)
+    errors = _collect_errors(cases)
+    summary = _compute_summary(cases=cases, requested_limit=limit, fixtures_found=fixtures_found, company_leaks_count=company_leaks_count)
 
     report = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
-        "prompt_id": prompt_id,
+        "prompt": {"prompt_id": prompt_id},
         "eval_model": eval_model,
+        "config": {
+            "limit": limit,
+            "cdm_dir": str(cdm_dir),
+            "out_dir": str(out_dir),
+            "require_question": require_question,
+            "include_salary": include_salary,
+            "hide_company": hide_company,
+            "hide_company_ratio": hide_company_ratio,
+            "seed": seed,
+        },
         "definitions": _report_definitions(require_question=require_question),
-        "status": _status_digest(cases),
         "summary": summary,
         "cases": cases,
+        "failures": failures,
+        "errors": errors,
     }
 
     ensure_dirs(out_dir)
