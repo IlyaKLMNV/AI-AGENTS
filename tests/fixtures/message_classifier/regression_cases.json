@@ -1,0 +1,37 @@
+[
+  {
+    "id": "acceptance_company_name_question",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_company_name",
+    "description": "Кандидат проявляет интерес и просит уточнить название компании.",
+    "message": "Добрый день, интересует, подскажите, пожалуйста, как ваша компания называется?"
+  },
+  {
+    "id": "acceptance_vacancy_description_request",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_for_vacancy_details",
+    "description": "Кандидат проявляет интерес и просит прислать описание вакансии и задачи команды.",
+    "message": "Здравствуйте! Вакансия может быть интересна. Можете, пожалуйста, прислать краткое описание задач и команды?"
+  },
+  {
+    "id": "acceptance_salary_and_format_question",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_salary_and_format",
+    "description": "Кандидат задает нормальный рабочий вопрос по вилке и формату, не выражая негатива.",
+    "message": "Добрый день! Подскажите, пожалуйста, какой формат работы и какая ориентировочная зарплатная вилка по позиции?"
+  },
+  {
+    "id": "acceptance_vacancy_link_request",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_for_link",
+    "description": "Кандидат просит ссылку или текст вакансии для ознакомления, сохраняя интерес.",
+    "message": "Здравствуйте! Спасибо за сообщение. Можете прислать ссылку на вакансию или краткое описание позиции?"
+  },
+  {
+    "id": "human_needed_contact_source_sharp",
+    "target_class": "human_needed",
+    "scenario": "candidate_sharply_questions_contact_source",
+    "description": "Кандидат резко спрашивает, откуда взяли контакт, и сообщение требует ручной обработки.",
+    "message": "Откуда вы вообще взяли мой контакт и почему мне пишете без предупреждения?"
+  }
+]
