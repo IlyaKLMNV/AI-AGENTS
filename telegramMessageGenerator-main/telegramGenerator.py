@@ -136,6 +136,7 @@ class TelegramMessageGenerator:
         openai.api_key = api_key or os.getenv('OPENAI_API_KEY')
 
         self.system_prompt = os.getenv('FIRST_TOUCH_PROMPT_ID')
+        self.system_prompt_version = os.getenv('FIRST_TOUCH_PROMPT_VERSION')
         if not self.system_prompt:
             raise RuntimeError('Missing FIRST_TOUCH_PROMPT_ID')
 
@@ -159,10 +160,14 @@ class TelegramMessageGenerator:
         }
 
         try:
+            prompt = {
+                'id': self.system_prompt,
+            }
+            if self.system_prompt_version:
+                prompt['version'] = str(self.system_prompt_version)
+
             response = openai.responses.create(
-                prompt={
-                    'id': self.system_prompt,
-                },
+                prompt=prompt,
                 input=json.dumps(payload, ensure_ascii=False),
                 text={'format': {'type': 'text'}}
             )

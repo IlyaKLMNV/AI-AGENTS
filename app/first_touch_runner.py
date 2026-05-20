@@ -40,7 +40,7 @@ SOURCE_OBJECT_CASES: List[Dict[str, Any]] = [
     {
         "id": "candidate_source_github",
         "candidate_source": "GitHub",
-        "allowed_forms": ["ваш github"],
+        "allowed_forms": ["ваш github", "ваш профиль на github"],
         "bare_forms": ["github"],
     },
     {
@@ -190,6 +190,18 @@ def _find_unpossessive_mentions(message_norm: str, bare_phrase: str) -> List[str
     return violations
 
 
+def _find_phrase_spans(text: str, phrase: str) -> List[tuple[int, int]]:
+    spans: List[tuple[int, int]] = []
+    search_from = 0
+    while True:
+        idx = text.find(phrase, search_from)
+        if idx < 0:
+            break
+        spans.append((idx, idx + len(phrase)))
+        search_from = idx + len(phrase)
+    return spans
+
+
 def _check_candidate_source_possessive(
     candidate_source: str,
     message: str,
@@ -207,6 +219,9 @@ def _check_candidate_source_possessive(
     message_norm = _normalize_source_text(message)
     allowed_forms = [_normalize_source_text(x) for x in source_spec.get("allowed_forms", []) if str(x).strip()]
     bare_forms = [_normalize_source_text(x) for x in source_spec.get("bare_forms", []) if str(x).strip()]
+    allowed_spans: List[tuple[int, int]] = []
+    for allowed in allowed_forms:
+        allowed_spans.extend(_find_phrase_spans(message_norm, allowed))
 
     if candidate_source:
         has_allowed = any(allowed and allowed in message_norm for allowed in allowed_forms)
@@ -217,7 +232,20 @@ def _check_candidate_source_possessive(
         for bare in bare_forms:
             if not bare:
                 continue
-            forbidden_found.extend(_find_unpossessive_mentions(message_norm, bare))
+            search_from = 0
+            while True:
+                idx = message_norm.find(bare, search_from)
+                if idx < 0:
+                    break
+                end = idx + len(bare)
+                if any(span_start <= idx and end <= span_end for span_start, span_end in allowed_spans):
+                    search_from = end
+                    continue
+                prefix = message_norm[:idx].rstrip()
+                prev_word = prefix.split(" ")[-1] if prefix else ""
+                if prev_word not in {"ваш", "ваше", "вашу"}:
+                    forbidden_found.append(bare)
+                search_from = end
 
         result["forbidden_source_forms_found"] = sorted(set(forbidden_found))
         result["source_possessive_ok"] = has_allowed and not result["forbidden_source_forms_found"]
@@ -353,10 +381,15 @@ def _build_source_possessive_input_form(candidate_source: str) -> TGInputForm:
     return input_form
 
 
-def _resolve_prompt_id() -> str:
+def _log(message: str) -> None:
+    print(message)
+
+
+def _resolve_prompt_cfg() -> tuple[str, Optional[str]]:
     prompt_id = os.environ.get("FIRST_TOUCH_PROMPT_ID")
+    prompt_version = os.environ.get("FIRST_TOUCH_PROMPT_VERSION")
     if prompt_id:
-        return str(prompt_id)
+        return str(prompt_id), (str(prompt_version) if prompt_version else None)
 
     if not CFG_PATH.is_file():
         raise FileNotFoundError(f"Config not found: {CFG_PATH}")
@@ -364,13 +397,16 @@ def _resolve_prompt_id() -> str:
     cfg = load_yaml(CFG_PATH)
     comp = _component_cfg(cfg, "first_touch")
     prompt_id = comp.get("prompt_id") if isinstance(comp, dict) else None
+    prompt_version = comp.get("prompt_version") if isinstance(comp, dict) else None
     if not prompt_id:
         raise RuntimeError(
             "Missing FIRST_TOUCH_PROMPT_ID env var and prompt_id in tests/tools/model.yaml (first_touch section)."
         )
 
     os.environ["FIRST_TOUCH_PROMPT_ID"] = str(prompt_id)
-    return str(prompt_id)
+    if prompt_version is not None:
+        os.environ["FIRST_TOUCH_PROMPT_VERSION"] = str(prompt_version)
+    return str(prompt_id), (str(prompt_version) if prompt_version is not None else None)
 
 
 def _eval_instruction() -> str:
@@ -579,7 +615,7 @@ def run_suite(
     started_at = datetime.datetime.now()
     run_id = started_at.strftime("%Y%m%d_%H%M%S")
 
-    prompt_id = _resolve_prompt_id()
+    prompt_id, prompt_version = _resolve_prompt_cfg()
 
     all_files = _load_cdm_paths(cdm_dir)
     fixtures_found = len(all_files)
@@ -591,12 +627,12 @@ def run_suite(
     if seed is not None:
         random.seed(seed)
 
-    print(
+    _log(
         "[init] "
-        f"prompt_id={prompt_id}, eval_model={eval_model}, require_question={require_question}, "
+        f"prompt_id={prompt_id}, prompt_version={prompt_version}, eval_model={eval_model}, require_question={require_question}, "
         f"include_salary={include_salary}, hide_company={hide_company}, hide_company_ratio={hide_company_ratio}, seed={seed}"
     )
-    print(f"[gen] fixtures_found={fixtures_found}, requested_limit={limit}, actual_cases={len(cdm_files)}")
+    _log(f"[gen] fixtures_found={fixtures_found}, requested_limit={limit}, actual_cases={len(cdm_files)}")
 
     generator = TelegramMessageGenerator(api_key=os.environ.get("OPENAI_API_KEY"))
     client = OpenAI()
@@ -606,7 +642,7 @@ def run_suite(
     company_leaks_count = 0
 
     for idx, cdm_path in enumerate(cdm_files, start=1):
-        print(f"[run] case {idx}/{total_cases} ({cdm_path.name})")
+        _log(f"[run] case {idx}/{total_cases} ({cdm_path.name})")
 
         try:
             cdm = json.loads(cdm_path.read_text(encoding="utf-8"))
@@ -693,13 +729,17 @@ def run_suite(
                 "meta": {"comment": eval_result.comment},
             }
             cases.append(case)
+            if passed:
+                _log(f"  [ok] cdm={cdm_path.name} strict={passed_strict} question={eval_result.question_present}")
+            else:
+                _log(f"  [fail] cdm={cdm_path.name} reasons={fail_reasons}")
 
         except Exception as exc:
             cases.append({"case_type": "cdm", "cdm_file": cdm_path.name, "error": f"{type(exc).__name__}: {exc}"})
-            print(f"[warn] case failed: {cdm_path.name}: {type(exc).__name__}: {exc}")
+            _log(f"  [error] cdm={cdm_path.name} {type(exc).__name__}: {exc}")
 
     for idx, source_case in enumerate(SOURCE_OBJECT_CASES, start=1):
-        print(f"[run] source case {idx}/{len(SOURCE_OBJECT_CASES)} ({source_case['id']})")
+        _log(f"[run] source case {idx}/{len(SOURCE_OBJECT_CASES)} ({source_case['id']})")
 
         try:
             input_form = _build_source_possessive_input_form(str(source_case.get("candidate_source") or ""))
@@ -774,6 +814,18 @@ def run_suite(
                 "meta": {"comment": eval_result.comment},
             }
             cases.append(case)
+            if passed:
+                _log(
+                    f"  [ok] source_case={source_case['id']} "
+                    f"source_possessive_ok={source_check['source_possessive_ok']}"
+                )
+            else:
+                _log(
+                    f"  [fail] source_case={source_case['id']} "
+                    f"reasons={fail_reasons} "
+                    f"missing={source_check['missing_possessive_source_forms']} "
+                    f"forbidden={source_check['forbidden_source_forms_found']}"
+                )
 
         except Exception as exc:
             cases.append(
@@ -784,7 +836,7 @@ def run_suite(
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             )
-            print(f"[warn] source case failed: {source_case['id']}: {type(exc).__name__}: {exc}")
+            _log(f"  [error] source_case={source_case['id']} {type(exc).__name__}: {exc}")
 
     finished_at = datetime.datetime.now()
 
@@ -796,7 +848,7 @@ def run_suite(
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
-        "prompt": {"prompt_id": prompt_id},
+        "prompt": {"prompt_id": prompt_id, "prompt_version": prompt_version},
         "eval_model": eval_model,
         "config": {
             "limit": limit,
@@ -819,7 +871,15 @@ def run_suite(
     out_path = out_dir / f"first_touch_report_{run_id}.json"
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[done] report saved: {out_path}")
+    _log(
+        "[summary] "
+        f"total_cases={summary['total_cases']} "
+        f"passed={summary['passed_cases']} "
+        f"failed={summary['failed_cases']} "
+        f"errors={summary['errors_count']} "
+        f"pass_rate={summary['pass_rate']:.2%}"
+    )
+    _log(f"[done] report saved: {out_path}")
     return out_path
 
 
