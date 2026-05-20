@@ -9,7 +9,7 @@ import random
 import re
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from openai import OpenAI
@@ -17,12 +17,57 @@ from openai import OpenAI
 from adapters.adapters import to_input_form
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CDM_DIR = ROOT / "tests" / "fixtures" / "cdm"
+CDM_DIR = ROOT / "tests" / "fixtures" / "cdm" / "std"
 REPORTS_DIR = ROOT / "tests" / "reports" / "first_touch"
 CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
 
 DEFAULT_LIMIT = 10
 DEFAULT_EVAL_MODEL = "gpt-4.1-mini"
+
+SOURCE_OBJECT_CASES: List[Dict[str, Any]] = [
+    {
+        "id": "candidate_source_linkedin_profile",
+        "candidate_source": "профиль LinkedIn",
+        "allowed_forms": ["ваш профиль linkedin", "ваш профиль на linkedin"],
+        "bare_forms": ["профиль linkedin"],
+    },
+    {
+        "id": "candidate_source_hh_resume",
+        "candidate_source": "резюме HH",
+        "allowed_forms": ["ваше резюме hh"],
+        "bare_forms": ["резюме hh"],
+    },
+    {
+        "id": "candidate_source_github",
+        "candidate_source": "GitHub",
+        "allowed_forms": ["ваш github"],
+        "bare_forms": ["github"],
+    },
+    {
+        "id": "candidate_source_portfolio",
+        "candidate_source": "портфолио",
+        "allowed_forms": ["ваше портфолио"],
+        "bare_forms": ["портфолио"],
+    },
+    {
+        "id": "candidate_source_linkedin_page",
+        "candidate_source": "страница на LinkedIn",
+        "allowed_forms": ["вашу страницу на linkedin", "ваш профиль linkedin", "ваш профиль на linkedin"],
+        "bare_forms": ["страница на linkedin", "профиль linkedin"],
+    },
+    {
+        "id": "candidate_source_empty",
+        "candidate_source": "",
+        "allowed_forms": [],
+        "bare_forms": ["linkedin", "hh", "github", "портфолио"],
+    },
+    {
+        "id": "candidate_source_github_account",
+        "candidate_source": "аккаунт GitHub",
+        "allowed_forms": ["ваш аккаунт github"],
+        "bare_forms": ["аккаунт github"],
+    },
+]
 
 TELEGRAM_GEN_DIR = ROOT / "telegramMessageGenerator-main"
 if TELEGRAM_GEN_DIR.is_dir():
@@ -63,6 +108,12 @@ def _component_cfg(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
 
 def _normalize_text(s: str) -> str:
     return (s or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _normalize_source_text(s: str) -> str:
+    text = _normalize_text(s).lower().replace("ё", "е")
+    text = re.sub(r"[^\w#+.]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _extract_json_substring(text: str) -> str | None:
@@ -122,6 +173,60 @@ def _contains_normalized(needle: str, haystack: str) -> bool:
     n = _normalize_for_match(needle)
     h = _normalize_for_match(haystack)
     return bool(n) and n in h
+
+
+def _find_unpossessive_mentions(message_norm: str, bare_phrase: str) -> List[str]:
+    violations: List[str] = []
+    search_from = 0
+    while True:
+        idx = message_norm.find(bare_phrase, search_from)
+        if idx < 0:
+            break
+        prefix = message_norm[:idx].rstrip()
+        prev_word = prefix.split(" ")[-1] if prefix else ""
+        if prev_word not in {"ваш", "ваше", "вашу"}:
+            violations.append(bare_phrase)
+        search_from = idx + len(bare_phrase)
+    return violations
+
+
+def _check_candidate_source_possessive(
+    candidate_source: str,
+    message: str,
+    source_spec: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    result = {
+        "source_possessive_ok": True,
+        "missing_possessive_source_forms": [],
+        "forbidden_source_forms_found": [],
+    }
+
+    if source_spec is None:
+        return result
+
+    message_norm = _normalize_source_text(message)
+    allowed_forms = [_normalize_source_text(x) for x in source_spec.get("allowed_forms", []) if str(x).strip()]
+    bare_forms = [_normalize_source_text(x) for x in source_spec.get("bare_forms", []) if str(x).strip()]
+
+    if candidate_source:
+        has_allowed = any(allowed and allowed in message_norm for allowed in allowed_forms)
+        if not has_allowed:
+            result["missing_possessive_source_forms"] = allowed_forms
+
+        forbidden_found: List[str] = []
+        for bare in bare_forms:
+            if not bare:
+                continue
+            forbidden_found.extend(_find_unpossessive_mentions(message_norm, bare))
+
+        result["forbidden_source_forms_found"] = sorted(set(forbidden_found))
+        result["source_possessive_ok"] = has_allowed and not result["forbidden_source_forms_found"]
+        return result
+
+    forbidden_found = [bare for bare in bare_forms if bare and bare in message_norm]
+    result["forbidden_source_forms_found"] = sorted(set(forbidden_found))
+    result["source_possessive_ok"] = not result["forbidden_source_forms_found"]
+    return result
 
 
 def _expected_work_mode_from_cdm(cdm: Dict[str, Any]) -> str | None:
@@ -184,7 +289,14 @@ def _build_expected_facts_for_eval(expected_facts_report: Dict[str, str], compan
 
 def _build_allowed_context_facts(input_form: TGInputForm) -> Dict[str, str]:
     candidate_source = str(getattr(input_form, "candidate_source", "") or "").strip()
+    if not candidate_source:
+        contacts = getattr(input_form, "candidate_contacts", None) or []
+        if contacts:
+            candidate_source = str(contacts[0] or "").strip()
+
     reason = str(getattr(input_form, "reason_of_communication", "") or "").strip()
+    if not reason:
+        reason = str(getattr(input_form, "reasons", "") or "").strip()
 
     allowed: Dict[str, str] = {}
     if candidate_source:
@@ -206,6 +318,39 @@ def _required_keys(expected_facts_report: Dict[str, str], include_salary: bool) 
         keys.append("salary_range")
 
     return keys
+
+
+def _load_cdm_paths(cdm_dir: pathlib.Path) -> List[pathlib.Path]:
+    all_files = _load_cdm_paths(cdm_dir)
+    if not all_files and (cdm_dir / "std").is_dir():
+        all_files = sorted((cdm_dir / "std").glob("*.json"))
+    return all_files
+
+
+def _build_source_possessive_input_form(candidate_source: str) -> TGInputForm:
+    input_form = TGInputForm(
+        recruiter_name="Анна",
+        company_name="ExampleSoft",
+        company_description="Продуктовая IT-компания",
+        vacancy_name="Backend Engineer",
+        vacancy_stack="Python, FastAPI",
+        company_industry="IT",
+        vacancy_responsibilities="Разработка backend-сервисов и интеграций.",
+        vacancy_skills=["Python", "FastAPI"],
+        salary_range_from=None,
+        salary_range_to=None,
+        use_salary=False,
+        formality=True,
+        candidate_name="Илья",
+        candidate_contacts=[],
+        candidate_job_list=[],
+        candidate_skills=[],
+    )
+    input_form.candidate_contacts = [candidate_source] if candidate_source else []
+    input_form.candidate_source = candidate_source
+    input_form.reasons = "Кандидат имеет релевантный опыт."
+    input_form.reason_of_communication = input_form.reasons
+    return input_form
 
 
 def _resolve_prompt_id() -> str:
@@ -319,6 +464,8 @@ def _compute_summary(
     company_leaks_count: int,
 ) -> Dict[str, Any]:
     total = len(cases)
+    cdm_cases = sum(1 for c in cases if c.get("case_type") == "cdm")
+    source_possessive_cases = sum(1 for c in cases if c.get("case_type") == "candidate_source_possessive")
     hidden_cases = sum(1 for c in cases if c.get("company_hidden"))
     visible_cases = total - hidden_cases
 
@@ -326,6 +473,12 @@ def _compute_summary(
     strict_pass_count = sum(1 for c in cases if c.get("result", {}).get("passed_strict"))
     question_count = sum(1 for c in cases if c.get("result", {}).get("question_present"))
     halluc_free_count = sum(1 for c in cases if not (c.get("result", {}).get("hallucinated_facts") or []))
+    source_possessive_failures = sum(
+        1
+        for c in cases
+        if c.get("case_type") == "candidate_source_possessive"
+        and not c.get("result", {}).get("source_possessive_ok", True)
+    )
 
     missing_required_dist: Dict[str, int] = {}
     missing_optional_dist: Dict[str, int] = {}
@@ -352,6 +505,8 @@ def _compute_summary(
         "requested_limit": requested_limit,
         "fixtures_found": fixtures_found,
         "actual_cases": total,
+        "cdm_cases": cdm_cases,
+        "candidate_source_possessive_cases": source_possessive_cases,
         "hidden_cases": hidden_cases,
         "visible_cases": visible_cases,
         "pass_rate": rate,
@@ -359,6 +514,7 @@ def _compute_summary(
         "question_rate": q_rate,
         "hallucination_free_rate": h_rate,
         "company_leaks_count": company_leaks_count,
+        "candidate_source_possessive_failures": source_possessive_failures,
         "missing_required_distribution": missing_required_dist,
         "missing_optional_distribution": missing_optional_dist,
         "hallucinated_facts_distribution": hallucinated_dist,
@@ -374,6 +530,7 @@ def _report_definitions(require_question: bool) -> Dict[str, Any]:
     if require_question:
         pass_criteria.append("question_present=true")
     pass_criteria.append("if company_hidden=true then original_company_name must NOT be mentioned")
+    pass_criteria.append("for candidate_source possessive cases: source_possessive_ok=true")
 
     return {
         "pass_criteria": pass_criteria,
@@ -385,6 +542,7 @@ def _report_definitions(require_question: bool) -> Dict[str, Any]:
             "missing_optional_keys": "Диагностика. Не влияет на passed.",
             "hallucinated_facts": "Диагностика (passed_strict=false, но passed может быть true).",
             "allowed_context_facts": "Контекст (candidate_source, reason_of_communication) не считается галлюцинацией.",
+            "source_possessive_ok": "Проверка корректного употребления форм 'Ваш / Ваше / Вашу' для candidate_source, относящегося к объекту кандидата.",
         },
     }
 
@@ -396,7 +554,15 @@ def _status_digest(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     for c in cases:
         if "error" in c:
-            errors.append({"cdm_file": c.get("cdm_file"), "error": c.get("error")})
+            errors.append(
+                {
+                    "case_type": c.get("case_type"),
+                    "case_id": c.get("case_id"),
+                    "cdm_file": c.get("cdm_file"),
+                    "candidate_source": c.get("candidate_source"),
+                    "error": c.get("error"),
+                }
+            )
             continue
 
         r = c.get("result") or {}
@@ -406,7 +572,10 @@ def _status_digest(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         failed.append(
             {
+                "case_type": c.get("case_type"),
+                "case_id": c.get("case_id"),
                 "cdm_file": c.get("cdm_file"),
+                "candidate_source": c.get("candidate_source"),
                 "company_hidden": c.get("company_hidden"),
                 "vacancy": c.get("vacancy"),
                 "fail_reasons": r.get("fail_reasons") or [],
@@ -484,11 +653,14 @@ def run_suite(
             expected_facts_report = _build_expected_facts_report(input_form, include_salary=include_salary)
             expected_facts_eval = _build_expected_facts_for_eval(expected_facts_report, company_hidden=company_hidden)
             allowed_context_facts = _build_allowed_context_facts(input_form)
+            candidate_source = str(allowed_context_facts.get("candidate_source") or "").strip()
+            source_check = _check_candidate_source_possessive(candidate_source=candidate_source, message="", source_spec=None)
 
             required_keys = _required_keys(expected_facts_report=expected_facts_report, include_salary=include_salary)
             optional_keys = [k for k in expected_facts_eval.keys() if k not in required_keys]
 
             message = _normalize_text(generator.generate_message(input_form))
+            source_check = _check_candidate_source_possessive(candidate_source=candidate_source, message=message, source_spec=None)
 
             company_leaked = _company_name_present_when_hidden(company_hidden, original_company_name, message)
             if company_leaked:
@@ -516,11 +688,14 @@ def run_suite(
                 fail_reasons.append("no_question")
             if company_leaked:
                 fail_reasons.append("company_name_present_when_hidden")
+            if not source_check["source_possessive_ok"]:
+                fail_reasons.append("bad_candidate_source_possessive")
 
             passed = not fail_reasons
             passed_strict = bool(passed and not eval_result.hallucinated_facts)
 
             case = {
+                "case_type": "cdm",
                 "cdm_file": cdm_path.name,
                 "company_hidden": company_hidden,
                 "original_company_name": original_company_name,
@@ -535,8 +710,11 @@ def run_suite(
                     "passed": passed,
                     "passed_strict": passed_strict,
                     "question_present": eval_result.question_present,
+                    "source_possessive_ok": source_check["source_possessive_ok"],
                     "missing_required_keys": missing_required_keys,
                     "missing_optional_keys": missing_optional_keys,
+                    "missing_possessive_source_forms": source_check["missing_possessive_source_forms"],
+                    "forbidden_source_forms_found": source_check["forbidden_source_forms_found"],
                     "hallucinated_facts": eval_result.hallucinated_facts,
                     "extra_numbers": extra_numbers,
                     "fail_reasons": fail_reasons,
@@ -546,8 +724,96 @@ def run_suite(
             cases.append(case)
 
         except Exception as exc:
-            cases.append({"cdm_file": cdm_path.name, "error": f"{type(exc).__name__}: {exc}"})
+            cases.append({"case_type": "cdm", "cdm_file": cdm_path.name, "error": f"{type(exc).__name__}: {exc}"})
             print(f"[warn] case failed: {cdm_path.name}: {type(exc).__name__}: {exc}")
+
+    for idx, source_case in enumerate(SOURCE_OBJECT_CASES, start=1):
+        print(f"[run] source case {idx}/{len(SOURCE_OBJECT_CASES)} ({source_case['id']})")
+
+        try:
+            input_form = _build_source_possessive_input_form(str(source_case.get("candidate_source") or ""))
+
+            expected_facts_report = _build_expected_facts_report(input_form, include_salary=include_salary)
+            expected_facts_eval = _build_expected_facts_for_eval(expected_facts_report, company_hidden=False)
+            allowed_context_facts = _build_allowed_context_facts(input_form)
+            candidate_source = str(allowed_context_facts.get("candidate_source") or "").strip()
+
+            required_keys = _required_keys(expected_facts_report=expected_facts_report, include_salary=include_salary)
+            optional_keys = [k for k in expected_facts_eval.keys() if k not in required_keys]
+
+            message = _normalize_text(generator.generate_message(input_form))
+            source_check = _check_candidate_source_possessive(
+                candidate_source=candidate_source,
+                message=message,
+                source_spec=source_case,
+            )
+
+            eval_result = evaluate_message(
+                client=client,
+                eval_model=eval_model,
+                expected_facts=expected_facts_eval,
+                allowed_context_facts=allowed_context_facts,
+                message=message,
+            )
+
+            missing_required_keys = [k for k in required_keys if not bool(eval_result.facts_present.get(k, False))]
+            missing_optional_keys = [k for k in optional_keys if not bool(eval_result.facts_present.get(k, False))]
+            extra_numbers = _extra_numbers(expected_facts_report, message)
+
+            fail_reasons: List[str] = []
+            if missing_required_keys:
+                fail_reasons.append("missing_required_keys")
+            if extra_numbers:
+                fail_reasons.append("extra_numbers")
+            if require_question and not eval_result.question_present:
+                fail_reasons.append("no_question")
+            if not source_check["source_possessive_ok"]:
+                fail_reasons.append("bad_candidate_source_possessive")
+
+            passed = not fail_reasons
+            passed_strict = bool(passed and not eval_result.hallucinated_facts)
+
+            case = {
+                "case_type": "candidate_source_possessive",
+                "case_id": source_case["id"],
+                "candidate_source": source_case["candidate_source"],
+                "source_expected_forms": source_case.get("allowed_forms", []),
+                "company_hidden": False,
+                "original_company_name": expected_facts_report.get("company_name", "") or None,
+                "expected_work_mode": None,
+                "vacancy": {
+                    "company_name": expected_facts_report.get("company_name", ""),
+                    "vacancy_name": expected_facts_report.get("vacancy_name", ""),
+                },
+                "expected_facts": expected_facts_report,
+                "message": message,
+                "result": {
+                    "passed": passed,
+                    "passed_strict": passed_strict,
+                    "question_present": eval_result.question_present,
+                    "source_possessive_ok": source_check["source_possessive_ok"],
+                    "missing_required_keys": missing_required_keys,
+                    "missing_optional_keys": missing_optional_keys,
+                    "missing_possessive_source_forms": source_check["missing_possessive_source_forms"],
+                    "forbidden_source_forms_found": source_check["forbidden_source_forms_found"],
+                    "hallucinated_facts": eval_result.hallucinated_facts,
+                    "extra_numbers": extra_numbers,
+                    "fail_reasons": fail_reasons,
+                },
+                "meta": {"comment": eval_result.comment},
+            }
+            cases.append(case)
+
+        except Exception as exc:
+            cases.append(
+                {
+                    "case_type": "candidate_source_possessive",
+                    "case_id": source_case["id"],
+                    "candidate_source": source_case["candidate_source"],
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            print(f"[warn] source case failed: {source_case['id']}: {type(exc).__name__}: {exc}")
 
     finished_at = datetime.datetime.now()
 
