@@ -1,6 +1,6 @@
 ﻿# AI Agents Workspace
 
-Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `telegram_generator_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`. `app/runner.py` сохранён как исторический интеграционный сценарий end-to-end симуляции.
+Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `first_touch_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`. `app/runner.py` сохранён как исторический интеграционный сценарий end-to-end симуляции.
 
 ## Структура проекта
 - `app/` — CLI-раннеры.
@@ -13,7 +13,7 @@
 - `telegramMessageGenerator-main/` — генератор первого сообщения в Telegram.
 - `tests/fixtures/` — фикстуры (CDM, screening-сценарии, extractor-кейсы).
 - `tests/tools/` — `model.yaml` и утилиты для генерации baseline-фикстур.
-- `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
+- `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `first_touch`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
 
 ## Подготовка окружения
 ```bash
@@ -59,7 +59,7 @@ AI_SEARCH_AUTH_TOKEN=...
 - `candidate_simulator` (профили кандидатов для `app/runner.py`)
 
 Переменные окружения для переопределения:
-- `FIRST_TOUCH_PROMPT_ID` — для `app/telegram_generator_runner.py` и генератора первого касания в `app/runner.py`.
+- `FIRST_TOUCH_PROMPT_ID` — для `app/first_touch_runner.py` и генератора первого касания в `app/runner.py`.
 - `FIRST_TOUCH_EVENT_PROMPT_ID`, `FIRST_TOUCH_EVENT_PROMPT_VERSION` — для `app/first_touch_event_runner.py`.
 - `MESSAGE_CLASSIFIER_PROMPT_ID`, `MESSAGE_CLASSIFIER_PROMPT_VERSION` — для `app/message_classifier_runner.py`.
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
@@ -329,7 +329,7 @@ python -m app.message_classifier_runner --messages-per-class 3 --seed 42
 Отчеты:
 - `tests/reports/message_classifier/message_classifier_report_<run_id>.json`
 
-### `app/telegram_generator_runner.py` — тест первого касания (Telegram)
+### `app/first_touch_runner.py` — тест первого касания (Telegram)
 Как работает:
 - Строит `InputForm` из CDM и генерирует сообщение через `telegramMessageGenerator`.
 - Проверяет наличие фактов и галлюцинаций с помощью LLM-оценщика.
@@ -338,7 +338,7 @@ python -m app.message_classifier_runner --messages-per-class 3 --seed 42
 
 Запуск:
 ```bash
-python -m app.telegram_generator_runner --limit 5 --require-question
+python -m app.first_touch_runner --limit 5 --require-question
 ```
 
 Параметры:
@@ -352,7 +352,7 @@ python -m app.telegram_generator_runner --limit 5 --require-question
 - `--seed` — сид для `--hide-company-ratio`.
 
 Отчеты:
-- `tests/reports/telegram_generator/telegram_generator_report_<run_id>.json`
+- `tests/reports/first_touch/first_touch_report_<run_id>.json`
 
 ### `app/first_touch_event_runner.py` — простой раннер для event-invite prompt
 Как работает:
