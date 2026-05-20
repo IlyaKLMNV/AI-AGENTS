@@ -1,0 +1,42 @@
+{
+  "vacancy": {
+    "title": "Senior Linux Engineer",
+    "company_name": "ЕДИНЫЙ ЦУПИС",
+    "company_description": "Российский финтех, который занимается разработкой платежных решений и цифровых сервисов.",
+    "location": "Москва",
+    "work_format": "REMOTE",
+    "salary_range_from": 260000,
+    "salary_range_to": 360000,
+    "responsibilities": "Администрирование и траблшутинг высоконагруженных Linux-серверов, поддержка виртуализации и балансировки трафика.",
+    "vacancy_description": "Удаленный формат работы. Основные задачи: администрирование и траблшутинг высоконагруженных серверов на базе Linux, поддержка виртуализации (Proxmox, KVM), балансировка трафика (HAProxy, Nginx), внедрение и сопровождение opensource решений.",
+    "vacancy_url": "https://careers.cupis.example/vacancies/senior-linux-engineer",
+    "questions": "1. Есть ли у вас опыт администрирования Linux и production-поддержки?\n2. Работали ли вы с HAProxy, Nginx или системами виртуализации?"
+  },
+  "candidate": {
+    "recruiter_name": "Сабина",
+    "candidate_name": "Роман",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-linux"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Linux Engineer",
+        "company": "InfraOps"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Linux",
+        "quantile": 4.5
+      },
+      {
+        "skill": "Nginx",
+        "quantile": 4.0
+      }
+    ]
+  }
+}

@@ -334,6 +334,8 @@ PROFILE_REFERENCE_SCENARIOS = {50, 51, 61}
 PROFILE_REFERENCE_RESUME_SCENARIOS = {62}
 PAUSE_LATER_SCENARIOS = {52, 53, 54, 55, 57}
 PAUSE_LATER_RESUME_SCENARIOS = {56, 58}
+SALARY_BUDGET_EDGE_SCENARIOS = {63, 64}
+VACANCY_LINK_SCENARIOS = {65}
 FORCED_FALLBACK_SCENARIOS = (
     CONTACT_SOURCE_SCENARIOS
     | CONTACT_SOURCE_RESUME_SCENARIOS
@@ -343,6 +345,8 @@ FORCED_FALLBACK_SCENARIOS = (
     | PAUSE_LATER_SCENARIOS
     | PAUSE_LATER_RESUME_SCENARIOS
     | PROFILE_REFERENCE_RESUME_SCENARIOS
+    | SALARY_BUDGET_EDGE_SCENARIOS
+    | VACANCY_LINK_SCENARIOS
 )
 PROMPT_V2_SPECIAL_FIXTURES = {"cdm_16.json", "cdm_17.json"}
 
@@ -992,6 +996,15 @@ def _fixture_matches_group_requirements(
 
     if _group_has_any_scenario(group, [36]):
         return bool(location) and "моск" not in location and "удал" not in location
+
+    if _group_has_any_scenario(group, [63]):
+        return fixture.file_name == "cdm_05.json"
+
+    if _group_has_any_scenario(group, [64]):
+        return fixture.file_name == "cdm_07.json"
+
+    if _group_has_any_scenario(group, [65]):
+        return fixture.file_name == "cdm_18.json"
 
     if _group_has_any_scenario(group, [28, 31]):
         company_name = str(vacancy_info.get("company_name") or "").strip()
@@ -2057,6 +2070,27 @@ def _fallback_messages(
             "Всё про менторство и QA-команду уже есть в резюме.",
         ][:n]
 
+    if idx == 63:
+        return [
+            "Москва,\nСейчас у меня 1 млн руб. gross\nЭто ЗП+Премия\n\nРассчитываю + 15/20%",
+            "Москва. Сейчас суммарно около 1 млн gross с учетом премии, при переходе смотрю плюс 15-20%.",
+            "Я в Москве, сейчас доход примерно 1 млн gross вместе с премией. При смене работы ориентируюсь на плюс 15-20%.",
+        ][:n]
+
+    if idx == 64:
+        return [
+            "К гибриду готов.\nУ меня сейчас 600 гросс, хотелось бы чуть повыше, но обсуждаемо",
+            "Гибридный формат подходит. Сейчас получаю 600 gross, при переходе хотел бы немного выше, но готов обсуждать.",
+            "К гибриду готов, сейчас компенсация около 600 гросс. Хотелось бы рост, но можно обсуждать.",
+        ][:n]
+
+    if idx == 65:
+        return [
+            "Добрый день, да было бы интересно, подскажите где подробнее ознакомиться с вакансией и стеком можно?",
+            "Здравствуйте, предложение интересно. Можете прислать ссылку на вакансию, чтобы подробнее посмотреть задачи и стек?",
+            "Добрый день! Интересно, где можно подробнее почитать про вакансию и используемый стек?",
+        ][:n]
+
     if idx in (52, 55):
         return [
             "Сейчас не время, давайте вернемся через месяц. По зарплате ориентируюсь на 300.",
@@ -2356,6 +2390,12 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return not _contains_any_substring(low, repeated_markers)
     if scenario_index == 27:
         return _contains_any_substring(low, repeated_markers)
+    if scenario_index == 63:
+        return "моск" in low and _contains_any_substring(low, ["gross", "гросс", "прем", "%", "процент"])
+    if scenario_index == 64:
+        return _contains_any_substring(low, ["гибрид", "гибриду", "hybrid"]) and _contains_any_substring(low, ["gross", "гросс", "600"])
+    if scenario_index == 65:
+        return _contains_any_substring(low, ["ссылк", "ознаком", "почитать", "подробнее", "стек"])
     return True
 
 
@@ -3620,7 +3660,7 @@ def enforce_open_company_answer_for_s31(
 ) -> Tuple[int, str]:
     # Для S31: разрешаем любые доп.вопросы/продолжения,
     # главное - ассистент назвал компанию (и дал ссылку, если она есть в контексте).
-    if scenario.index != 31:
+    if scenario.index not in (31, 65):
         return score, comment
 
     expected_company = (
@@ -3636,7 +3676,7 @@ def enforce_open_company_answer_for_s31(
     reply_low = reply_raw.lower()
 
     # 1) Компания обязана быть в ответе
-    if expected_company.lower() not in reply_low:
+    if scenario.index == 31 and expected_company.lower() not in reply_low:
         return (
             0,
             f"Scenario 31 strict check failed: assistant reply must contain company name '{expected_company}'.",
@@ -3644,14 +3684,17 @@ def enforce_open_company_answer_for_s31(
 
     # 2) Если ссылка реально есть в контексте - она тоже обязана быть в ответе
     if expected_url and expected_url.lower() not in reply_low:
+        label = "31" if scenario.index == 31 else "65"
         return (
             0,
-            f"Scenario 31 strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
+            f"Scenario {label} strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
         )
 
     # 3) Если компания (и ссылка при наличии) есть - считаем ход успешным,
     # даже если evaluator ругается на доп.вопросы.
-    return 1, "Scenario 31 relaxed check passed: company (and vacancy_url if provided) present; extra questions allowed."
+    if scenario.index == 31:
+        return 1, "Scenario 31 relaxed check passed: company (and vacancy_url if provided) present; extra questions allowed."
+    return 1, "Scenario 65 strict check passed: vacancy_url is present in the assistant reply."
 
 
 def enforce_positive_handling_for_s32_s33(

@@ -330,6 +330,8 @@ PAUSE_LATER_SCENARIOS = {45, 46, 48}
 PAUSE_LATER_RESUME_SCENARIOS = {47, 49}
 HH_OPEN_COMPANY_SCENARIOS = {22, 25}
 HH_LOCATION_FORMAT_SCENARIOS = {28, 29, 30, 31, 33, 34, 35, 51, 52}
+HH_SALARY_BUDGET_EDGE_SCENARIOS = {53, 54}
+HH_VACANCY_LINK_SCENARIOS = {55}
 HH_DISABLED_SCENARIOS: set[int] = set()
 HH_STABLE_GENERATION_SCENARIOS = {
     8,
@@ -360,6 +362,9 @@ HH_STABLE_GENERATION_SCENARIOS = {
     49,
     50,
     51,
+    53,
+    54,
+    55,
 }
 FORCED_FALLBACK_SCENARIOS = (
     LEGITIMACY_SCENARIOS
@@ -369,6 +374,8 @@ FORCED_FALLBACK_SCENARIOS = (
     | PAUSE_LATER_RESUME_SCENARIOS
     | HH_LOCATION_FORMAT_SCENARIOS
     | HH_STABLE_GENERATION_SCENARIOS
+    | HH_SALARY_BUDGET_EDGE_SCENARIOS
+    | HH_VACANCY_LINK_SCENARIOS
 )
 HH_SPECIAL_FIXTURES = {
     "cdm_16.json",
@@ -381,6 +388,7 @@ HH_SPECIAL_FIXTURES = {
     "cdm_hh_06.json",
     "cdm_hh_07.json",
     "cdm_hh_08.json",
+    "cdm_hh_09.json",
 }
 
 RAW_WORK_FORMAT_IDS = ("ON_SITE", "REMOTE", "HYBRID", "FIELD_WORK")
@@ -1055,6 +1063,15 @@ def _fixture_matches_group_requirements(
 
     if _group_has_any_scenario(group, [52]):
         return not location
+
+    if _group_has_any_scenario(group, [53]):
+        return fixture.file_name == "cdm_hh_01.json"
+
+    if _group_has_any_scenario(group, [54]):
+        return fixture.file_name == "cdm_hh_02.json"
+
+    if _group_has_any_scenario(group, [55]):
+        return fixture.file_name == "cdm_hh_09.json"
 
     if _group_has_any_scenario(group, [43, 44, 45, 46, 47, 48, 49]):
         return fixture.file_name in {"cdm_hh_01.json"}
@@ -2673,6 +2690,30 @@ def enforce_prompt_v2_hard_rules(
     return score, comment
 
 
+def enforce_vacancy_link_answer_rule(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index != 55:
+        return score, comment
+
+    expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
+    if not expected_url:
+        return score, comment
+
+    reply_low = str(assistant_reply or "").lower()
+    if expected_url.lower() not in reply_low:
+        return (
+            0,
+            f"Scenario 55 strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
+        )
+
+    return 1, "Scenario 55 strict check passed: vacancy_url is present in the assistant reply."
+
+
 
 
 
@@ -2735,6 +2776,13 @@ def run_single_scenario(
             assistant_reply=str(turn.get("assistant_reply") or ""),
             score=score,
             comment=comment,
+        )
+        score, comment = enforce_vacancy_link_answer_rule(
+            scenario=scenario,
+            assistant_reply=str(turn.get("assistant_reply") or ""),
+            score=score,
+            comment=comment,
+            dialog_context_meta=dialog_context_meta,
         )
         turn["score"] = score
         turn["comment"] = comment
@@ -2843,6 +2891,13 @@ def run_chain_group(
                 assistant_reply=str(turn.get("assistant_reply") or ""),
                 score=score,
                 comment=comment,
+            )
+            score, comment = enforce_vacancy_link_answer_rule(
+                scenario=scenarios[int(turn.get("step") or 0) - 1],
+                assistant_reply=str(turn.get("assistant_reply") or ""),
+                score=score,
+                comment=comment,
+                dialog_context_meta=dialog_context_meta,
             )
             turn["score"] = score
             turn["comment"] = comment
@@ -3214,6 +3269,21 @@ def _fallback_messages(
             "Можно уточнить, какой формат работы предусмотрен для этой роли?",
             "Какой формат работы у позиции: удаленный, офисный, гибридный или разъездной?",
         ],
+        53: [
+            "Москва,\nСейчас у меня 1 млн руб. gross\nЭто ЗП+Премия\n\nРассчитываю + 15/20%",
+            "Москва. Сейчас суммарно около 1 млн gross с учетом премии, при переходе смотрю плюс 15-20%.",
+            "Я в Москве, сейчас доход примерно 1 млн gross вместе с премией. При смене работы ориентируюсь на плюс 15-20%.",
+        ],
+        54: [
+            "К гибриду готов.\nУ меня сейчас 600 гросс, хотелось бы чуть повыше, но обсуждаемо",
+            "Гибридный формат подходит. Сейчас получаю 600 gross, при переходе хотел бы немного выше, но готов обсуждать.",
+            "К гибриду готов, сейчас компенсация около 600 гросс. Хотелось бы рост, но можно обсуждать.",
+        ],
+        55: [
+            "Добрый день, да было бы интересно, подскажите где подробнее ознакомиться с вакансией и стеком можно?",
+            "Здравствуйте, предложение интересно. Можете прислать ссылку на вакансию, чтобы подробнее посмотреть задачи и стек?",
+            "Добрый день! Интересно, где можно подробнее почитать про вакансию и используемый стек?",
+        ],
     }
     alias_messages = {
         18: 15,
@@ -3330,6 +3400,12 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return _contains_any_substring(low, death_markers) and not _contains_any_substring(low, salary_markers)
     if scenario_index == 50:
         return _contains_any_substring(low, format_question_markers) and not _contains_any_substring(low, aggression_markers)
+    if scenario_index == 53:
+        return "моск" in low and _contains_any_substring(low, ["gross", "гросс", "прем", "%", "процент"])
+    if scenario_index == 54:
+        return _contains_any_substring(low, ["гибрид", "гибриду", "hybrid"]) and _contains_any_substring(low, ["gross", "гросс", "600"])
+    if scenario_index == 55:
+        return _contains_any_substring(low, ["ссылк", "ознаком", "почитать", "подробнее", "стек"])
     return True
 
 

@@ -1,0 +1,44 @@
+{
+  "vacancy": {
+    "title": "Senior Platform Engineer",
+    "company_name": "CloudRail",
+    "company_description": "Продуктовая fintech-команда, которая развивает внутреннюю платформу и платежные сервисы.",
+    "company_industry": "Fintech",
+    "location": "Москва",
+    "work_format": "remote",
+    "salary_range_from": 280000,
+    "salary_range_to": 380000,
+    "responsibilities": "Развитие внутренней платформы, поддержка инфраструктуры и сопровождение backend-сервисов.",
+    "vacancy_stack": "Linux, Python, Kubernetes, PostgreSQL, Nginx",
+    "vacancy_skills": "Linux, Python, Kubernetes, PostgreSQL, Nginx",
+    "vacancy_url": "https://careers.cloudrail.example/jobs/senior-platform-engineer",
+    "questions": "1. Есть ли у вас опыт администрирования Linux-серверов и поддержки production-инфраструктуры?\n2. Работали ли вы с Kubernetes и высоконагруженными сервисами?"
+  },
+  "candidate": {
+    "recruiter_name": "Сабина",
+    "candidate_name": "Роман",
+    "contact_source": "LinkedIn",
+    "candidate_contacts": [
+      {
+        "type": "ln",
+        "url": "https://linkedin.com/in/example-platform"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Systems Engineer",
+        "company": "InfraCore"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Linux",
+        "quantile": 4.4
+      },
+      {
+        "skill": "Kubernetes",
+        "quantile": 4.0
+      }
+    ]
+  }
+}
