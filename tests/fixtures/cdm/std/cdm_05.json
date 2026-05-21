@@ -36,7 +36,8 @@
       "level": [
         "lead"
       ]
-    }
+    },
+    "vacancy_url": "https://careers.example/cdm_05"
   },
   "candidate": {
     "recruiter_name": "Варя",

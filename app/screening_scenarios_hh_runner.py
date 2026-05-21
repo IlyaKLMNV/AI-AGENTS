@@ -134,6 +134,11 @@ def _safe_json_loads(text: str) -> Any:
         return json.loads(extracted)
 
 
+def _extract_first_url(text: str) -> str:
+    match = re.search(r"https?://\S+", str(text or ""))
+    return match.group(0).rstrip(".,);]") if match else ""
+
+
 # -----------------------
 # Загрузка сценариев из CSV
 # -----------------------
@@ -388,7 +393,6 @@ HH_SPECIAL_FIXTURES = {
     "cdm_hh_06.json",
     "cdm_hh_07.json",
     "cdm_hh_08.json",
-    "cdm_hh_09.json",
 }
 
 RAW_WORK_FORMAT_IDS = ("ON_SITE", "REMOTE", "HYBRID", "FIELD_WORK")
@@ -1071,7 +1075,7 @@ def _fixture_matches_group_requirements(
         return fixture.file_name == "cdm_hh_02.json"
 
     if _group_has_any_scenario(group, [55]):
-        return fixture.file_name == "cdm_hh_09.json"
+        return fixture.file_name == "cdm_hh_01.json"
 
     if _group_has_any_scenario(group, [43, 44, 45, 46, 47, 48, 49]):
         return fixture.file_name in {"cdm_hh_01.json"}
@@ -1144,11 +1148,6 @@ def load_cdm_fixtures(cdm_dir: pathlib.Path) -> List[CdmFixture]:
 
             vacancy = cdm.get("vacancy") or {}
             candidate = cdm.get("candidate") or {}
-            raw_url = str(vacancy.get("vacancy_url") or "").strip()
-            if raw_url:
-                company_info = dict(vacancy_info.get("company_info") or {})
-                company_info["vacancy_url"] = raw_url
-                vacancy_info["company_info"] = company_info
             vacancy_description = str(
                 vacancy.get("vacancy_description")
                 or vacancy.get("raw_vacancy")
@@ -1331,9 +1330,8 @@ def build_dialog_context(
     location = str(vacancy_info.get("location") or "").strip()
     min_salary = str(vacancy_info.get("min_salary") or "").strip()
     max_salary = str(vacancy_info.get("max_salary") or "").strip()
-    company_info = vacancy_info.get("company_info") or {}
     vacancy_description = str(vacancy_info.get("vacancy_description") or "").strip()
-    vacancy_url = str(company_info.get("vacancy_url") or "").strip()
+    vacancy_url = _extract_first_url(vacancy_description)
     salary = _salary_range_text(vacancy_info)
     questions = _sanitize_additional_questions(str(vacancy_info.get("questions") or ""))
 
@@ -2708,10 +2706,10 @@ def enforce_vacancy_link_answer_rule(
     if expected_url.lower() not in reply_low:
         return (
             0,
-            f"Scenario 55 strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
+            f"Scenario 55 strict check failed: assistant reply must contain the vacancy link from vacancy_description: '{expected_url}'.",
         )
 
-    return 1, "Scenario 55 strict check passed: vacancy_url is present in the assistant reply."
+    return 1, "Scenario 55 strict check passed: the vacancy link from vacancy_description is present in the assistant reply."
 
 
 

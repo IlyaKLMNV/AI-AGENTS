@@ -1004,7 +1004,7 @@ def _fixture_matches_group_requirements(
         return fixture.file_name == "cdm_07.json"
 
     if _group_has_any_scenario(group, [65]):
-        return fixture.file_name == "cdm_18.json"
+        return fixture.file_name == "cdm_05.json"
 
     if _group_has_any_scenario(group, [28, 31]):
         company_name = str(vacancy_info.get("company_name") or "").strip()

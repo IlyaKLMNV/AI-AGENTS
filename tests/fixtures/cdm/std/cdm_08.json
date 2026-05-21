@@ -27,7 +27,8 @@
           "operator": "AND"
         }
       ]
-    }
+    },
+    "vacancy_url": "https://careers.example/cdm_08"
   },
   "candidate": {
     "recruiter_name": "Варя",

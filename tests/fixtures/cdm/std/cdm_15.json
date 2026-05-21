@@ -44,7 +44,8 @@
       "level": [
         "senior"
       ]
-    }
+    },
+    "vacancy_url": "https://careers.example/cdm_15"
   },
   "candidate": {
     "recruiter_name": "Варя",
