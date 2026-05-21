@@ -336,6 +336,7 @@ PAUSE_LATER_RESUME_SCENARIOS = {47, 49}
 HH_OPEN_COMPANY_SCENARIOS = {22, 25}
 HH_LOCATION_FORMAT_SCENARIOS = {28, 29, 30, 31, 33, 34, 35, 51, 52}
 HH_SALARY_BUDGET_EDGE_SCENARIOS = {53, 54}
+HH_GROSS_SALARY_CLARIFICATION_SCENARIOS = {53, 54}
 HH_VACANCY_LINK_SCENARIOS = {55}
 HH_DISABLED_SCENARIOS: set[int] = set()
 HH_STABLE_GENERATION_SCENARIOS = {
@@ -1379,7 +1380,7 @@ def build_dialog_context(
     return context_text, context_meta
 
 
-def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
+def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
     company = str(dialog_context_meta.get("company_name") or "").strip()
     if not company:
         company = str(dialog_context_meta.get("original_company_name") or "").strip()
@@ -1391,6 +1392,24 @@ def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
         "location": str(dialog_context_meta.get("location") or "").strip(),
         "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
     }
+
+
+def build_prompt_context_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
+    prompt_context: Dict[str, Any] = {
+        "work_format_ids": list(dialog_context_meta.get("work_format_ids") or []),
+        "min_salary": str(dialog_context_meta.get("min_salary") or "").strip(),
+        "max_salary": str(dialog_context_meta.get("max_salary") or "").strip(),
+        "salary": str(dialog_context_meta.get("salary") or "").strip(),
+        "questions": str(dialog_context_meta.get("questions") or "").strip(),
+        "vacancy_description": str(dialog_context_meta.get("vacancy_description") or "").strip(),
+        "vacancy_url": str(dialog_context_meta.get("vacancy_url") or "").strip(),
+        "location": str(dialog_context_meta.get("location") or "").strip(),
+        "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
+    }
+    original_company_name = str(dialog_context_meta.get("original_company_name") or "").strip()
+    if original_company_name:
+        prompt_context["original_company_name"] = original_company_name
+    return prompt_context
 
 
 def _short_reason(comment: str, limit: int = 140) -> str:
@@ -1503,6 +1522,8 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "scenario_name": str(case.get("scenario_name") or ""),
                 "cdm_file": str(case.get("cdm_file") or ""),
                 "company_hidden": bool(case.get("company_hidden", False)),
+                "vacancy_ref": dict(case.get("vacancy_ref") or {}),
+                "prompt_context": dict(case.get("prompt_context") or {}),
                 "problem_summary": _compact_problem_summary(dialogs),
                 "dialogs": dialogs,
             }
@@ -1543,6 +1564,8 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "scenario_names": list(case.get("scenario_names") or []),
                     "cdm_file": str(case.get("cdm_file") or ""),
                     "company_hidden": bool(case.get("company_hidden", False)),
+                    "vacancy_ref": dict(case.get("vacancy_ref") or {}),
+                    "prompt_context": dict(case.get("prompt_context") or {}),
                     "problem_summary": _compact_problem_summary(dialogs),
                     "dialogs": dialogs,
                 }
@@ -2669,6 +2692,35 @@ def _question_mark_count(text: str) -> int:
     return (text or "").count("?")
 
 
+def _is_monthly_rubles_clarification_reply(reply: str) -> bool:
+    low = (reply or "").lower()
+    clarify_markers = [
+        "уточните",
+        "укажите",
+        "подскажите",
+        "корректно ли я понимаю",
+        "правильно ли я понимаю",
+        "имеете в виду",
+        "речь о сумме",
+        "речь идет о сумме",
+        "речь идёт о сумме",
+        "речь идет о зарплате",
+        "речь идёт о зарплате",
+    ]
+    monthly_markers = [
+        "в рублях",
+        "на руки",
+        "в месяц",
+        "за месяц",
+    ]
+    return (
+        not _reply_has_end_marker(reply)
+        and "?" in (reply or "")
+        and _contains_any_substring(low, clarify_markers)
+        and _contains_any_substring(low, monthly_markers)
+    )
+
+
 def enforce_prompt_v2_hard_rules(
     assistant_reply: str,
     score: int,
@@ -2686,6 +2738,22 @@ def enforce_prompt_v2_hard_rules(
         return 0, "Prompt v2 hard rule failed: assistant leaked prompt context labels."
 
     return score, comment
+
+
+def enforce_gross_salary_clarification_rule(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+) -> Tuple[int, str]:
+    if scenario.index not in HH_GROSS_SALARY_CLARIFICATION_SCENARIOS:
+        return score, comment
+
+    if _reply_has_end_marker(assistant_reply):
+        return 0, "Gross salary rule failed: assistant must not end the dialogue and reject at this step."
+    if not _is_monthly_rubles_clarification_reply(assistant_reply):
+        return 0, "Gross salary rule failed: assistant must ask to clarify the final monthly net salary in rubles."
+    return 1, "Gross salary rule passed: assistant asks to clarify the final monthly net salary in rubles."
 
 
 def enforce_vacancy_link_answer_rule(
@@ -2775,6 +2843,12 @@ def run_single_scenario(
             score=score,
             comment=comment,
         )
+        score, comment = enforce_gross_salary_clarification_rule(
+            scenario=scenario,
+            assistant_reply=str(turn.get("assistant_reply") or ""),
+            score=score,
+            comment=comment,
+        )
         score, comment = enforce_vacancy_link_answer_rule(
             scenario=scenario,
             assistant_reply=str(turn.get("assistant_reply") or ""),
@@ -2794,6 +2868,7 @@ def run_single_scenario(
         "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
         "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
         "vacancy_ref": build_vacancy_ref(dialog_context_meta),
+        "prompt_context": build_prompt_context_ref(dialog_context_meta),
         "turns_total": turns_total,
         "score_total": scenario_score,
         "passed": scenario_score == turns_total,
@@ -2890,6 +2965,12 @@ def run_chain_group(
                 score=score,
                 comment=comment,
             )
+            score, comment = enforce_gross_salary_clarification_rule(
+                scenario=scenarios[int(turn.get("step") or 0) - 1],
+                assistant_reply=str(turn.get("assistant_reply") or ""),
+                score=score,
+                comment=comment,
+            )
             score, comment = enforce_vacancy_link_answer_rule(
                 scenario=scenarios[int(turn.get("step") or 0) - 1],
                 assistant_reply=str(turn.get("assistant_reply") or ""),
@@ -2914,6 +2995,7 @@ def run_chain_group(
         "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
         "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
         "vacancy_ref": build_vacancy_ref(dialog_context_meta),
+        "prompt_context": build_prompt_context_ref(dialog_context_meta),
         "runs_total": len(runs),
         "turns_total": total_turns,
         "score_total": total_score,

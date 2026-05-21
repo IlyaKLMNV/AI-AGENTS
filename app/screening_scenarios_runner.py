@@ -329,7 +329,7 @@ CONTACT_SOURCE_EMPTY_SCENARIOS = {41}
 CONTACT_SOURCE_SCENARIOS = CONTACT_SOURCE_FILLED_SCENARIOS | CONTACT_SOURCE_EMPTY_SCENARIOS
 CONTACT_SOURCE_RESUME_SCENARIOS = {60}
 LEGITIMACY_SCENARIOS = {7, 42}
-SALARY_NORMALIZATION_SCENARIOS = {43, 44, 45, 46, 47, 48, 49}
+SALARY_NORMALIZATION_SCENARIOS = {43, 44, 45, 46, 47, 48, 49, 63, 64}
 PROFILE_REFERENCE_SCENARIOS = {50, 51, 61}
 PROFILE_REFERENCE_RESUME_SCENARIOS = {62}
 PAUSE_LATER_SCENARIOS = {52, 53, 54, 55, 57}
@@ -1333,7 +1333,7 @@ def build_dialog_context(
     return context_text, context_meta
 
 
-def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
+def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
     company = str(dialog_context_meta.get("company_name") or "").strip()
     if not company:
         company = str(dialog_context_meta.get("original_company_name") or "").strip()
@@ -1345,6 +1345,25 @@ def build_vacancy_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, str]:
         "location": str(dialog_context_meta.get("location") or "").strip(),
         "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
     }
+
+
+def build_prompt_context_ref(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
+    prompt_context: Dict[str, Any] = {
+        "min_salary": str(dialog_context_meta.get("min_salary") or "").strip(),
+        "max_salary": str(dialog_context_meta.get("max_salary") or "").strip(),
+        "salary": str(dialog_context_meta.get("salary") or "").strip(),
+        "questions": str(dialog_context_meta.get("questions") or "").strip(),
+        "contact_source": str(dialog_context_meta.get("contact_source") or "").strip(),
+        "responsibilities": str(dialog_context_meta.get("responsibilities") or "").strip(),
+        "company_description": str(dialog_context_meta.get("firm_description") or "").strip(),
+        "vacancy_url": str(dialog_context_meta.get("vacancy_url") or "").strip(),
+        "location": str(dialog_context_meta.get("location") or "").strip(),
+        "work_format": str(dialog_context_meta.get("work_format") or "").strip(),
+    }
+    original_company_name = str(dialog_context_meta.get("original_company_name") or "").strip()
+    if original_company_name and not bool(dialog_context_meta.get("company_hidden", False)):
+        prompt_context["original_company_name"] = original_company_name
+    return prompt_context
 
 
 def _short_reason(comment: str, limit: int = 140) -> str:
@@ -1416,6 +1435,8 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "scenario_name": str(case.get("scenario_name") or ""),
                 "cdm_file": str(case.get("cdm_file") or ""),
                 "company_hidden": bool(case.get("company_hidden", False)),
+                "vacancy_ref": dict(case.get("vacancy_ref") or {}),
+                "prompt_context": dict(case.get("prompt_context") or {}),
                 "problem_summary": _compact_problem_summary(dialogs),
                 "dialogs": dialogs,
             }
@@ -1455,6 +1476,8 @@ def build_mismatches(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "scenario_names": list(case.get("scenario_names") or []),
                     "cdm_file": str(case.get("cdm_file") or ""),
                     "company_hidden": bool(case.get("company_hidden", False)),
+                    "vacancy_ref": dict(case.get("vacancy_ref") or {}),
+                    "prompt_context": dict(case.get("prompt_context") or {}),
                     "problem_summary": _compact_problem_summary(dialogs),
                     "dialogs": dialogs,
                 }
@@ -3517,11 +3540,11 @@ def enforce_salary_normalization_rules(
             return 1, "Salary rule passed: explicit monthly salary above the budget triggers the standard salary rejection END script."
         return 0, "Salary rule failed: explicit monthly salary above the budget must use the standard salary rejection END script."
 
-    if idx in (46, 47, 48, 49):
+    if idx in (46, 47, 48, 49, 63, 64):
         if _reply_has_end_marker(assistant_reply):
-            return 0, "Salary rule failed: ambiguous/hourly/currency salary must not end the dialogue."
+            return 0, "Salary rule failed: ambiguous/hourly/currency/gross salary must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
-            return 0, "Salary rule failed: ambiguous/hourly/currency salary must trigger clarification in monthly net rubles."
+            return 0, "Salary rule failed: ambiguous/hourly/currency/gross salary must trigger clarification in monthly net rubles."
         return 1, "Salary rule passed: assistant asks to clarify monthly net salary in rubles."
 
     if _reply_has_end_marker(assistant_reply):
@@ -3871,6 +3894,7 @@ def run_single_scenario(
         "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
         "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
         "vacancy_ref": build_vacancy_ref(dialog_context_meta),
+        "prompt_context": build_prompt_context_ref(dialog_context_meta),
         "turns_total": turns_total,
         "score_total": scenario_score,
         "passed": scenario_score == turns_total,
@@ -4029,6 +4053,7 @@ def run_chain_group(
         "cdm_file": str(dialog_context_meta.get("cdm_file") or ""),
         "company_hidden": bool(dialog_context_meta.get("company_hidden", False)),
         "vacancy_ref": build_vacancy_ref(dialog_context_meta),
+        "prompt_context": build_prompt_context_ref(dialog_context_meta),
         "runs_total": len(runs),
         "turns_total": total_turns,
         "score_total": total_score,
