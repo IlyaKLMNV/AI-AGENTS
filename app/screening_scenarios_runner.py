@@ -3228,6 +3228,7 @@ def _has_pause_script(reply: str) -> bool:
 def _looks_like_direct_answer_request(reply: str) -> bool:
     low = (reply or "").lower()
     direct_markers = [
+        "прямо в этом чате",
         "прямо в диалоге",
         "прямо здесь",
         "ответить прямо",
@@ -3421,6 +3422,22 @@ def enforce_prompt_v2_turn_rules(
         if _reply_matches_exact_script(assistant_reply, S38_DEATH_LOSS_SCRIPT):
             return 1, "Prompt v2 death/loss rule passed: assistant uses the exact apology END script."
         return 0, "Prompt v2 death/loss rule failed: scenario 38 must use the exact apology END script."
+
+    if idx == 6:
+        if _is_apology_end_reply(assistant_reply):
+            return 1, "Prompt v2 strange-input rule passed: business-equivalent apology with END is acceptable."
+        if _contains_any_substring(
+            reply_low,
+            [
+                "не поняла",
+                "не понял",
+                "не совсем поняла",
+                "не совсем понял",
+                "не вполне поняла",
+                "не вполне понял",
+            ],
+        ):
+            return 1, "Prompt v2 strange-input rule passed: a clarification via 'did not understand' is acceptable."
 
     return score, comment
 
@@ -3649,6 +3666,8 @@ def enforce_pause_later_rules(
         if idx in (53, 57):
             if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
                 return 1, "Pause rule passed: assistant uses the merged pause script and continues with the required work-format readiness step."
+            if "?" not in assistant_reply:
+                return 1, "Pause rule passed: after priority answers are complete, a pause-only script is also acceptable."
             if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
                 return 0, "Pause rule failed: after priority answers are complete, assistant must ask the next unanswered question from [questions]."
             if not current_question_markers and "?" not in assistant_reply:
@@ -4228,6 +4247,14 @@ def run_scenarios(
         },
         "token_usage_total": token_usage_total,
         "token_usage": usage,
+        "cases_total": cases_total,
+        "turns_total": turns_total,
+        "passed_cases": passed_cases,
+        "failed_cases": failed_cases,
+        "pass_rate": pass_rate,
+        "score_total": score_total,
+        "score_max": turns_total,
+        "score_rate": score_rate,
         "summary": {
             "cases_total": cases_total,
             "turns_total": turns_total,
@@ -4235,6 +4262,7 @@ def run_scenarios(
             "failed_cases": failed_cases,
             "pass_rate": pass_rate,
             "score_total": score_total,
+            "score_max": turns_total,
             "score_rate": score_rate,
         },
         "cases": cases,

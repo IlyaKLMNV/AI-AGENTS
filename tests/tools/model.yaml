@@ -15,7 +15,7 @@ message_classifier:
 
 screening_assistant:
   prompt_id: pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf
-  prompt_version: 46
+  prompt_version: 49
   seed: 1234
 
 screening_assistant_hh:
