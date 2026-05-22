@@ -29,13 +29,13 @@ SOURCE_OBJECT_CASES: List[Dict[str, Any]] = [
         "id": "candidate_source_linkedin_profile",
         "candidate_source": "профиль LinkedIn",
         "allowed_forms": ["ваш профиль linkedin", "ваш профиль на linkedin"],
-        "bare_forms": ["профиль linkedin"],
+        "bare_forms": ["профиль linkedin", "профиль на linkedin"],
     },
     {
         "id": "candidate_source_hh_resume",
         "candidate_source": "резюме HH",
-        "allowed_forms": ["ваше резюме hh"],
-        "bare_forms": ["резюме hh"],
+        "allowed_forms": ["ваше резюме на hh"],
+        "bare_forms": ["резюме hh", "резюме на hh"],
     },
     {
         "id": "candidate_source_github",
@@ -52,8 +52,8 @@ SOURCE_OBJECT_CASES: List[Dict[str, Any]] = [
     {
         "id": "candidate_source_linkedin_page",
         "candidate_source": "страница на LinkedIn",
-        "allowed_forms": ["вашу страницу на linkedin", "ваш профиль linkedin", "ваш профиль на linkedin"],
-        "bare_forms": ["страница на linkedin", "профиль linkedin"],
+        "allowed_forms": ["вашу страницу на linkedin"],
+        "bare_forms": ["страница на linkedin", "ваша страница на linkedin", "профиль linkedin", "профиль на linkedin"],
     },
     {
         "id": "candidate_source_empty",
@@ -65,7 +65,7 @@ SOURCE_OBJECT_CASES: List[Dict[str, Any]] = [
         "id": "candidate_source_github_account",
         "candidate_source": "аккаунт GitHub",
         "allowed_forms": ["ваш аккаунт github"],
-        "bare_forms": ["аккаунт github"],
+        "bare_forms": ["аккаунт github", "ваш github", "ваш профиль на github"],
     },
 ]
 
@@ -585,7 +585,7 @@ def _report_definitions(require_question: bool) -> Dict[str, Any]:
             "missing_optional_keys": "Диагностика. Не влияет на passed.",
             "hallucinated_facts": "Диагностика (passed_strict=false, но passed может быть true).",
             "allowed_context_facts": "Контекст (candidate_source, reason_of_communication) не считается галлюцинацией.",
-            "source_possessive_ok": "Проверка корректного употребления форм 'Ваш / Ваше / Вашу' для candidate_source, относящегося к объекту кандидата.",
+            "source_possessive_ok": "Проверка корректного употребления форм 'Ваш / Ваше / Вашу' для candidate_source. Пустой источник не должен порождать LinkedIn/HH/GitHub/портфолио, а для GitHub допустимы близкие притяжательные эквиваленты вроде 'Ваш GitHub' и 'Ваш профиль на GitHub'.",
         },
     }
 
