@@ -338,6 +338,7 @@ HH_LOCATION_FORMAT_SCENARIOS = {28, 29, 30, 31, 33, 34, 35, 51, 52}
 HH_SALARY_BUDGET_EDGE_SCENARIOS = {53, 54}
 HH_GROSS_SALARY_CLARIFICATION_SCENARIOS = {53, 54}
 HH_VACANCY_LINK_SCENARIOS = {55}
+HH_RECRUITING_AGENCY_SCENARIOS = {56, 57, 58}
 HH_DISABLED_SCENARIOS: set[int] = set()
 HH_STABLE_GENERATION_SCENARIOS = {
     8,
@@ -371,6 +372,9 @@ HH_STABLE_GENERATION_SCENARIOS = {
     53,
     54,
     55,
+    56,
+    57,
+    58,
 }
 FORCED_FALLBACK_SCENARIOS = (
     LEGITIMACY_SCENARIOS
@@ -382,6 +386,7 @@ FORCED_FALLBACK_SCENARIOS = (
     | HH_STABLE_GENERATION_SCENARIOS
     | HH_SALARY_BUDGET_EDGE_SCENARIOS
     | HH_VACANCY_LINK_SCENARIOS
+    | HH_RECRUITING_AGENCY_SCENARIOS
 )
 HH_SPECIAL_FIXTURES = {
     "cdm_16.json",
@@ -412,6 +417,7 @@ CONTEXT_LEAK_MARKERS = [
     "[questions]",
 ]
 RUDE_TONE_ALLOWED_SCENARIOS = {2, 8}
+RECRUITING_AGENCY_NAME = "рекрутинговое агентство"
 UNWANTED_RUDENESS_MARKERS = [
     "черт",
     "чёрт",
@@ -1003,6 +1009,103 @@ class CdmFixture:
     contact_source: str
 
 
+def _normalized_low(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").replace("ё", "е")).strip().lower()
+
+
+def _copy_fixture_with_overrides(
+    fixture: CdmFixture,
+    *,
+    vacancy_info_override: Optional[Dict[str, Any]] = None,
+    names_override: Optional[Dict[str, Any]] = None,
+    contact_source_override: Optional[str] = None,
+) -> CdmFixture:
+    vacancy_info = dict(fixture.vacancy_info or {})
+    names = dict(fixture.names or {})
+    if vacancy_info_override:
+        vacancy_info.update(vacancy_info_override)
+    if names_override:
+        names.update({str(k): str(v) for k, v in names_override.items()})
+    contact_source = fixture.contact_source if contact_source_override is None else str(contact_source_override)
+    return CdmFixture(
+        file_name=fixture.file_name,
+        vacancy_info=vacancy_info,
+        names=names,
+        contact_source=contact_source,
+    )
+
+
+def _hh_recruiting_agency_context_override(
+    group: ScenarioGroup,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    if group.kind != "single" or len(group.scenarios) != 1:
+        return None, None
+
+    idx = group.scenarios[0].index
+    if idx == 56:
+        return (
+            {
+                "title": "Senior Backend Developer",
+                "company_name": RECRUITING_AGENCY_NAME,
+                "work_format": "REMOTE",
+                "location": "Россия",
+                "min_salary": "350000",
+                "max_salary": "450000",
+                "vacancy_description": "B2B SaaS продукт, backend-команда, распределенная разработка",
+                "questions": "",
+            },
+            {
+                "recruiter_name": "Варя",
+                "candidate_name": "Алексей",
+                "recruiting_agency_mode": "unknown_employer",
+                "initial_outreach": False,
+            },
+        )
+
+    if idx == 57:
+        return (
+            {
+                "title": "Senior Backend Developer",
+                "company_name": "Авито",
+                "work_format": "REMOTE",
+                "location": "Россия",
+                "min_salary": "350000",
+                "max_salary": "450000",
+                "vacancy_description": "Поиск по позиции ведет рекрутинговое агентство.\nbackend-разработка внутренних сервисов",
+                "questions": "",
+            },
+            {
+                "recruiter_name": "Варя",
+                "candidate_name": "Алексей",
+                "recruiting_agency_mode": "known_employer",
+                "known_employer_name": "Авито",
+                "initial_outreach": False,
+            },
+        )
+
+    if idx == 58:
+        return (
+            {
+                "title": "Senior Backend Developer",
+                "company_name": RECRUITING_AGENCY_NAME,
+                "work_format": "REMOTE",
+                "location": "Россия",
+                "min_salary": "350000",
+                "max_salary": "450000",
+                "vacancy_description": "backend-команда B2B продукта",
+                "questions": "",
+            },
+            {
+                "recruiter_name": "Варя",
+                "candidate_name": "Алексей",
+                "recruiting_agency_mode": "unknown_employer",
+                "initial_outreach": True,
+            },
+        )
+
+    return None, None
+
+
 def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
     wanted = set(indices)
     return any(s.index in wanted for s in group.scenarios)
@@ -1077,6 +1180,9 @@ def _fixture_matches_group_requirements(
 
     if _group_has_any_scenario(group, [55]):
         return fixture.file_name == "cdm_hh_01.json"
+
+    if _group_has_any_scenario(group, [56, 57, 58]):
+        return fixture.file_name == "cdm_hh_03.json"
 
     if _group_has_any_scenario(group, [43, 44, 45, 46, 47, 48, 49]):
         return fixture.file_name in {"cdm_hh_01.json"}
@@ -2382,6 +2488,30 @@ class SimpleScreeningAssistant:
         self.last_usage = getattr(response, "usage", None)
         return (getattr(response, "output_text", "") or "").strip()
 
+    def start_dialogue(self) -> str:
+        payload_lines = [
+            "РљРѕРЅС‚РµРєСЃС‚: С‚С‹ РІС‹СЃС‚СѓРїР°РµС€СЊ РєР°Рє IT-СЂРµРєСЂСѓС‚РµСЂ РІ РїРµСЂРІРёС‡РЅРѕРј СЃРєСЂРёРЅРёРЅРіРµ РєР°РЅРґРёРґР°С‚Р°.",
+            "РЎРѕР±Р»СЋРґР°Р№ РІСЃРµ РїСЂР°РІРёР»Р° СЃРёСЃС‚РµРјРЅРѕРіРѕ РїСЂРѕРјРїС‚Р° screening_assistant_hh,",
+            "РѕСЃРѕР±РµРЅРЅРѕ РїРѕ KO-РїСЂР°РІРёР»Р°Рј, С‚СЂРёРіРіРµСЂР°Рј Рё РјР°СЂРєРµСЂСѓ END.",
+            "",
+        ]
+        if self.dialog_context:
+            payload_lines.append(self.dialog_context)
+            payload_lines.append("")
+        payload_lines.extend(
+            [
+                "Р”РёР°Р»РѕРі РµС‰Рµ РЅРµ РЅР°С‡Р°Р»СЃСЏ. РЎС„РѕСЂРјСѓР»РёСЂСѓР№ СЃР°РјРѕРµ РїРµСЂРІРѕРµ РёСЃС…РѕРґСЏС‰РµРµ СЃРѕРѕР±С‰РµРЅРёРµ СЂРµРєСЂСѓС‚РµСЂР° РєР°РЅРґРёРґР°С‚Сѓ.",
+                "РћС‚РІРµС‚СЊ С‚РѕР»СЊРєРѕ РѕРґРЅРёРј СЃРѕРѕР±С‰РµРЅРёРµРј СЂРµРєСЂСѓС‚РµСЂР°.",
+            ]
+        )
+        payload = "\n".join(payload_lines)
+        response = self.client.responses.create(
+            prompt=self.prompt,
+            input=payload,
+        )
+        self.last_usage = getattr(response, "usage", None)
+        return (getattr(response, "output_text", "") or "").strip()
+
 
 # -----------------------
 # Conversation клиент (chain сценарии - один диалог на цепочку)
@@ -2479,7 +2609,7 @@ def create_conversation_assistant(
 
 
 def _case_evaluation_context(dialog_context_meta: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    ctx = {
         "title": str(dialog_context_meta.get("title") or "").strip(),
         "company_name": str(dialog_context_meta.get("company_name") or "").strip(),
         "location": str(dialog_context_meta.get("location") or "").strip(),
@@ -2492,6 +2622,15 @@ def _case_evaluation_context(dialog_context_meta: Dict[str, Any]) -> Dict[str, A
         "salary": str(dialog_context_meta.get("salary") or "").strip(),
         "questions": str(dialog_context_meta.get("questions") or "").strip(),
     }
+    recruiting_agency_mode = str(dialog_context_meta.get("recruiting_agency_mode") or "").strip()
+    if recruiting_agency_mode:
+        ctx["recruiting_agency_mode"] = recruiting_agency_mode
+    known_employer_name = str(dialog_context_meta.get("known_employer_name") or "").strip()
+    if known_employer_name:
+        ctx["known_employer_name"] = known_employer_name
+    if dialog_context_meta.get("initial_outreach"):
+        ctx["initial_outreach"] = True
+    return ctx
 
 
 def _safe_eval_score(value: Any) -> int:
@@ -2523,6 +2662,8 @@ def _evaluate_single_case(
         "Natural questions about readiness for office, hybrid, remote, field work, commuting, relocation, or working from the required location count as valid if the meaning matches.\n"
         "REMOTE does not cancel location restrictions. If vacancy_context has a non-empty location or an explicit geo restriction in vacancy_description, a location-based refusal may still be valid.\n"
         "For location-refusal scenarios, accept any semantically correct refusal with END; do not require the assistant to cite the exact same wording or the most specific geographic label unless expected_behavior explicitly demands it.\n"
+        "If vacancy_context.recruiting_agency_mode is present, do not require the assistant to present a recruiting agency as the employer. A valid pass may neutrally say that the search is led by a recruiting agency. If known_employer_name is empty, fail invented employer names, invented company names, or invented sites/links.\n"
+        "If vacancy_context.initial_outreach is true and candidate_message is empty, judge the assistant message as the first outbound recruiter message at the start of the dialogue rather than as a reply to a candidate turn.\n"
         "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Phrases like 'прямо в этом чате', 'прямо в диалоге', or 'прямо здесь' count as valid direct-answer requests. Fail only if it jumps to a different question.\n"
         "Ignore awkwardness of synthetic candidate phrasing and judge only the assistant behavior.\n"
         "Return JSON only in this format:\n"
@@ -2694,6 +2835,68 @@ def _question_mark_count(text: str) -> int:
     return (text or "").count("?")
 
 
+def _reply_contains_url_or_domain(text: str) -> bool:
+    raw = str(text or "")
+    if re.search(r"https?://|www\.", raw, flags=re.IGNORECASE):
+        return True
+    return bool(re.search(r"\b(?:[a-z0-9-]+\.)+(?:ru|com|net|org|io|ai|dev|co|biz)\b", raw, flags=re.IGNORECASE))
+
+
+def _reply_presents_agency_as_company_or_employer(reply: str) -> bool:
+    low = _normalized_low(reply)
+    agency = re.escape(RECRUITING_AGENCY_NAME)
+    patterns = [
+        rf"\bработодатель\b[^.:\n]{{0,40}}{agency}\b",
+        rf"\bкомпан(?:ия|ии)\b[^.:\n]{{0,40}}{agency}\b",
+        rf"\bв компании\s+{agency}\b",
+        rf"\bпозици(?:я|и)\s+в\s+{agency}\b",
+        rf"\bваканси(?:я|и)\s+в\s+{agency}\b",
+    ]
+    return any(re.search(pattern, low) for pattern in patterns)
+
+
+def _reply_has_salary_question(reply: str) -> bool:
+    low = _normalized_low(reply)
+    return "?" in (reply or "") and _contains_any_substring(
+        low,
+        [
+            "зарплат",
+            "ожидани",
+            "на какую сумму",
+            "какую сумму",
+            "финансов",
+            "доход",
+        ],
+    )
+
+
+def _reply_has_location_question(reply: str) -> bool:
+    low = _normalized_low(reply)
+    return "?" in (reply or "") and _contains_any_substring(
+        low,
+        [
+            "в каком городе",
+            "каком городе",
+            "где находит",
+            "ваш город",
+            "из какого города",
+            "локац",
+        ],
+    )
+
+
+def _reply_has_company_answer(reply: str, known_employer_name: str = "") -> bool:
+    low = _normalized_low(reply)
+    if known_employer_name and _normalized_low(known_employer_name) in low:
+        return True
+    return _contains_any_substring(low, ["компан", "работодател", "поиск по позиции", "рекрутингов", "работаем по позиции"])
+
+
+def _reply_has_greeting(reply: str) -> bool:
+    low = _normalized_low(reply)
+    return _contains_any_substring(low, ["здравствуйте", "добрый день", "алексей, здравствуйте", "алексей, добрый день"])
+
+
 def _is_monthly_rubles_clarification_reply(reply: str) -> bool:
     low = (reply or "").lower()
     clarify_markers = [
@@ -2782,6 +2985,46 @@ def enforce_vacancy_link_answer_rule(
     return 1, "Scenario 55 strict check passed: the vacancy link from vacancy_description is present in the assistant reply."
 
 
+def enforce_recruiting_agency_rules(
+    scenario: Scenario,
+    assistant_reply: str,
+    score: int,
+    comment: str,
+    dialog_context_meta: Dict[str, Any],
+) -> Tuple[int, str]:
+    if scenario.index not in HH_RECRUITING_AGENCY_SCENARIOS:
+        return score, comment
+
+    reply = str(assistant_reply or "")
+    known_employer_name = str(dialog_context_meta.get("known_employer_name") or "").strip()
+    expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
+
+    if _reply_has_end_marker(reply):
+        return 0, f"Scenario {scenario.index} strict check failed: assistant must not end the dialogue."
+    if _reply_presents_agency_as_company_or_employer(reply):
+        return 0, f"Scenario {scenario.index} strict check failed: recruiting agency must not be presented as the employer or company."
+    if not expected_url and _reply_contains_url_or_domain(reply):
+        return 0, f"Scenario {scenario.index} strict check failed: assistant must not invent a link, site, or domain."
+
+    if scenario.index in (56, 57):
+        if not _reply_has_company_answer(reply, known_employer_name=known_employer_name):
+            return 0, f"Scenario {scenario.index} strict check failed: assistant should briefly answer the company/employer question."
+        if not (_reply_has_salary_question(reply) or _reply_has_location_question(reply)):
+            return 0, f"Scenario {scenario.index} strict check failed: assistant should continue screening with the next relevant question."
+        return 1, f"Scenario {scenario.index} strict check passed: company handling is neutral and the screening continues."
+
+    if scenario.index == 58:
+        if not _reply_has_greeting(reply):
+            return 0, "Scenario 58 strict check failed: start message should include a greeting."
+        if not _reply_has_salary_question(reply):
+            return 0, "Scenario 58 strict check failed: start message should include a salary-expectations question."
+        if not _reply_has_location_question(reply):
+            return 0, "Scenario 58 strict check failed: start message should include a location question."
+        return 1, "Scenario 58 strict check passed: start message keeps neutral company handling and asks the priority questions."
+
+    return score, comment
+
+
 
 
 
@@ -2818,7 +3061,10 @@ def run_single_scenario(
     turns: List[Dict[str, Any]] = []
 
     for step_idx, cand_msg in enumerate(candidate_messages, start=1):
-        reply = assistant.reply_one_turn(cand_msg)
+        if scenario.index == 58 and not str(cand_msg or "").strip():
+            reply = assistant.start_dialogue()
+        else:
+            reply = assistant.reply_one_turn(cand_msg)
         _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
 
         turn = {
@@ -2852,6 +3098,13 @@ def run_single_scenario(
             comment=comment,
         )
         score, comment = enforce_vacancy_link_answer_rule(
+            scenario=scenario,
+            assistant_reply=str(turn.get("assistant_reply") or ""),
+            score=score,
+            comment=comment,
+            dialog_context_meta=dialog_context_meta,
+        )
+        score, comment = enforce_recruiting_agency_rules(
             scenario=scenario,
             assistant_reply=str(turn.get("assistant_reply") or ""),
             score=score,
@@ -3101,7 +3354,22 @@ def run_scenarios(
     for gidx, group in enumerate(groups, start=1):
         print(f"\n[case {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
         fixture = _select_cdm_fixture_for_group(cdm_fixtures, group, gidx)
+        vacancy_info_override, meta_override = _hh_recruiting_agency_context_override(group)
+        if vacancy_info_override or meta_override:
+            fixture = _copy_fixture_with_overrides(
+                fixture,
+                vacancy_info_override=vacancy_info_override,
+                names_override={
+                    "recruiter_name": meta_override.get("recruiter_name", "") if meta_override else "",
+                    "candidate_name": meta_override.get("candidate_name", "") if meta_override else "",
+                } if meta_override else None,
+            )
         dialog_context, dialog_context_meta = build_dialog_context(fixture=fixture)
+        if meta_override:
+            for key, value in meta_override.items():
+                if key in {"recruiter_name", "candidate_name"}:
+                    continue
+                dialog_context_meta[key] = value
         print(
             f"  - cdm={fixture.file_name} | "
             f"company_hidden=NO"
@@ -3374,6 +3642,21 @@ def _fallback_messages(
             "Добрый день, да было бы интересно, подскажите где подробнее ознакомиться с вакансией и стеком можно?",
             "Здравствуйте, предложение интересно. Можете прислать ссылку на вакансию, чтобы подробнее посмотреть задачи и стек?",
             "Добрый день! Интересно, где можно подробнее почитать про вакансию и используемый стек?",
+        ],
+        56: [
+            "Добрый день. А что за компания и кто работодатель?",
+            "Здравствуйте. Что это за компания и кто конечный работодатель?",
+            "Добрый день, подскажите, пожалуйста, кто работодатель по этой позиции и что за компания?",
+        ],
+        57: [
+            "Подскажите, пожалуйста, что за компания?",
+            "Добрый день. А что за компания у этой вакансии?",
+            "Здравствуйте, подскажите, пожалуйста, какая компания по этой позиции?",
+        ],
+        58: [
+            "",
+            "",
+            "",
         ],
     }
     alias_messages = {

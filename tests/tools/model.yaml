@@ -3,6 +3,11 @@ first_touch:
   prompt_version: 13
   seed: 1234
 
+first_touch_hh:
+  prompt_id: pmpt_69b1c0e900988196bc62ef7809e7939c07e3907d5493ecc5
+  prompt_version: 3
+  seed: 1234
+
 first_touch_event_invite:
   prompt_id: pmpt_69ce8e02fc4081958ec897a73fa07961066f8c3e46cdc060
   prompt_version: 8
@@ -10,7 +15,7 @@ first_touch_event_invite:
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
-  prompt_version: 10
+  prompt_version: 11
   seed: 1234
 
 screening_assistant:
@@ -20,7 +25,7 @@ screening_assistant:
 
 screening_assistant_hh:
   prompt_id: pmpt_69fcfc0bced48193ba7d544092b466050a5817bedd826d40
-  prompt_version: 4
+  prompt_version: 5
   seed: 1234
 
 screening_autofill:
