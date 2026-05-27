@@ -3223,6 +3223,16 @@ def _looks_like_direct_answer_request(reply: str) -> bool:
         "прямо в этом чате",
         "прямо в диалоге",
         "прямо здесь",
+        "об этом здесь",
+        "об этом в чате",
+        "расскажите об этом здесь",
+        "расскажите об этом в чате",
+        "коротко расскажите об этом здесь",
+        "коротко расскажите об этом в чате",
+        "коротко рассказали об этом здесь",
+        "коротко рассказали об этом в чате",
+        "опишите это в чате",
+        "опишите это здесь",
         "ответить прямо",
         "для корректной фиксации",
         "для корректной фиксации данных",
@@ -4060,7 +4070,6 @@ def run_chain_group(
         "runs_total": len(runs),
         "turns_total": total_turns,
         "score_total": total_score,
-        "score_rate": (total_score / total_turns) if total_turns else 0.0,
         "passed": all(bool(run.get("passed")) for run in runs),
         "runs": runs,
     }
@@ -4200,12 +4209,12 @@ def run_scenarios(
     cases_total = len(cases)
     turns_total = sum(int(case.get("turns_total", 0)) for case in cases)
     score_total = sum(int(case.get("score_total", 0)) for case in cases)
-    score_rate = (score_total / turns_total * 100.0) if turns_total else 0.0
     passed_cases = sum(1 for case in cases if bool(case.get("passed")))
     failed_cases = cases_total - passed_cases
     pass_rate = (passed_cases / cases_total * 100.0) if cases_total else 0.0
 
     mismatches = build_mismatches(cases)
+    failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     errors: List[Dict[str, Any]] = []
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
@@ -4236,10 +4245,10 @@ def run_scenarios(
         "turns_total": turns_total,
         "passed_cases": passed_cases,
         "failed_cases": failed_cases,
+        "failed_turns": failed_turns,
         "pass_rate": pass_rate,
         "score_total": score_total,
         "score_max": turns_total,
-        "score_rate": score_rate,
         "mismatches_count": len(mismatches),
         "errors_count": len(errors),
         "summary": {
@@ -4247,10 +4256,10 @@ def run_scenarios(
             "turns_total": turns_total,
             "passed_cases": passed_cases,
             "failed_cases": failed_cases,
+            "failed_turns": failed_turns,
             "pass_rate": pass_rate,
             "score_total": score_total,
             "score_max": turns_total,
-            "score_rate": score_rate,
             "mismatches_count": len(mismatches),
             "errors_count": len(errors),
         },
@@ -4263,11 +4272,10 @@ def run_scenarios(
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n[done] Screening scenarios report saved to: {out_path}")
-    failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     print(
         f"[summary] cases_total={cases_total} | turns_total={turns_total} | "
-        f"score_total={score_total} | score_rate={score_rate:.2f}% | "
-        f"pass_rate={pass_rate:.2f}% | failed_cases={failed_cases} | failed_turns={failed_turns}"
+        f"score_total={score_total} | pass_rate={pass_rate:.2f}% | "
+        f"failed_cases={failed_cases} | failed_turns={failed_turns}"
     )
 
     return out_path

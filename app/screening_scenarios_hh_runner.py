@@ -325,20 +325,19 @@ CHAIN_BY_INDEX: Dict[str, List[int]] = {
 }
 
 
-CHAIN_BY_INDEX["chain_pause_resume_priority"] = [43, 44]
-CHAIN_BY_INDEX["chain_pause_resume_questions"] = [45, 46]
+CHAIN_BY_INDEX["chain_pause_resume_priority"] = [42, 43]
+CHAIN_BY_INDEX["chain_pause_resume_questions"] = [44, 45]
 
 LEGITIMACY_SCENARIOS = {7}
-SALARY_NORMALIZATION_SCENARIOS = {35, 36, 37, 38, 39, 40}
-PROFILE_REFERENCE_SCENARIOS = {41}
-PAUSE_LATER_SCENARIOS = {42, 43, 45}
-PAUSE_LATER_RESUME_SCENARIOS = {44, 46}
-HH_OPEN_COMPANY_SCENARIOS = {21, 24}
-HH_LOCATION_FORMAT_SCENARIOS = {27, 28, 29, 30, 32, 33, 34, 48, 49}
-HH_SALARY_BUDGET_EDGE_SCENARIOS = {50}
-HH_GROSS_SALARY_CLARIFICATION_SCENARIOS = {50}
-HH_VACANCY_LINK_SCENARIOS = {51}
-HH_RECRUITING_AGENCY_SCENARIOS = {52, 53, 54}
+SALARY_NORMALIZATION_SCENARIOS = {34, 35, 36, 37, 38, 39}
+PROFILE_REFERENCE_SCENARIOS = {40}
+PAUSE_LATER_SCENARIOS = {42, 44}
+PAUSE_LATER_RESUME_SCENARIOS = {43, 45}
+HH_OPEN_COMPANY_SCENARIOS = {21}
+HH_LOCATION_FORMAT_SCENARIOS = {26, 27, 28, 29, 31, 32, 33, 47, 48}
+HH_SALARY_BUDGET_EDGE_SCENARIOS = {49}
+HH_GROSS_SALARY_CLARIFICATION_SCENARIOS = {49}
+HH_RECRUITING_AGENCY_SCENARIOS = {50}
 HH_DISABLED_SCENARIOS: set[int] = set()
 HH_STABLE_GENERATION_SCENARIOS = {
     8,
@@ -353,13 +352,13 @@ HH_STABLE_GENERATION_SCENARIOS = {
     21,
     22,
     23,
-    24,
+    26,
+    31,
     27,
-    32,
     28,
     29,
     30,
-    31,
+    33,
     34,
     35,
     36,
@@ -377,10 +376,6 @@ HH_STABLE_GENERATION_SCENARIOS = {
     48,
     49,
     50,
-    51,
-    52,
-    53,
-    54,
 }
 FORCED_FALLBACK_SCENARIOS = (
     LEGITIMACY_SCENARIOS
@@ -391,7 +386,6 @@ FORCED_FALLBACK_SCENARIOS = (
     | HH_LOCATION_FORMAT_SCENARIOS
     | HH_STABLE_GENERATION_SCENARIOS
     | HH_SALARY_BUDGET_EDGE_SCENARIOS
-    | HH_VACANCY_LINK_SCENARIOS
     | HH_RECRUITING_AGENCY_SCENARIOS
 )
 HH_SPECIAL_FIXTURES = {
@@ -671,22 +665,17 @@ SCENARIO_EXAMPLE_OVERRIDES: Dict[int, List[str]] = {
         "Какая компания, какие задачи и какой формат работы?",
         "Можно подробнее про компанию и позицию?",
     ],
-    24: [
-        "Как называется компания? Можно ссылку на вакансию?",
-        "Подскажите название компании и, если можно, сайт или ссылку.",
-        "Какая компания и где можно почитать про вакансию?",
-    ],
-    27: [
+    25: [
         "Сейчас живу в Москве, локация для меня подходит.",
         "Я нахожусь в Москве и могу рассматривать эту позицию.",
         "Проживаю в Москве, с локацией вакансии проблем нет.",
     ],
-    31: [
+    30: [
         "После недавней утраты в семье я сейчас не готов обсуждать такие предложения.",
         "Недавно были похороны близкого человека, поэтому я пока не могу продолжать этот разговор.",
         "После смерти родственника мне сейчас тяжело возвращаться к таким обсуждениям.",
     ],
-    33: [
+    31: [
         "Сейчас живу во Владивостоке, по зарплате ориентируюсь на 240 000 рублей на руки.",
         "Мой текущий город — Новосибирск, ожидания по деньгам около 250 000 рублей на руки.",
         "Я сейчас в Калининграде, по компенсации ориентируюсь на 235 000 рублей в месяц на руки.",
@@ -1058,65 +1047,12 @@ def _hh_recruiting_agency_context_override(
         return None, None
 
     idx = group.scenarios[0].index
-    if idx == 52:
+    if idx == 50:
         return (
             {
-                "title": "Senior Backend Developer",
                 "company_name": RECRUITING_AGENCY_NAME,
-                "work_format": "REMOTE",
-                "location": "Россия",
-                "min_salary": "350000",
-                "max_salary": "450000",
-                "vacancy_description": "B2B SaaS продукт, backend-команда, распределенная разработка",
-                "questions": "",
             },
-            {
-                "recruiter_name": "Варя",
-                "candidate_name": "Алексей",
-                "recruiting_agency_mode": "unknown_employer",
-                "initial_outreach": False,
-            },
-        )
-
-    if idx == 53:
-        return (
-            {
-                "title": "Senior Backend Developer",
-                "company_name": RECRUITING_AGENCY_NAME,
-                "work_format": "REMOTE",
-                "location": "Россия",
-                "min_salary": "350000",
-                "max_salary": "450000",
-                "vacancy_description": "backend-разработка внутренних сервисов",
-                "questions": "",
-            },
-            {
-                "recruiter_name": "Варя",
-                "candidate_name": "Алексей",
-                "recruiting_agency_mode": "known_employer",
-                "known_employer_name": "Авито",
-                "initial_outreach": False,
-            },
-        )
-
-    if idx == 54:
-        return (
-            {
-                "title": "Senior Backend Developer",
-                "company_name": RECRUITING_AGENCY_NAME,
-                "work_format": "REMOTE",
-                "location": "Россия",
-                "min_salary": "350000",
-                "max_salary": "450000",
-                "vacancy_description": "backend-команда B2B продукта",
-                "questions": "",
-            },
-            {
-                "recruiter_name": "Варя",
-                "candidate_name": "Алексей",
-                "recruiting_agency_mode": "unknown_employer",
-                "initial_outreach": True,
-            },
+            None,
         )
 
     return None, None
@@ -1130,7 +1066,7 @@ def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
 def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
     return _group_has_any_scenario(
         group,
-        [7, 21, 24] + list(range(27, 51)),
+        [7, 21] + list(range(25, 51)),
     )
 
 
@@ -1159,48 +1095,45 @@ def _fixture_matches_group_requirements(
     if _group_has_any_scenario(group, [21]):
         return fixture.file_name in {"cdm_hh_02.json", "cdm_hh_08.json"}
 
-    if _group_has_any_scenario(group, [24]):
-        return fixture.file_name in {"cdm_hh_01.json", "cdm_hh_02.json"}
-
-    if _group_has_any_scenario(group, [27]):
+    if _group_has_any_scenario(group, [26]):
         return fixture.file_name == "cdm_hh_08.json"
 
-    if _group_has_any_scenario(group, [28, 32]):
+    if _group_has_any_scenario(group, [27]):
         return "HYBRID" in work_format_ids and "моск" in location
 
-    if _group_has_any_scenario(group, [29]):
+    if _group_has_any_scenario(group, [28]):
         if not {"ON_SITE", "REMOTE"} & set(work_format_ids):
             return False
         return len(work_format_ids) >= 2
 
-    if _group_has_any_scenario(group, [30]):
+    if _group_has_any_scenario(group, [29]):
         return len(work_format_ids) >= 2 or "HYBRID" in work_format_ids or "ON_SITE" in work_format_ids
 
-    if _group_has_any_scenario(group, [33]):
+    if _group_has_any_scenario(group, [31]):
+        return bool(location)
+
+    if _group_has_any_scenario(group, [32]):
         return "REMOTE" in work_format_ids and "только из рф" in vacancy_description
 
-    if _group_has_any_scenario(group, [34]):
+    if _group_has_any_scenario(group, [33]):
         return "REMOTE" in work_format_ids and "важно находиться в москве" in vacancy_description
 
-    if _group_has_any_scenario(group, [48]):
+    if _group_has_any_scenario(group, [47]):
         return "FIELD_WORK" in work_format_ids
 
-    if _group_has_any_scenario(group, [49]):
+    if _group_has_any_scenario(group, [48]):
         return not location
 
+    if _group_has_any_scenario(group, [49]):
+        return fixture.file_name == "cdm_hh_01.json"
+
     if _group_has_any_scenario(group, [50]):
-        return fixture.file_name == "cdm_hh_01.json"
-
-    if _group_has_any_scenario(group, [51]):
-        return fixture.file_name == "cdm_hh_01.json"
-
-    if _group_has_any_scenario(group, [52, 53, 54]):
         return fixture.file_name == "cdm_hh_03.json"
 
-    if _group_has_any_scenario(group, [41, 42, 43, 44, 45, 46]):
+    if _group_has_any_scenario(group, [40, 41, 42, 43, 44, 45]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
-    if _group_has_any_scenario(group, [35, 36, 37, 38, 39, 40]):
+    if _group_has_any_scenario(group, [34, 35, 36, 37, 38, 39]):
         return fixture.file_name in {"cdm_hh_01.json"}
 
     return True
@@ -1833,13 +1766,6 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Это не спор и не претензия, а обычный информативный вопрос кандидата.\n"
         )
 
-    if idx == 24:
-        return (
-            "В КАЖДОЙ реплике кандидат должен прямо спрашивать: какая компания/как называется компания,"
-            " можно ли дать сайт/ссылку на вакансию.\n"
-            "Это открытый поиск: кандидат ожидает раскрытия названия компании.\n"
-        )
-
     # 19/20 - бот
     if idx == 19:
         return (
@@ -1867,57 +1793,57 @@ def _trigger_requirement_text(s: Scenario) -> str:
             "Не подменяй этот триггер жалобой на повторный контакт или мягким отказом без указания оффера/трудоустройства.\n"
         )
 
-    # 25 - зарплатные ожидания ниже вилки
-    if idx == 25:
+    # 24 - зарплатные ожидания ниже вилки
+    if idx == 24:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать СВОИ зарплатные ожидания конкретной суммой (числами),\n"
             "причем сумма должна быть ниже минимальной границы вилки вакансии.\n"
         )
 
-    # 26 - город совпадает с вакансией
-    if idx == 26:
+    # 25 - город совпадает с вакансией
+    if idx == 25:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии.\n"
             "Предпочтительно прямо назвать сам город вакансии и не использовать другие города.\n"
         )
 
-    if idx == 27:
+    if idx == 26:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что он уже находится в городе вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "При этом кандидат НЕ должен подтверждать готовность к офису/гибриду: это должен уточнить ассистент.\n"
         )
 
-    if idx == 28:
+    if idx == 27:
         return (
             "В КАЖДОЙ реплике кандидат должен явно указать, что живет рядом с Москвой, но не в самой Москве, и сразу назвать зарплатные ожидания в рублях на руки.\n"
             "Кандидат должен назвать конкретный город рядом с Москвой, без упоминания километров и без подтверждения готовности к офису/гибриду.\n"
             "Это допустимый пригород/ближняя локация, и кандидат НЕ должен подтверждать готовность к офису/гибриду.\n"
         )
 
-    if idx == 29:
+    if idx == 28:
         return (
             "В КАЖДОЙ реплике кандидат должен прямо показать, что один из форматов работы ему не подходит, но другой допустимый формат он готов рассматривать.\n"
             "Не превращай это в полный отказ от вакансии.\n"
         )
 
-    if idx == 30:
+    if idx == 29:
         return (
             "В КАЖДОЙ реплике кандидат должен явно писать, что не готов работать в формате офис/гибрид "
             "и не готов к переезду.\n"
         )
 
-    if idx == 31:
+    if idx == 30:
         return (
             "В КАЖДОЙ реплике кандидат должен явно упоминать смерть, утрату, похороны или покойного человека.\n"
             "Не добавляй в эту же реплику зарплатные ожидания, город, готовность к формату работы или другие триггеры.\n"
         )
 
-    if idx == 32:
+    if idx == 31:
         return (
             "В КАЖДОЙ реплике кандидат должен назвать конкретный город, который явно далеко от города вакансии, и сразу назвать зарплатные ожидания в рублях на руки.\n"
         )
 
-    if idx == 47:
+    if idx == 46:
         return (
             "В КАЖДОЙ реплике кандидат должен спокойно и прямо спрашивать только про формат работы по вакансии.\n"
             "Допустимые смыслы: «какой формат работы», «офис / удаленка / гибрид?», «какой именно формат у роли».\n"
@@ -2082,7 +2008,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Указывай конкретные слоты времени и формат (Zoom/Teams/телефон)."
         )
 
-    # 21/24. Компания / ссылка
+    # 21. Компания
     if idx == 21:
         parts.append(
             "- Кандидат просит рассказать о компании и вакансии в целом: чем занимается компания, какие задачи у роли, какой формат работы."
@@ -2091,16 +2017,8 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Это обычный информативный вопрос без претензий и без требования раскрывать скрытый поиск."
         )
 
-    if idx == 24:
-        parts.append(
-            "- Кандидат прямо спрашивает название компании: «какая компания?», «как называется компания?»."
-        )
-        parts.append(
-            "- Можно просить сайт или ссылку на вакансию."
-        )
-
-    # 25. Ожидания кандидата ниже вилки
-    if idx == 25 or ("ожидан" in name and _has_any(name, TOPIC_SALARY)):
+    # 24. Ожидания кандидата ниже вилки
+    if idx == 24 or ("ожидан" in name and _has_any(name, TOPIC_SALARY)):
         parts.append(
             "- Кандидат НЕ спрашивает вилку, а называет свои ожидания по зарплате конкретной суммой (числами)."
         )
@@ -2108,8 +2026,8 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Сумма должна звучать как комфортная для кандидата и ниже типичной вилки вакансии."
         )
 
-    # 26. Город совпадает или готовность к переезду
-    if idx == 26 or ("город" in name and "ваканси" in name):
+    # 25. Город совпадает или готовность к переезду
+    if idx == 25 or ("город" in name and "ваканси" in name):
         parts.append(
             "- Кандидат явно подтверждает, что уже находится в городе вакансии."
         )
@@ -2117,7 +2035,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Предпочтительно прямо называть сам город вакансии и не использовать другие города."
         )
 
-    if idx == 27:
+    if idx == 26:
         parts.append(
             "- Кандидат уже находится в городе вакансии, но не подтверждает отдельно готовность к формату офис/гибрид."
         )
@@ -2131,7 +2049,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Формулировка должна оставить ассистенту необходимость отдельно спросить, подходит ли такой формат работы."
         )
 
-    if idx == 28:
+    if idx == 27:
         parts.append(
             "- Кандидат должен назвать конкретный город рядом с Москвой: используй формулировки уровня «Живу в Королеве», «Я в Химках», «Я из Подольска»."
         )
@@ -2148,7 +2066,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не добавляй готовность к офису/гибриду: ассистент должен сначала уточнить ее."
         )
 
-    if idx == 29:
+    if idx == 28:
         parts.append(
             "- Кандидат должен явно показать, что один формат ему не подходит, но другой допустимый формат он готов рассматривать."
         )
@@ -2156,12 +2074,12 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не делай реплику полным отказом от вакансии: должна оставаться возможность продолжить проверку другого формата."
         )
 
-    if idx == 30:
+    if idx == 29:
         parts.append(
             "- Кандидат должен прямо отказаться от всех допустимых форматов работы и не оставлять пространства для продолжения по формату."
         )
 
-    if idx == 30:
+    if idx == 29:
         parts.append(
             "- Кандидат явно пишет, что не готов работать в формате офис/гибрид и не готов к переезду."
         )
@@ -2169,7 +2087,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Это должно звучать как прямой стоп-фактор, а не как мягкое сомнение."
         )
 
-    if idx == 31:
+    if idx == 30:
         parts.append(
             "- Кандидат прямо упоминает смерть, похороны, покойного человека или утрату."
         )
@@ -2180,7 +2098,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Не добавляй в реплику зарплату, город, готовность к формату работы или просьбы рассказать о вакансии."
         )
 
-    if idx == 32:
+    if idx == 31:
         parts.append(
             "- Кандидат должен назвать конкретный город, который явно далеко от города вакансии."
         )
@@ -2191,7 +2109,7 @@ def _extra_generation_guidelines(scenario: Scenario) -> str:
             "- Никаких дополнительных пояснений не добавляй: только текущий город кандидата и зарплатные ожидания."
         )
 
-    if idx == 47:
+    if idx == 46:
         parts.append(
             "- Кандидат должен задать обычный деловой вопрос только про формат работы по вакансии."
         )
@@ -2292,18 +2210,18 @@ def generate_candidate_messages_for_scenario(
     work_format = str(dialog_context_meta.get("work_format") or "").strip()
 
     runtime_context_lines: List[str] = []
-    if scenario.index == 31:
+    if scenario.index == 30:
         runtime_context_lines.append(
             "- ВАЖНО: реплика должна быть только про смерть / утрату. Не упоминай зарплату, город, формат работы и не смешивай другие триггеры."
         )
-    if scenario.index == 25 and min_salary is not None:
+    if scenario.index == 24 and min_salary is not None:
         runtime_context_lines.append(
             f"- Нижняя граница вилки вакансии: {_format_int_with_spaces(min_salary)} рублей."
         )
         runtime_context_lines.append(
             f"- ВАЖНО: в каждой реплике назови ожидание СТРОГО НИЖЕ {_format_int_with_spaces(min_salary)}."
         )
-    if scenario.index in (32, 34):
+    if scenario.index in (31, 33):
         if expected_location:
             runtime_context_lines.append(
                 f"- Локация вакансии для этого прогона: {expected_location}."
@@ -2312,7 +2230,7 @@ def generate_candidate_messages_for_scenario(
             runtime_context_lines.append(
                 f"- Формат работы для этого прогона: {_work_format_label(work_format)}."
             )
-    if scenario.index == 32:
+    if scenario.index == 31:
         target_salary = _safe_salary_expectation_value(dialog_context_meta)
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат в этой же реплике уже отвечает и про зарплату: назови около {_format_int_with_spaces(target_salary)} рублей на руки, не выше верхней границы вилки."
@@ -2320,7 +2238,7 @@ def generate_candidate_messages_for_scenario(
         runtime_context_lines.append(
             "- DO NOT confirm readiness for office/hybrid, commuting to the vacancy city, or relocation."
         )
-    if scenario.index == 28:
+    if scenario.index == 27:
         nearby_names = _nearby_city_names("Москва")
         runtime_context_lines.append(
             "- ВАЖНО: кандидат должен назвать конкретный город рядом с Москвой, но не Москву."
@@ -2329,7 +2247,7 @@ def generate_candidate_messages_for_scenario(
             runtime_context_lines.append(
                 f"- Используй один из конкретных городов: {', '.join(nearby_names)}. Не указывай километры."
             )
-    if scenario.index == 32 and expected_location:
+    if scenario.index == 31 and expected_location:
         far_names = _far_city_names(expected_location)
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат должен назвать конкретный город, который явно далеко от {expected_location}."
@@ -2341,7 +2259,7 @@ def generate_candidate_messages_for_scenario(
         runtime_context_lines.append(
             "- Keep the reply minimal: only the current city and salary expectations."
         )
-    if scenario.index == 30 and work_format:
+    if scenario.index == 29 and work_format:
         runtime_context_lines.append(
             f"- ВАЖНО: кандидат должен явно отказаться работать в формате {_work_format_label(work_format)} и отказаться от переезда."
         )
@@ -2691,7 +2609,7 @@ def _evaluate_single_case(
         "For location-refusal scenarios, accept any semantically correct refusal with END; do not require the assistant to cite the exact same wording or the most specific geographic label unless expected_behavior explicitly demands it.\n"
         "If vacancy_context.recruiting_agency_mode is present, do not require the assistant to present a recruiting agency as the employer. A valid pass may neutrally say that the search is led by a recruiting agency. If known_employer_name is empty, fail invented employer names, invented company names, or invented sites/links.\n"
         "If vacancy_context.initial_outreach is true and candidate_message is empty, judge the assistant message as the first outbound recruiter message at the start of the dialogue rather than as a reply to a candidate turn.\n"
-        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Phrases like 'прямо в этом чате', 'прямо в диалоге', or 'прямо здесь' count as valid direct-answer requests. Fail only if it jumps to a different question.\n"
+        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Phrases like 'прямо в этом чате', 'прямо в диалоге', 'прямо здесь', 'расскажите об этом здесь', or 'коротко опишите это в чате' count as valid direct-answer requests. Fail only if it jumps to a different question.\n"
         "Ignore awkwardness of synthetic candidate phrasing and judge only the assistant behavior.\n"
         "Return JSON only in this format:\n"
         "{\n"
@@ -2760,7 +2678,7 @@ def _evaluate_chain_case(
         "For location-refusal scenarios, accept any semantically correct refusal with END; do not require the assistant to cite the exact same wording or the most specific geographic label unless expected_behavior explicitly demands it.\n"
         "For pause/resume cases, a resume phrase is not an answer. Pass only if the assistant returns to the last unresolved question.\n"
         "For pause-after-priority cases, a plain pause-script without the next [questions] follow-up is also acceptable; do not fail only because the assistant stops after the pause-script.\n"
-        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Phrases like 'прямо в этом чате', 'прямо в диалоге', or 'прямо здесь' count as valid direct-answer requests. Fail only if it jumps to a different question.\n"
+        "For profile-reference cases, pass if the assistant clearly asks the candidate to answer directly in the chat and re-asks the current unresolved question. Phrases like 'прямо в этом чате', 'прямо в диалоге', 'прямо здесь', 'расскажите об этом здесь', or 'коротко опишите это в чате' count as valid direct-answer requests. Fail only if it jumps to a different question.\n"
         "Ignore awkwardness of synthetic candidate phrasing and judge only the assistant behavior.\n"
         "Return JSON only in this format:\n"
         "{\n"
@@ -2968,6 +2886,16 @@ def _looks_like_direct_answer_request(reply: str) -> bool:
         "прямо в этом чате",
         "прямо в диалоге",
         "прямо здесь",
+        "об этом здесь",
+        "об этом в чате",
+        "расскажите об этом здесь",
+        "расскажите об этом в чате",
+        "коротко расскажите об этом здесь",
+        "коротко расскажите об этом в чате",
+        "коротко рассказали об этом здесь",
+        "коротко рассказали об этом в чате",
+        "опишите это в чате",
+        "опишите это здесь",
         "ответить прямо",
         "для корректной фиксации",
         "для корректной фиксации данных",
@@ -3111,12 +3039,12 @@ def enforce_salary_normalization_rules(
     if idx not in SALARY_NORMALIZATION_SCENARIOS:
         return score, comment
 
-    if idx == 36:
+    if idx == 35:
         if _is_salary_budget_rejection_reply(assistant_reply):
             return 1, "Salary normalization rule passed: explicit monthly salary above the budget triggers a budget rejection."
-        return 0, "Salary normalization rule failed: scenario 36 must reject because the explicit monthly salary is above the budget."
+        return 0, "Salary normalization rule failed: scenario 35 must reject because the explicit monthly salary is above the budget."
 
-    if idx in (37, 38, 39, 40):
+    if idx in (36, 37, 38, 39):
         if _reply_has_end_marker(assistant_reply):
             return 0, "Salary normalization rule failed: ambiguous salary input must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
@@ -3130,30 +3058,6 @@ def enforce_salary_normalization_rules(
     return 1, "Salary normalization rule passed: assistant accepts explicit monthly salary without unnecessary clarification."
 
 
-def enforce_vacancy_link_answer_rule(
-    scenario: Scenario,
-    assistant_reply: str,
-    score: int,
-    comment: str,
-    dialog_context_meta: Dict[str, Any],
-) -> Tuple[int, str]:
-    if scenario.index != 51:
-        return score, comment
-
-    expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
-    if not expected_url:
-        return score, comment
-
-    reply_low = str(assistant_reply or "").lower()
-    if expected_url.lower() not in reply_low:
-        return (
-            0,
-            f"Scenario 51 strict check failed: assistant reply must contain the vacancy link from vacancy_description: '{expected_url}'.",
-        )
-
-    return 1, "Scenario 51 strict check passed: the vacancy link from vacancy_description is present in the assistant reply."
-
-
 def enforce_recruiting_agency_rules(
     scenario: Scenario,
     assistant_reply: str,
@@ -3165,7 +3069,6 @@ def enforce_recruiting_agency_rules(
         return score, comment
 
     reply = str(assistant_reply or "")
-    known_employer_name = str(dialog_context_meta.get("known_employer_name") or "").strip()
     expected_url = str(dialog_context_meta.get("vacancy_url") or "").strip()
 
     if _reply_has_end_marker(reply):
@@ -3175,21 +3078,12 @@ def enforce_recruiting_agency_rules(
     if not expected_url and _reply_contains_url_or_domain(reply):
         return 0, f"Scenario {scenario.index} strict check failed: assistant must not invent a link, site, or domain."
 
-    if scenario.index in (52, 53):
-        if not _reply_has_company_answer(reply, known_employer_name=known_employer_name):
-            return 0, f"Scenario {scenario.index} strict check failed: assistant should briefly answer the company/employer question."
+    if scenario.index == 50:
+        if not _reply_has_company_answer(reply):
+            return 0, "Scenario 50 strict check failed: assistant should briefly answer the company question."
         if not (_reply_has_salary_question(reply) or _reply_has_location_question(reply)):
-            return 0, f"Scenario {scenario.index} strict check failed: assistant should continue screening with the next relevant question."
-        return 1, f"Scenario {scenario.index} strict check passed: company handling is neutral and the screening continues."
-
-    if scenario.index == 54:
-        if not _reply_has_greeting(reply):
-            return 0, "Scenario 54 strict check failed: start message should include a greeting."
-        if not _reply_has_salary_question(reply):
-            return 0, "Scenario 54 strict check failed: start message should include a salary-expectations question."
-        if not _reply_has_location_question(reply):
-            return 0, "Scenario 54 strict check failed: start message should include a location question."
-        return 1, "Scenario 54 strict check passed: start message keeps neutral company handling and asks the priority questions."
+            return 0, "Scenario 50 strict check failed: assistant should continue screening with the next relevant question."
+        return 1, "Scenario 50 strict check passed: company handling is neutral and the screening continues."
 
     return score, comment
 
@@ -3310,7 +3204,7 @@ def run_single_scenario(
 
     for step_idx, cand_msg in enumerate(candidate_messages, start=1):
         run_dialog: List[Dict[str, str]] = []
-        if scenario.index == 41:
+        if scenario.index == 40:
             assistant = create_conversation_assistant(cfg, dialog_context=dialog_context)
             conv_id = assistant.create_conversation()
             for seed_msg in _hh_profile_reference_seed_messages(dialog_context_meta):
@@ -3330,10 +3224,7 @@ def run_single_scenario(
             }
         else:
             assistant = create_simple_assistant(cfg, dialog_context=dialog_context)
-            if scenario.index == 54 and not str(cand_msg or "").strip():
-                reply = assistant.start_dialogue()
-            else:
-                reply = assistant.reply_one_turn(cand_msg)
+            reply = assistant.reply_one_turn(cand_msg)
             _accumulate_usage(usage["screening_assistant"], getattr(assistant, "last_usage", None))
             turn = {
                 "step": step_idx,
@@ -3370,13 +3261,6 @@ def run_single_scenario(
             assistant_reply=str(turn.get("assistant_reply") or ""),
             score=score,
             comment=comment,
-        )
-        score, comment = enforce_vacancy_link_answer_rule(
-            scenario=scenario,
-            assistant_reply=str(turn.get("assistant_reply") or ""),
-            score=score,
-            comment=comment,
-            dialog_context_meta=dialog_context_meta,
         )
         score, comment = enforce_strange_behavior_rules(
             scenario=scenario,
@@ -3530,13 +3414,6 @@ def run_chain_group(
                 score=score,
                 comment=comment,
             )
-            score, comment = enforce_vacancy_link_answer_rule(
-                scenario=scenarios[int(turn.get("step") or 0) - 1],
-                assistant_reply=str(turn.get("assistant_reply") or ""),
-                score=score,
-                comment=comment,
-                dialog_context_meta=dialog_context_meta,
-            )
             score, comment = enforce_strange_behavior_rules(
                 scenario=scenarios[int(turn.get("step") or 0) - 1],
                 assistant_reply=str(turn.get("assistant_reply") or ""),
@@ -3589,7 +3466,6 @@ def run_chain_group(
         "runs_total": len(runs),
         "turns_total": total_turns,
         "score_total": total_score,
-        "score_rate": (total_score / total_turns) if total_turns else 0.0,
         "passed": all(bool(run.get("passed")) for run in runs),
         "runs": runs,
     }
@@ -3690,10 +3566,6 @@ def run_scenarios(
         print(f"\n[case {gidx}/{len(groups)}] {group.group_id} ({group.kind})")
         fixture = _select_cdm_fixture_for_group(cdm_fixtures, group, gidx)
         vacancy_info_override, meta_override = _hh_recruiting_agency_context_override(group)
-        if group.kind == "single" and len(group.scenarios) == 1 and group.scenarios[0].index == 53:
-            vacancy_info_override = dict(vacancy_info_override or {})
-            vacancy_info_override["company_name"] = RECRUITING_AGENCY_NAME
-            vacancy_info_override["vacancy_description"] = "backend-разработка внутренних сервисов"
         if vacancy_info_override or meta_override:
             fixture = _copy_fixture_with_overrides(
                 fixture,
@@ -3709,14 +3581,6 @@ def run_scenarios(
                 if key in {"recruiter_name", "candidate_name"}:
                     continue
                 dialog_context_meta[key] = value
-        known_employer_name = str(dialog_context_meta.get("known_employer_name") or "").strip()
-        if known_employer_name:
-            company_line = f"Название компании: {dialog_context_meta.get('company_name') or ''}"
-            employer_line = f"Конечный работодатель: {known_employer_name}"
-            if company_line in dialog_context:
-                dialog_context = dialog_context.replace(company_line, company_line + "\n" + employer_line, 1)
-            elif employer_line not in dialog_context:
-                dialog_context = dialog_context + "\n" + employer_line
         print(
             f"  - cdm={fixture.file_name} | "
             f"company_hidden=NO"
@@ -3756,12 +3620,12 @@ def run_scenarios(
     cases_total = len(cases)
     turns_total = sum(int(case.get("turns_total", 0)) for case in cases)
     score_total = sum(int(case.get("score_total", 0)) for case in cases)
-    score_rate = (score_total / turns_total * 100.0) if turns_total else 0.0
     passed_cases = sum(1 for case in cases if bool(case.get("passed")))
     failed_cases = cases_total - passed_cases
     pass_rate = (passed_cases / cases_total * 100.0) if cases_total else 0.0
 
     mismatches = build_mismatches(cases)
+    failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     errors: List[Dict[str, Any]] = []
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, HH_COMPONENT_NAME)
@@ -3793,10 +3657,10 @@ def run_scenarios(
         "turns_total": turns_total,
         "passed_cases": passed_cases,
         "failed_cases": failed_cases,
+        "failed_turns": failed_turns,
         "pass_rate": pass_rate,
         "score_total": score_total,
         "score_max": turns_total,
-        "score_rate": score_rate,
         "mismatches_count": len(mismatches),
         "errors_count": len(errors),
         "summary": {
@@ -3804,10 +3668,10 @@ def run_scenarios(
             "turns_total": turns_total,
             "passed_cases": passed_cases,
             "failed_cases": failed_cases,
+            "failed_turns": failed_turns,
             "pass_rate": pass_rate,
             "score_total": score_total,
             "score_max": turns_total,
-            "score_rate": score_rate,
             "mismatches_count": len(mismatches),
             "errors_count": len(errors),
         },
@@ -3820,11 +3684,10 @@ def run_scenarios(
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n[done] Screening scenarios report saved to: {out_path}")
-    failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     print(
         f"[summary] cases_total={cases_total} | turns_total={turns_total} | "
-        f"score_total={score_total} | score_rate={score_rate:.2f}% | "
-        f"pass_rate={pass_rate:.2f}% | failed_cases={failed_cases} | failed_turns={failed_turns}"
+        f"score_total={score_total} | pass_rate={pass_rate:.2f}% | "
+        f"failed_cases={failed_cases} | failed_turns={failed_turns}"
     )
 
     return out_path
@@ -3947,36 +3810,31 @@ def _fallback_messages(
             "Это уже третий мой вопрос про деньги: какой диапазон по зарплате у позиции?",
             "В третий раз возвращаюсь к вопросу о вилке: сколько платят по этой роли?",
         ],
-        24: [
-            "Как называется компания? Можно ссылку на вакансию?",
-            "Подскажите название компании и, если можно, сайт или ссылку.",
-            "Какая компания и где можно почитать про вакансию?",
-        ],
-        26: [
+        25: [
             f"Сейчас живу в {location}, локация для меня подходит.",
             f"Я нахожусь в {location} и могу рассматривать эту позицию.",
             f"Проживаю в {location}, с локацией вакансии проблем нет.",
         ],
-        30: [
+        29: [
             "Ни офисный, ни удаленный формат не рассматриваю. К переезду тоже не готов.",
             "На месте работодателя работать не готов, удаленно тоже не хочу. Формат мне не подходит.",
             "Ни один из этих форматов мне не подходит, переезд тоже не рассматриваю.",
         ],
-        31: [
+        30: [
             "После недавней утраты в семье я сейчас не готов обсуждать такие предложения.",
             "Недавно были похороны близкого человека, поэтому я пока не могу продолжать этот разговор.",
             "После смерти родственника мне сейчас тяжело возвращаться к таким обсуждениям.",
         ],
-        33: [
+        32: [
             "Сейчас живу в Берлине, удаленный формат мне подходит.",
             "Я сейчас не в РФ, нахожусь в Испании и работаю удаленно.",
             "Живу за границей, сейчас я в Португалии.",
         ],
-        37: ["50", "60", "70"],
-        38: ["60-80", "50-70", "70-90"],
-        39: ["1500 в час", "2000 руб/час", "1800 в час"],
-        40: ["$4000", "3000 евро", "3500 euro"],
-        41: [
+        36: ["50", "60", "70"],
+        37: ["60-80", "50-70", "70-90"],
+        38: ["1500 в час", "2000 руб/час", "1800 в час"],
+        39: ["$4000", "3000 евро", "3500 euro"],
+        40: [
             "По этому вопросу всё есть в резюме.",
             "Это уже указано у меня в профиле.",
             "Посмотрите, пожалуйста, резюме: там есть ответ на этот вопрос.",
@@ -3984,37 +3842,37 @@ def _fallback_messages(
             "По этому пункту всё уже отражено в профиле.",
             "Ответ на этот вопрос есть в моем резюме.",
         ],
-        42: [
+        41: [
             "Я в Москве, ориентир 300000 на руки, удаленный формат мне подходит. С Playwright и API-автотестами на C# работаю 4 года, QA-команду из 5 человек менторил. Хорошо, буду ждать звонка.",
             "Москва, по деньгам 320000 на руки, remote мне подходит. С Playwright и API-автотестами на C# работаю 5 лет, команду из 4 QA менторил. Жду фидбек.",
             "Я в Москве, ориентир 300000, удаленный формат подходит. Playwright и API-автотесты на C# делаю 4 года, опыт менторства QA-команды есть. Хорошо, буду ждать звонка.",
         ],
-        43: [
+        42: [
             "Вернемся к этому позже, пожалуйста. По зарплате смотрю от 300.",
             "Давайте позже обсудим, сейчас не готов. По деньгам ориентир около 320.",
             "Позже будет актуально. По зарплате ориентир 300 на руки.",
         ],
-        44: [
+        43: [
             "Давайте продолжим.",
             "Снова на связи, можем продолжить диалог.",
             "Да, продолжаем.",
         ],
-        45: [
+        44: [
             "Пока не готов продолжать, напишите позже.",
             "Сейчас не время, позже обсудим.",
             "Давайте вернемся к этому разговору позже.",
         ],
-        46: [
+        45: [
             "Давайте продолжим.",
             "Снова на связи, можем продолжить диалог.",
             "Да, продолжаем.",
         ],
-        47: [
+        46: [
             "Подскажите, пожалуйста, какой именно формат работы у этой вакансии?",
             "Можно уточнить, какой формат работы предусмотрен для этой роли?",
             "Какой формат работы у позиции: удаленный, офисный, гибридный или разъездной?",
         ],
-        50: [
+        49: [
             "Москва,\nСейчас у меня 1 млн руб. gross\nЭто ЗП+Премия\n\nРассчитываю + 15/20%",
             "Москва. Сейчас суммарно около 1 млн gross с учетом премии, при переходе смотрю плюс 15-20%.",
             "Я в Москве, сейчас доход примерно 1 млн gross вместе с премией. При смене работы ориентируюсь на плюс 15-20%.",
@@ -4022,65 +3880,50 @@ def _fallback_messages(
             "Гибридный формат подходит. Сейчас получаю 600 gross, при переходе хотел бы немного выше, но готов обсуждать.",
             "К гибриду готов, сейчас компенсация около 600 гросс. Хотелось бы рост, но можно обсуждать.",
         ],
-        51: [
-            "Добрый день, да было бы интересно, подскажите где подробнее ознакомиться с вакансией и стеком можно?",
-            "Здравствуйте, предложение интересно. Можете прислать ссылку на вакансию, чтобы подробнее посмотреть задачи и стек?",
-            "Добрый день! Интересно, где можно подробнее почитать про вакансию и используемый стек?",
-        ],
-        52: [
-            "Добрый день. А что за компания и кто работодатель?",
-            "Здравствуйте. Что это за компания и кто конечный работодатель?",
-            "Добрый день, подскажите, пожалуйста, кто работодатель по этой позиции и что за компания?",
-        ],
-        53: [
-            "Подскажите, пожалуйста, что за компания?",
-            "Добрый день. А что за компания у этой вакансии?",
-            "Здравствуйте, подскажите, пожалуйста, какая компания по этой позиции?",
-        ],
-        54: [
-            "",
-            "",
-            "",
+        50: [
+            "Подскажите, пожалуйста, что это за компания?",
+            "Добрый день. А какая компания по этой вакансии?",
+            "Здравствуйте, подскажите, пожалуйста, что за компания у этой позиции?",
         ],
     }
     alias_messages = {}
     dynamic_builders: Dict[int, Callable[[], List[str]]] = {
-        27: lambda: [
+        26: lambda: [
             f"Мой текущий город — {location}, по зарплате ориентируюсь на {salary_value} рублей на руки.",
             f"Сейчас я в {location}, по деньгам рассматриваю около {salary_value} на руки.",
             f"Текущая локация — {location}, по компенсации ориентируюсь на {salary_value} рублей.",
         ],
-        28: lambda: [
+        27: lambda: [
             f"Живу в Королеве, по зарплате ориентируюсь на {salary_value} рублей на руки.",
             f"Я в Химках, по деньгам рассматриваю {salary_value} на руки.",
             f"Я из Подольска, по компенсации ориентируюсь на {salary_value} рублей.",
         ],
-        29: lambda: [
+        28: lambda: [
             f"В офис ездить не готов, но удаленный формат мне подходит. Я в Москве, ожидания {salary_value} рублей на руки в месяц.",
             f"На месте работодателя работать не хочу, а вот удаленно готов. Сейчас я в Москве, ориентир {salary_value} рублей в месяц на руки.",
             f"Офисный формат не рассматриваю, но remote меня устраивает. Я в Москве, по деньгам {salary_value} рублей на руки в месяц.",
         ],
-        34: lambda: [
+        33: lambda: [
             f"Я в Санкт-Петербурге, по зарплате ориентир {salary_value} рублей на руки в месяц.",
             f"Сейчас живу в Екатеринбурге, ожидания {salary_value} рублей на руки в месяц.",
             f"Я в Казани, по деньгам ориентируюсь на {salary_value} рублей в месяц на руки.",
         ],
-        32: lambda: [
+        31: lambda: [
             f"Сейчас живу во Владивостоке, по зарплате ориентируюсь на {salary_value} рублей на руки.",
             f"Мой текущий город — Новосибирск, ожидания по деньгам около {salary_value} рублей на руки.",
             f"Я сейчас в Калининграде, по компенсации ориентируюсь на {salary_value} рублей в месяц на руки.",
         ],
-        35: lambda: [
+        34: lambda: [
             f"{int(round(((int(min_salary or 250000) + int(max_salary or max(int(min_salary or 250000), 350000))) / 2) / 10_000) * 10_000)} рублей на руки в месяц",
             f"{max(int(min_salary or 250000), int(round(((int(min_salary or 250000) + int(max_salary or max(int(min_salary or 250000), 350000))) / 2) / 10_000) * 10_000) - 10000)} руб на руки в месяц",
             f"{min(int(max_salary or max(int(min_salary or 250000), 350000)), int(round(((int(min_salary or 250000) + int(max_salary or max(int(min_salary or 250000), 350000))) / 2) / 10_000) * 10_000) + 10000)} рублей в месяц net",
         ],
-        36: lambda: [
+        35: lambda: [
             f"{int(max_salary or 350000) + 100000} рублей на руки в месяц",
             f"{int(max_salary or 350000) + 150000} руб в месяц",
             f"{int(max_salary or 350000) + 120000} рублей net в месяц",
         ],
-        48: lambda: [
+        47: lambda: [
             f"Сейчас я в Москве, ожидания {salary_value} рублей на руки в месяц.",
             f"Я в Москве, по деньгам ориентир {salary_value} рублей на руки в месяц.",
             f"Мой город Москва, ориентир по компенсации {salary_value} рублей в месяц на руки.",
@@ -4154,23 +3997,21 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return _contains_any_substring(low, offer_markers)
     if scenario_index == 21:
         return _contains_any_substring(low, company_info_markers)
-    if scenario_index == 24:
-        return _contains_any_substring(low, company_link_markers)
-    if scenario_index == 26:
-        return "москв" in low
-    if scenario_index == 31:
+    if scenario_index == 25:
+        return _contains_any_substring(low, ["живу в", "нахожусь в", "проживаю в", "мой текущий город", "локация для меня"])
+    if scenario_index == 30:
         return _contains_any_substring(low, death_markers) and not _contains_any_substring(low, salary_markers)
-    if scenario_index == 47:
+    if scenario_index == 46:
         return _contains_any_substring(low, format_question_markers) and not _contains_any_substring(low, aggression_markers)
-    if scenario_index == 50:
+    if scenario_index == 49:
         return (
             "моск" in low and _contains_any_substring(low, ["gross", "гросс", "прем", "%", "процент"])
         ) or (
             _contains_any_substring(low, ["гибрид", "гибриду", "hybrid"])
             and _contains_any_substring(low, ["gross", "гросс", "600"])
         )
-    if scenario_index == 51:
-        return _contains_any_substring(low, ["ссылк", "ознаком", "почитать", "подробнее", "стек"])
+    if scenario_index == 50:
+        return _contains_any_substring(low, ["компан", "какая компания", "что за компания", "позици"])
     return True
 
 
