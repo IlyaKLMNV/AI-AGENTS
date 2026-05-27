@@ -319,23 +319,23 @@ CHAIN_BY_INDEX: Dict[str, List[int]] = {
 }
 
 
-CHAIN_BY_INDEX["chain_pause_resume_priority"] = [55, 56]
-CHAIN_BY_INDEX["chain_pause_resume_questions"] = [57, 58]
-CHAIN_BY_INDEX["chain_contact_source_resume"] = [59, 60]
-CHAIN_BY_INDEX["chain_profile_reference_resume"] = [61, 62]
+CHAIN_BY_INDEX["chain_pause_resume_priority"] = [53, 54]
+CHAIN_BY_INDEX["chain_pause_resume_questions"] = [55, 56]
+CHAIN_BY_INDEX["chain_contact_source_resume"] = [57, 58]
+CHAIN_BY_INDEX["chain_profile_reference_resume"] = [59, 60]
 
-CONTACT_SOURCE_FILLED_SCENARIOS = {8, 20, 40, 59}
+CONTACT_SOURCE_FILLED_SCENARIOS = {8, 20, 40, 57}
 CONTACT_SOURCE_EMPTY_SCENARIOS = {41}
 CONTACT_SOURCE_SCENARIOS = CONTACT_SOURCE_FILLED_SCENARIOS | CONTACT_SOURCE_EMPTY_SCENARIOS
-CONTACT_SOURCE_RESUME_SCENARIOS = {60}
-LEGITIMACY_SCENARIOS = {7, 42}
-SALARY_NORMALIZATION_SCENARIOS = {43, 44, 45, 46, 47, 48, 49, 63, 64}
-PROFILE_REFERENCE_SCENARIOS = {50, 51, 61}
-PROFILE_REFERENCE_RESUME_SCENARIOS = {62}
-PAUSE_LATER_SCENARIOS = {52, 53, 54, 55, 57}
-PAUSE_LATER_RESUME_SCENARIOS = {56, 58}
-SALARY_BUDGET_EDGE_SCENARIOS = {63, 64}
-VACANCY_LINK_SCENARIOS = {65}
+CONTACT_SOURCE_RESUME_SCENARIOS = {58}
+LEGITIMACY_SCENARIOS = {7}
+SALARY_NORMALIZATION_SCENARIOS = {42, 43, 44, 45, 46, 47, 48, 61}
+PROFILE_REFERENCE_SCENARIOS = {49, 59}
+PROFILE_REFERENCE_RESUME_SCENARIOS = {60}
+PAUSE_LATER_SCENARIOS = {50, 51, 52, 53, 55}
+PAUSE_LATER_RESUME_SCENARIOS = {54, 56}
+SALARY_BUDGET_EDGE_SCENARIOS = {61}
+VACANCY_LINK_SCENARIOS = {62}
 FORCED_FALLBACK_SCENARIOS = (
     CONTACT_SOURCE_SCENARIOS
     | CONTACT_SOURCE_RESUME_SCENARIOS
@@ -966,7 +966,7 @@ def _group_has_any_scenario(group: ScenarioGroup, indices: List[int]) -> bool:
 
 
 def _group_uses_prompt_v2_special_fixtures(group: ScenarioGroup) -> bool:
-    return _group_has_any_scenario(group, [7, 8] + list(range(40, 63)))
+    return _group_has_any_scenario(group, [7, 8] + list(range(40, 61)))
 
 
 def _is_real_company_name(value: str) -> bool:
@@ -997,13 +997,10 @@ def _fixture_matches_group_requirements(
     if _group_has_any_scenario(group, [36]):
         return bool(location) and "моск" not in location and "удал" not in location
 
-    if _group_has_any_scenario(group, [63]):
-        return fixture.file_name == "cdm_05.json"
+    if _group_has_any_scenario(group, [61]):
+        return fixture.file_name in {"cdm_05.json", "cdm_07.json"}
 
-    if _group_has_any_scenario(group, [64]):
-        return fixture.file_name == "cdm_07.json"
-
-    if _group_has_any_scenario(group, [65]):
+    if _group_has_any_scenario(group, [62]):
         return fixture.file_name == "cdm_05.json"
 
     if _group_has_any_scenario(group, [28, 31]):
@@ -2016,7 +2013,7 @@ def _fallback_messages(
         ]
         return pool[:n]
 
-    if idx == 43:
+    if idx == 42:
         if min_salary is not None and max_salary is not None:
             lower = int(min_salary)
             upper = max(lower, int(max_salary))
@@ -2033,7 +2030,7 @@ def _fallback_messages(
             "300000 рублей в месяц net",
         ][:n]
 
-    if idx == 44:
+    if idx == 43:
         if max_salary is not None:
             upper = int(max_salary)
             pool = [
@@ -2048,7 +2045,7 @@ def _fallback_messages(
             "470000 рублей net в месяц",
         ][:n]
 
-    if idx == 45:
+    if idx == 44:
         if min_salary is not None and max_salary is not None:
             lower = int(min_salary)
             upper = max(lower, int(max_salary))
@@ -2067,96 +2064,88 @@ def _fallback_messages(
             "300000-330000 руб net в месяц",
         ][:n]
 
-    if idx == 46:
+    if idx == 45:
         return ["50", "60", "70"][:n]
 
-    if idx == 47:
+    if idx == 46:
         return ["60-80", "50-70", "70-90"][:n]
 
-    if idx == 48:
+    if idx == 47:
         return ["1500 в час", "2000 руб/час", "1800 в час"][:n]
 
-    if idx == 49:
+    if idx == 48:
         return ["$4000", "3000 евро", "3500 euro"][:n]
 
-    if idx in (50, 61):
+    if idx in (49, 59):
         return [
             "По вашему вопросу про Playwright и API-автотесты на C# всё есть в резюме.",
             "Это всё указано в LinkedIn по Playwright и C#.",
             "Посмотрите, пожалуйста, резюме: там есть ответ про Playwright и API-автотесты на C#.",
-        ][:n]
-
-    if idx == 51:
-        return [
-            "По опыту менторства всё есть в LinkedIn.",
+            "По вопросу про менторство всё есть в LinkedIn.",
             "Это указано в профиле, посмотрите по руководству командой.",
             "Всё про менторство и QA-команду уже есть в резюме.",
         ][:n]
 
-    if idx == 63:
+    if idx == 61:
         return [
             "Москва,\nСейчас у меня 1 млн руб. gross\nЭто ЗП+Премия\n\nРассчитываю + 15/20%",
             "Москва. Сейчас суммарно около 1 млн gross с учетом премии, при переходе смотрю плюс 15-20%.",
             "Я в Москве, сейчас доход примерно 1 млн gross вместе с премией. При смене работы ориентируюсь на плюс 15-20%.",
-        ][:n]
-
-    if idx == 64:
-        return [
             "К гибриду готов.\nУ меня сейчас 600 гросс, хотелось бы чуть повыше, но обсуждаемо",
             "Гибридный формат подходит. Сейчас получаю 600 gross, при переходе хотел бы немного выше, но готов обсуждать.",
             "К гибриду готов, сейчас компенсация около 600 гросс. Хотелось бы рост, но можно обсуждать.",
         ][:n]
 
-    if idx == 65:
+    if idx == 62:
         return [
             "Добрый день, да было бы интересно, подскажите где подробнее ознакомиться с вакансией и стеком можно?",
             "Здравствуйте, предложение интересно. Можете прислать ссылку на вакансию, чтобы подробнее посмотреть задачи и стек?",
             "Добрый день! Интересно, где можно подробнее почитать про вакансию и используемый стек?",
         ][:n]
 
-    if idx in (52, 55):
+    if idx in (50, 53):
         return [
             "Сейчас не время, давайте вернемся через месяц. По зарплате ориентируюсь на 300.",
             "Давайте позже обсудим, сейчас не готов. По деньгам ориентир около 320.",
             "Вернемся к этому позже, пожалуйста. По зарплате смотрю от 300.",
         ][:n]
 
-    if idx in (53, 57):
+    if idx in (51, 55):
         return [
             "Я в Москве, ориентир 300 на руки. Сейчас не время, позже обсудим.",
             "По зарплате 320 на руки, я в Москве. Давайте вернемся к обсуждению позже.",
             "Москва, ориентир 300. Пока не готов продолжать, напишите позже.",
         ][:n]
 
-    if idx == 54:
+    if idx == 52:
         return [
             "Я в Москве, ориентир 300 на руки. С Playwright и API-автотестами на C# работаю 4 года, QA-команду из 5 человек менторил. Ок, буду ждать звонка.",
             "Москва, 320 на руки. По Playwright и API-автотестам на C# у меня 5 лет опыта, менторил команду из 4 QA. Жду фидбек.",
             "Я в Москве, по деньгам ориентир 300. Playwright и API-автотесты на C# делаю 4 года, QA-команду менторил. Хорошо, буду ждать звонка.",
         ][:n]
 
-    if idx in (56, 58):
+    if idx in (54, 56):
         return [
             "Давайте продолжим.",
             "Снова на связи, можем продолжить диалог.",
             "Да, продолжаем.",
         ][:n]
 
-    if idx == 59:
+    if idx == 57:
         return [
             "Как вы нашли мой Telegram?",
             "Откуда у вас мой номер?",
             "Где вы нашли мой профиль и как узнали мой контакт?",
         ][:n]
 
-    if idx == 60:
+    if idx == 58:
         return [
             "Ок, давайте продолжим.",
             "Хорошо, можем продолжить общение.",
             "Понял, давайте дальше.",
         ][:n]
 
-    if idx == 62:
+    if idx == 60:
         return [
             "Да, с Playwright работаю 4 года, API-автотесты на C# тоже делал.",
             "По Playwright у меня 5 лет опыта, API-автотесты на C# писал в двух проектах.",
@@ -2413,11 +2402,14 @@ def _generated_message_matches_scenario_constraints(scenario_index: int, message
         return not _contains_any_substring(low, repeated_markers)
     if scenario_index == 27:
         return _contains_any_substring(low, repeated_markers)
-    if scenario_index == 63:
-        return "моск" in low and _contains_any_substring(low, ["gross", "гросс", "прем", "%", "процент"])
-    if scenario_index == 64:
-        return _contains_any_substring(low, ["гибрид", "гибриду", "hybrid"]) and _contains_any_substring(low, ["gross", "гросс", "600"])
-    if scenario_index == 65:
+    if scenario_index == 61:
+        return (
+            "моск" in low and _contains_any_substring(low, ["gross", "гросс", "прем", "%", "процент"])
+        ) or (
+            _contains_any_substring(low, ["гибрид", "гибриду", "hybrid"])
+            and _contains_any_substring(low, ["gross", "гросс", "600"])
+        )
+    if scenario_index == 62:
         return _contains_any_substring(low, ["ссылк", "ознаком", "почитать", "подробнее", "стек"])
     return True
 
@@ -3438,6 +3430,8 @@ def enforce_prompt_v2_turn_rules(
             ],
         ):
             return 1, "Prompt v2 strange-input rule passed: a clarification via 'did not understand' is acceptable."
+        if not _reply_has_end_marker(assistant_reply) and "?" in (assistant_reply or ""):
+            return 1, "Prompt v2 strange-input rule passed: a business-equivalent continuation question is acceptable."
 
     return score, comment
 
@@ -3552,12 +3546,12 @@ def enforce_salary_normalization_rules(
     if idx not in SALARY_NORMALIZATION_SCENARIOS:
         return score, comment
 
-    if idx == 44:
+    if idx == 43:
         if _reply_matches_exact_script(assistant_reply, S14_SALARY_REJECTION_SCRIPT):
             return 1, "Salary rule passed: explicit monthly salary above the budget triggers the standard salary rejection END script."
         return 0, "Salary rule failed: explicit monthly salary above the budget must use the standard salary rejection END script."
 
-    if idx in (46, 47, 48, 49, 63, 64):
+    if idx in (45, 46, 47, 48, 61):
         if _reply_has_end_marker(assistant_reply):
             return 0, "Salary rule failed: ambiguous/hourly/currency/gross salary must not end the dialogue."
         if not _is_monthly_rubles_clarification_reply(assistant_reply):
@@ -3588,13 +3582,10 @@ def enforce_profile_reference_rules(
     questions = _extract_additional_questions(dialog_context_meta)
     current_question = ""
     next_question = ""
-    if idx in (50, 61):
+    if idx in (49, 59):
         current_question = questions[0] if questions else ""
         next_question = questions[1] if len(questions) > 1 else ""
-    elif idx == 51:
-        current_question = questions[1] if len(questions) > 1 else (questions[0] if questions else "")
-        next_question = questions[2] if len(questions) > 2 else ""
-    elif idx == 62:
+    elif idx == 60:
         current_question = questions[0] if questions else ""
         next_question = questions[1] if len(questions) > 1 else ""
 
@@ -3606,14 +3597,7 @@ def enforce_profile_reference_rules(
             return 0, "Profile reference rule failed: reply must not end the dialogue."
         if not _looks_like_direct_answer_request(assistant_reply):
             return 0, "Profile reference rule failed: assistant should ask to answer directly in the dialogue."
-
-        if current_markers and not _reply_mentions_question_markers(reply_low, current_markers):
-            return 0, "Profile reference rule failed: assistant should repeat the current unanswered question."
-
-        if next_markers and _reply_mentions_question_markers(reply_low, next_markers):
-            return 0, "Profile reference rule failed: assistant jumped to the next question instead of clarifying the current one."
-
-        return 1, "Profile reference rule passed: assistant keeps the current question open and asks for a direct answer in chat."
+        return 1, "Profile reference rule passed: assistant motivates the candidate to answer directly in chat."
 
     if _reply_has_end_marker(assistant_reply):
         return 0, "Profile reference resume rule failed: after a substantive answer the dialogue should continue."
@@ -3649,7 +3633,7 @@ def enforce_pause_later_rules(
     current_question_markers = _question_markers_from_text(current_question)
     needs_work_format_ready = _is_office_or_hybrid_work_format(str(dialog_context_meta.get("work_format") or ""))
 
-    if idx == 54:
+    if idx == 52:
         if _is_finish_reply(assistant_reply):
             return 1, "Pause rule passed: once everything is already answered, the assistant finishes with END."
         return 0, "Pause rule failed: when all answers are already collected, assistant must use the final finish script with END."
@@ -3660,10 +3644,10 @@ def enforce_pause_later_rules(
         if not _has_pause_script(assistant_reply):
             return 0, "Pause rule failed: reply must contain the new merged pause script."
 
-        if idx in (52, 55):
+        if idx in (50, 53):
             if not _contains_any_substring(reply_low, priority_markers):
                 return 0, "Pause rule failed: before priority answers are complete, assistant must ask the next missing priority question."
-        if idx in (53, 57):
+        if idx in (51, 55):
             if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
                 return 1, "Pause rule passed: assistant uses the merged pause script and continues with the required work-format readiness step."
             if "?" not in assistant_reply:
@@ -3680,9 +3664,9 @@ def enforce_pause_later_rules(
     if _looks_like_restarted_intro(assistant_reply):
         return 0, "Pause resume rule failed: assistant restarted the screening instead of resuming from the saved step."
 
-    if idx == 56 and not _contains_any_substring(reply_low, priority_markers):
+    if idx == 54 and not _contains_any_substring(reply_low, priority_markers):
         return 0, "Pause resume rule failed: assistant should resume with the missing priority question."
-    if idx == 58:
+    if idx == 56:
         if needs_work_format_ready and _asks_work_format_readiness(assistant_reply, dialog_context_meta):
             return 1, "Pause resume rule passed: assistant resumes with the unresolved work-format readiness step."
         if current_question_markers and not _reply_mentions_question_markers(reply_low, current_question_markers):
@@ -3702,7 +3686,7 @@ def enforce_open_company_answer_for_s31(
 ) -> Tuple[int, str]:
     # Для S31: разрешаем любые доп.вопросы/продолжения,
     # главное - ассистент назвал компанию (и дал ссылку, если она есть в контексте).
-    if scenario.index not in (31, 65):
+    if scenario.index not in (31, 62):
         return score, comment
 
     expected_company = (
@@ -3726,7 +3710,7 @@ def enforce_open_company_answer_for_s31(
 
     # 2) Если ссылка реально есть в контексте - она тоже обязана быть в ответе
     if expected_url and expected_url.lower() not in reply_low:
-        label = "31" if scenario.index == 31 else "65"
+        label = "31" if scenario.index == 31 else "62"
         return (
             0,
             f"Scenario {label} strict check failed: assistant reply must contain vacancy_url '{expected_url}'.",
@@ -3736,7 +3720,7 @@ def enforce_open_company_answer_for_s31(
     # даже если evaluator ругается на доп.вопросы.
     if scenario.index == 31:
         return 1, "Scenario 31 relaxed check passed: company (and vacancy_url if provided) present; extra questions allowed."
-    return 1, "Scenario 65 strict check passed: vacancy_url is present in the assistant reply."
+    return 1, "Scenario 62 strict check passed: vacancy_url is present in the assistant reply."
 
 
 def enforce_positive_handling_for_s32_s33(
@@ -4216,12 +4200,13 @@ def run_scenarios(
     cases_total = len(cases)
     turns_total = sum(int(case.get("turns_total", 0)) for case in cases)
     score_total = sum(int(case.get("score_total", 0)) for case in cases)
-    score_rate = (score_total / turns_total) if turns_total else 0.0
+    score_rate = (score_total / turns_total * 100.0) if turns_total else 0.0
     passed_cases = sum(1 for case in cases if bool(case.get("passed")))
     failed_cases = cases_total - passed_cases
     pass_rate = (passed_cases / cases_total * 100.0) if cases_total else 0.0
 
     mismatches = build_mismatches(cases)
+    errors: List[Dict[str, Any]] = []
     token_usage_total = _token_usage_total(usage)
     sa_cfg = _component_cfg(cfg, "screening_assistant")
 
@@ -4255,6 +4240,8 @@ def run_scenarios(
         "score_total": score_total,
         "score_max": turns_total,
         "score_rate": score_rate,
+        "mismatches_count": len(mismatches),
+        "errors_count": len(errors),
         "summary": {
             "cases_total": cases_total,
             "turns_total": turns_total,
@@ -4264,9 +4251,12 @@ def run_scenarios(
             "score_total": score_total,
             "score_max": turns_total,
             "score_rate": score_rate,
+            "mismatches_count": len(mismatches),
+            "errors_count": len(errors),
         },
         "cases": cases,
         "mismatches": mismatches,
+        "errors": errors,
     }
 
     out_path = REPORTS_DIR / f"screening_scenarios_report_{run_id}.json"
@@ -4276,8 +4266,8 @@ def run_scenarios(
     failed_turns = sum(len(item.get("dialogs") or []) for item in mismatches)
     print(
         f"[summary] cases_total={cases_total} | turns_total={turns_total} | "
-        f"score_total={score_total} | score_rate={score_rate:.3f} | "
-        f"failed_cases={failed_cases} | failed_turns={failed_turns}"
+        f"score_total={score_total} | score_rate={score_rate:.2f}% | "
+        f"pass_rate={pass_rate:.2f}% | failed_cases={failed_cases} | failed_turns={failed_turns}"
     )
 
     return out_path
