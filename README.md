@@ -1,6 +1,6 @@
 ﻿# AI Agents Workspace
 
-Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `first_touch_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`. `app/runner.py` сохранён как исторический интеграционный сценарий end-to-end симуляции.
+Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `first_touch_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`.
 
 ## Структура проекта
 - `app/` — CLI-раннеры.
@@ -10,7 +10,6 @@
 - `screeningAssistant/` — обвязка промпта `screening_assistant`.
 - `screening_autofill/` — обвязка промпта `screening_autofill`.
 - `verdict_classifier/` — обвязка промпта `verdict_classifier`.
-- `telegramMessageGenerator-main/` — генератор первого сообщения в Telegram.
 - `tests/fixtures/` — фикстуры (CDM, screening-сценарии, extractor-кейсы).
 - `tests/tools/` — `model.yaml` и утилиты для генерации baseline-фикстур.
 - `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `first_touch`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
@@ -40,7 +39,7 @@ AI_SEARCH_AUTH_TOKEN=...
 Важно:
 - Большинство раннеров не читают `.env` автоматически. Для них переменные должны быть выставлены в окружении текущего процесса/терминала.
 - `.env` автоматически подхватывают только `app/first_touch_event_runner.py` и `app/enrich_cdm_with_extractor_entities.py`.
-- `OPENAI_API_KEY` нужен всем раннерам, которые обращаются к LLM. Исключение: `python -m app.runner gen-fixtures`.
+- `OPENAI_API_KEY` нужен всем раннерам, которые обращаются к LLM.
 - `AI_SEARCH_BASE_URL` и `AI_SEARCH_AUTH_TOKEN` нужны для backend-шагов в `extractor_agent_runner.py`, `one_line_search_query_builder_runner.py`, `sourcing_assistant_runner.py`.
 - `OPENAI_BASE_URL` опционален и используется только `app/extractor_agent_runner.py` для Step1.
 
@@ -56,10 +55,10 @@ AI_SEARCH_AUTH_TOKEN=...
 - `one_line_search_query_builder`
 - `responsibilities_parser`
 - `sourcing_assistant`
-- `candidate_simulator` (профили кандидатов для `app/runner.py`)
+- `candidate_simulator` (профили кандидатов; использовались только удалённым `app/runner.py` — сейчас не задействованы ни одним раннером)
 
 Переменные окружения для переопределения:
-- `FIRST_TOUCH_PROMPT_ID` — для `app/first_touch_runner.py` и генератора первого касания в `app/runner.py`.
+- `FIRST_TOUCH_PROMPT_ID` — для `app/first_touch_runner.py`.
 - `FIRST_TOUCH_EVENT_PROMPT_ID`, `FIRST_TOUCH_EVENT_PROMPT_VERSION` — для `app/first_touch_event_runner.py`.
 - `MESSAGE_CLASSIFIER_PROMPT_ID`, `MESSAGE_CLASSIFIER_PROMPT_VERSION` — для `app/message_classifier_runner.py`.
 - `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
@@ -71,12 +70,11 @@ AI_SEARCH_AUTH_TOKEN=...
 
 Важно:
 - `app/screening_scenarios_runner.py` и `app/screening_guardrails_runner.py` читают `screening_assistant.prompt_id/prompt_version` только из `tests/tools/model.yaml`.
-- `app/runner.py` читает `screening_assistant`, `screening_autofill`, `verdict_classifier`, `message_classifier` и `candidate_simulator` только из `tests/tools/model.yaml`.
 
 ## Фикстуры и данные
 - `tests/fixtures/cdm/` — CDM-фикстуры вакансий.
   Checked-in фикстуры в репозитории уже могут содержать дополнительные поля `vacancy.raw_vacancy`, `vacancy.key_requirements`, `vacancy.extractor_entities`.
-  Команда `python -m app.runner gen-fixtures` удаляет текущие `cdm_*.json` и заново генерирует 10 baseline-CDM через `tests/tools/make_vacancies.py`.
+  Baseline-CDM генерируются напрямую через `tests/tools/make_vacancies.py` (ранее это делала команда `python -m app.runner gen-fixtures`, которая удалена вместе с `app/runner.py`).
   Эти baseline-CDM подходят для smoke/e2e-сценариев, но не добавляют `raw_vacancy`, `key_requirements`, `extractor_entities`.
 - `tests/fixtures/screening_scenarios.csv` — сценарии для проверки `screening_assistant`.
 - `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py` (сейчас хранятся в `cases.yaml`).
@@ -89,30 +87,9 @@ AI_SEARCH_AUTH_TOKEN=...
 
 ## Раннеры (`app/`)
 
-### `app/runner.py` — исторический end-to-end интеграционный раннер
-Статус:
-- Сейчас обычно не используется как основной способ регрессионной проверки.
-- Это первоначальная концепция сквозной симуляции сценария `одна вакансия x один профиль кандидата` через цепочку `first_touch` / `telegramMessageGenerator` -> `candidate_simulator` -> `screening_assistant` -> `message_classifier` -> `verdict_classifier` -> `screening_autofill`.
-
-Как работает:
-- Берет CDM-фикстуры и прогоняет их по всем профилям из `candidate_simulator`.
-- Стартовое сообщение генерируется через `telegramMessageGenerator` (если доступен), иначе берется шаблон из CDM или fallback.
-- Диалог проходит через `screening_assistant`, `message_classifier`, `verdict_classifier`, `screening_autofill`, собираются метрики и usage.
-
-Запуск:
-```bash
-python -m app.runner gen-fixtures
-python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
-```
-
-Параметры:
-- `gen-fixtures` — удаляет текущие `tests/fixtures/cdm/cdm_*.json` и генерирует 10 baseline-CDM через `tests.tools.make_vacancies` (ключ не нужен).
-- `unit --limit` — сколько CDM брать в прогон (по умолчанию 5).
-- `unit --candidate-profiles` — список профилей из `candidate_simulator` (по умолчанию все).
-
-Отчеты:
-- `tests/reports/runs/<run_id>/report-<run_id>.json`
-- `tests/reports/runs/<run_id>/dialogs/*.json`
+> Примечание: исторический end-to-end раннер `app/runner.py` удалён как неиспользуемый.
+> Генерация baseline-CDM (бывшая команда `python -m app.runner gen-fixtures`) теперь
+> выполняется напрямую через `tests/tools/make_vacancies.py`.
 
 ### `app/screening_scenarios_runner.py` — сценарии для `screening_assistant`
 Как работает:
@@ -329,12 +306,14 @@ python -m app.message_classifier_runner --messages-per-class 3 --seed 42
 Отчеты:
 - `tests/reports/message_classifier/message_classifier_report_<run_id>.json`
 
-### `app/first_touch_runner.py` — тест первого касания (Telegram)
+### `app/first_touch_runner.py` — тест первого касания
 Как работает:
-- Строит `InputForm` из CDM и генерирует сообщение через `telegramMessageGenerator`.
+- Строит `InputForm` из CDM и генерирует сообщение через сохранённый prompt `first_touch`
+  (встроенный `FirstTouchGenerator`, по аналогии с `first_touch_hh_runner`; контракт
+  input-переменных и постобработка подписи сохранены от прежнего внешнего генератора).
 - Проверяет наличие фактов и галлюцинаций с помощью LLM-оценщика.
 - Опционально требует вопрос в сообщении.
-- Требует `telegramMessageGenerator-main` (если модуль не импортируется, раннер завершится с ошибкой).
+- `prompt_id` берётся из `FIRST_TOUCH_PROMPT_ID`/`model.yaml` (секция `first_touch`).
 
 Запуск:
 ```bash
@@ -356,7 +335,7 @@ python -m app.first_touch_runner --limit 5 --require-question
 
 ### `app/first_touch_event_runner.py` — простой раннер для event-invite prompt
 Как работает:
-- Напрямую вызывает сохранённый prompt по `prompt_id/prompt_version`, без CDM и без `telegramMessageGenerator`.
+- Напрямую вызывает сохранённый prompt по `prompt_id/prompt_version`, без CDM и без построения `InputForm`.
 - На вход подаёт только `candidate_name` в JSON (`{"candidate_name": ...}`).
 - Генерирует сообщения для набора имён, отдельно прогоняет кейс с пустым именем.
 - Проверяет каждое сообщение на обязательные факты, выдуманные детали и финальный вопрос про ссылку на регистрацию.
