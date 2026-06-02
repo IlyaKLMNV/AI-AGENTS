@@ -1,8 +1,11 @@
 # Статус миграции раннеров на новую архитектуру (`qa_harness`)
 
-Живой чек-лист: что переносим из каждого старого `app/`-раннера и что уже сделано.
-Парити-сверка ловит поведенческие расхождения; этот файл ловит **что вообще портируем**
+Живой чек-лист: что переносим из каждого старого `app/`-раннера и что уже сделано
 (чтобы ничего не забыть). Старые раннеры НЕ удаляем до проверки новых и финального cutover.
+
+> Решение по парити (2026-06-02): **автоматический парити-харнесс на кассетах НЕ строим** —
+> эквивалентность нового раннера старому проверяется **вручную, глазами** по отчётам.
+> Колонка «Парити» = статус ручной сверки (⬜ не сверяли / 👁 сверено глазами).
 
 Легенда: ✅ перенесено · 🟡 частично · ⬜ не начато · ➕ новое (нет в старом)
 
@@ -10,9 +13,9 @@
 
 | Раннер | Статус | Парити | Старый файл |
 |---|---|---|---|
-| message_classifier | ✅ фичи (парити ⬜) | ⬜ | `app/message_classifier_runner.py` |
-| verdict_classifier | ✅ фичи (парити ⬜) | ⬜ | `app/verdict_classifier_runner.py` |
-| extractor_agent | ⬜ | ⬜ | `app/extractor_agent_runner.py` |
+| message_classifier | ✅ фичи | ⬜ глазами | `app/message_classifier_runner.py` |
+| verdict_classifier | ✅ фичи | ⬜ глазами | `app/verdict_classifier_runner.py` |
+| extractor_agent | ✅ фичи | ⬜ глазами | `app/extractor_agent_runner.py` |
 | sourcing_assistant | ⬜ | ⬜ | `app/sourcing_assistant_runner.py` |
 | one_line_search_query_builder | ⬜ | ⬜ | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ⬜ | ⬜ | `app/responsibilities_parser_runner.py` |
@@ -84,3 +87,27 @@ one_line/responsibilities → first_touch → screening (std→hh).
 Переиспользование каркаса (доказательство обобщаемости): судья `LabelJudge`, метрики,
 `ReportBuilder`, генератор-база `Generator`, `core/cdm` — взяты из message_classifier без изменений;
 новое — только диалоговая специфика (`dialogue_gen`/`dialogue_specs`/`verdict`-классификатор).
+
+---
+
+## extractor_agent — детальный чек-лист
+
+Старый: `python app/extractor_agent_runner.py`. Новый: `python -m qa_harness.runners.extractor_agent`.
+Структурно ДРУГОЙ: конвейер step1→2→3, без LLM-судьи, оценка контрактная; кейс в отчёте = `stages[]`.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Step1: LLM-парс запроса -> extractor_json (сырой HTTP /responses) | ✅ | `pipeline/openai_step1.py` |
+| Step1 contract-валидация (ALLOWED_*, drift) | ✅ | `pipeline/contract.py` |
+| Step2: extractor_json -> backend payload (группы/флаги/диапазоны/гео-санитайз) | ✅ | `pipeline/payload.py` (`build_step3_payload`) |
+| Step3: backend `/site/searchBool` + классификация ошибок (insufficient/auth/http) | ✅ | `pipeline/backend_client.py` |
+| Источники кейсов real / suite / synthetic | ✅ | `pipeline/cases.py` |
+| `--steps 1\|1,2\|1,2,3` (частичный прогон) | ✅ | runner |
+| backend-флаги (base-url/token/step3-path/timeout/retries/token-in-body) + search-флаги | ✅ | runner |
+| `stages[]` в отчёте (артефакт + pass/fail на каждый шаг) | ➕ | `core/reporting` (subjects/stages) — впервые использовано |
+| Метрики: deterministic (contract/ошибки) + backend (counts) + by_source | ✅ | `metrics.deterministic/backend/by_source` |
+| `--mix-ratios` (сэмплинг real/suite/syn по долям) | 🟡 | `pipeline/cases.mix_cases` есть и протестирован; раннер v1 пока простой concat по счётчикам |
+| Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
+
+`stages[]` отработал на конвейерной форме — схема отчёта (спроектированная против classifier+extractor, P0-5)
+держит и многошаговый раннер без переписывания. `pipeline/` — общий слой для будущих one_line/sourcing.
