@@ -21,3 +21,9 @@ tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
 tests/reports/dialogs/
+
+# qa_harness packaging
+*.egg-info/
+src/*.egg-info/
+build/
+dist/
