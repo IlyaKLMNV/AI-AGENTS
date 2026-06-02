@@ -8,6 +8,7 @@ from qa_harness.core.metrics import (
     confusion_matrix,
     counts,
     per_class_accuracy,
+    split_summary,
 )
 
 
@@ -38,3 +39,8 @@ def test_classification_metrics_block():
     assert m["counts_target"] == {"a": 2}
     assert m["counts_predicted"] == {"a": 1, "b": 1}
     assert m["confusion_matrix"] == {"a": {"a": 1, "b": 1}}
+
+
+def test_split_summary():
+    assert split_summary([("a", "a"), ("a", "b")]) == {"accuracy": 50.0, "total": 2}
+    assert split_summary([]) == {"accuracy": None, "total": 0}

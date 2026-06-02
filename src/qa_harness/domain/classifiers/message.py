@@ -9,10 +9,16 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Optional, Sequence, Tuple
 
 from ..judge.label_judge import CLASSES, extract_label
+from ..text.message_markers import (
+    ACCEPTANCE_PATTERNS,
+    DECLINE_PATTERNS,
+    HUMAN_NEEDED_PATTERNS,
+    REASON_PATTERNS,
+    has_any_pattern,
+)
 
 ClassifyResult = Tuple[Optional[str], str, Any]  # (label, raw_output, usage)
 
@@ -33,29 +39,7 @@ class StoredPromptMessageClassifier:
 
 
 # --- офлайн-эвристика (детерминированная, без сети) ------------------------------
-
-_HUMAN_NEEDED = (
-    r"\bстранн", r"\bчто\s+за\s+ерунд", r"\bмошенн", r"\bразвод", r"\bскиньте\b",
-    r"\bоткуда\s+нашли\s+контакт\b", r"\bзачем\s+мне\s+тратить\s+время\b",
-    r"\bбред\b", r"\bхрень\b", r"\bено[тт]\b", r"[🦝😕🤨]",
-)
-_DECLINE = (
-    r"\bне\s+интерес", r"\bне\s+рассматрива", r"\bне\s+подходит", r"\bвынужден\s+отказ",
-    r"\bоткаж", r"\bотказ", r"\bне\s+готов", r"\bне\s+смогу", r"\bнет,\s*спасибо\b",
-)
-_REASON = (
-    r"\bпотому\s+что\b", r"\bтак\s+как\b", r"\bпоскольку\b", r"\bоффер", r"\bзарплат",
-    r"\bформат", r"\bофис", r"\bгибрид", r"\bудален", r"\bлокац", r"\bпереезд",
-    r"\bстек", r"\bсфера", r"\bработаю\b", r"\bуже\b",
-)
-_ACCEPTANCE = (
-    r"\bинтерес", r"\bваканси", r"\bподскажите\b", r"\bрасскажите\b", r"\bссылк",
-    r"\bописани[ея]\b", r"\bкоманд", r"\bзадач", r"\bсозвон", r"\bготов\s+обсудить\b",
-)
-
-
-def _any(text: str, patterns: Sequence[str]) -> bool:
-    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+# Использует общие маркеры из domain/text/message_markers.py (единый источник).
 
 
 class HeuristicMessageClassifier:
@@ -63,11 +47,11 @@ class HeuristicMessageClassifier:
 
     def classify(self, message: str) -> ClassifyResult:
         text = message or ""
-        if _any(text, _HUMAN_NEEDED):
+        if has_any_pattern(text, HUMAN_NEEDED_PATTERNS):
             label = "human_needed"
-        elif _any(text, _DECLINE):
-            label = "reason_farewell" if _any(text, _REASON) else "no_reason"
-        elif _any(text, _ACCEPTANCE):
+        elif has_any_pattern(text, DECLINE_PATTERNS):
+            label = "reason_farewell" if has_any_pattern(text, REASON_PATTERNS) else "no_reason"
+        elif has_any_pattern(text, ACCEPTANCE_PATTERNS):
             label = "acceptance"
         else:
             label = "acceptance"  # нейтральный fallback

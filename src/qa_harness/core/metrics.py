@@ -50,6 +50,11 @@ def counts(values: Sequence[str], labels: Optional[Sequence[str]] = None) -> Dic
     return dict(Counter(v for v in values if allowed is None or v in allowed))
 
 
+def split_summary(pairs: Sequence[Pair]) -> Dict[str, object]:
+    """Краткая сводка по срезу датасета: {accuracy, total}."""
+    return {"accuracy": accuracy(pairs), "total": len(pairs)}
+
+
 def classification_metrics(pairs: Sequence[Pair], labels: Sequence[str]) -> Dict[str, object]:
     """Готовый блок metrics.classification для отчёта (см. REPORT_SCHEMA §2)."""
     targets = [t for t, _ in pairs]
