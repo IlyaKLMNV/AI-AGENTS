@@ -19,3 +19,21 @@ dev = ["pytest>=8.0", "jsonschema>=4.0", "vcrpy>=6.0", "import-linter>=2.0"]
 # from the repo root), independent of this editable install. See docs/REFACTOR_PLAN.md §3 (P0-1).
 [tool.hatch.build.targets.wheel]
 packages = ["src/qa_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Старые app/ раннеры pytest не запускает (их тесты — это CLI-раннеры).
+# Здесь собираются только юнит-тесты нового пакета (tests/test_*.py).
+
+# Гейт изоляции деревьев: новый пакет НЕ должен импортировать legacy app/ или adapters/.
+# Проверка: lint-imports (см. docs/REFACTOR_PLAN.md §6 P0).
+[tool.importlinter]
+root_packages = ["qa_harness"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "qa_harness must not depend on legacy app/ or adapters/"
+type = "forbidden"
+source_modules = ["qa_harness"]
+forbidden_modules = ["app", "adapters"]
