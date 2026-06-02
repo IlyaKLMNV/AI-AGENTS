@@ -11,7 +11,7 @@
 | Раннер | Статус | Парити | Старый файл |
 |---|---|---|---|
 | message_classifier | ✅ фичи (парити ⬜) | ⬜ | `app/message_classifier_runner.py` |
-| verdict_classifier | ⬜ | ⬜ | `app/verdict_classifier_runner.py` |
+| verdict_classifier | ✅ фичи (парити ⬜) | ⬜ | `app/verdict_classifier_runner.py` |
 | extractor_agent | ⬜ | ⬜ | `app/extractor_agent_runner.py` |
 | sourcing_assistant | ⬜ | ⬜ | `app/sourcing_assistant_runner.py` |
 | one_line_search_query_builder | ⬜ | ⬜ | `app/one_line_search_query_builder_runner.py` |
@@ -59,3 +59,28 @@ one_line/responsibilities → first_touch → screening (std→hh).
 Отличие по умолчанию: старый раннер по умолчанию `--mode synthetic` (и требует
 `--messages-per-class`); новый по умолчанию `--mode regression` (запуск без флагов = 8 кейсов,
 без жжения токенов). Полная синтетика доступна явно: `--mode all --messages-per-class N`.
+
+---
+
+## verdict_classifier — детальный чек-лист
+
+Старый: `python -m app.verdict_classifier_runner`. Новый: `python -m qa_harness.runners.verdict_classifier`.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Вердикты `passed/failed/deadlock` + `_extract_verdict` | ✅ | переиспользует `extract_label(text, VERDICTS)` + `LabelJudge` |
+| Классификация диалога stored-промптом (онлайн) | ✅ | `domain/classifiers/verdict.py` (`StoredPromptVerdictClassifier`) |
+| Офлайн-классификация без сети | ➕ | `HeuristicVerdictClassifier` (стаб) |
+| Регрессионные кейсы (`--mode regression`) | ✅ | `runners/verdict_classifier.py` |
+| `DialogueSynthesizer` (генерация диалога под вердикт) | ✅ | `domain/generators/dialogue_gen.py` (`DialogueGenerator`) |
+| Валидация диалога (формат/чередование/END/утечка зарплаты/deadlock) | ✅ | `validate_generated_dialogue` |
+| Сценарные подсказки `SCENARIO_HINTS_BY_VERDICT` + marker-константы | ✅ | `domain/generators/dialogue_specs.py` |
+| Хелперы формата диалога (split lines, speaker, prefixes) | ✅ | `domain/text/dialogue.py` (общие, для screening тоже) |
+| `--mode/--dialogs-per-verdict/--noise-level/--scenario-*/--max-attempts-multiplier/--dialogue-gen-model` | ✅ | runner |
+| Метрики + by_split (synthetic vs regression) + токены gen/clf | ✅ | `core/metrics` + `metrics.token_usage_by_role` |
+| Структурированный транскрипт диалога в cases.json | ➕ | `dialogue_to_transcript` (новое; старый писал плоский текст) |
+| Парити-сверка со старым раннером | ⬜ | (следующий шаг) |
+
+Переиспользование каркаса (доказательство обобщаемости): судья `LabelJudge`, метрики,
+`ReportBuilder`, генератор-база `Generator`, `core/cdm` — взяты из message_classifier без изменений;
+новое — только диалоговая специфика (`dialogue_gen`/`dialogue_specs`/`verdict`-классификатор).

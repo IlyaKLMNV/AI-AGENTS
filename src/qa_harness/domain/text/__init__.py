@@ -1,5 +1,6 @@
-"""Текстовые примитивы домена (маркеры, детекторы)."""
+"""Текстовые примитивы домена (маркеры, детекторы, формат диалога)."""
 
+from .dialogue import CANDIDATE_PREFIX, RECRUITER_PREFIX, speaker_for_line, split_dialogue_lines
 from .message_markers import (
     ACCEPTANCE_PATTERNS,
     DECLINE_PATTERNS,
@@ -14,4 +15,8 @@ __all__ = [
     "ACCEPTANCE_PATTERNS",
     "HUMAN_NEEDED_PATTERNS",
     "has_any_pattern",
+    "RECRUITER_PREFIX",
+    "CANDIDATE_PREFIX",
+    "split_dialogue_lines",
+    "speaker_for_line",
 ]

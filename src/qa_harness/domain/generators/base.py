@@ -25,10 +25,14 @@ class Generator(ABC):
     def payload(self, spec: Any) -> str: ...
 
     @abstractmethod
-    def parse(self, text: str) -> Any: ...
+    def parse(self, text: str, spec: Any) -> Any: ...
 
     def generate(self, spec: Any) -> Any:
-        """Один вызов модели: вернуть распарсенный результат (usage копится в self.usage)."""
+        """Один вызов модели: вернуть распарсенный результат (usage копится в self.usage).
+
+        parse получает и сырой текст, и spec — это нужно генераторам, чья валидация
+        зависит от контекста (например, диалог проверяется против target_verdict/cdm).
+        """
         text, usage = self._client.create(self.instruction(spec) + "\n\n" + self.payload(spec))
         accumulate_usage(self.usage, usage)
-        return self.parse(text)
+        return self.parse(text, spec)

@@ -1,18 +1,15 @@
-"""Тонкий раннер message_classifier (эталонный срез новой архитектуры).
+"""Тонкий раннер verdict_classifier (близнец message_classifier, но на диалогах).
 
 Источники кейсов (--mode):
-- regression — фиксированные размеченные сообщения из regression_cases.json (по умолчанию);
-- synthetic  — LLM генерит свежие сообщения по классам (как старый раннер);
+- regression — фиксированные диалоги из verdict_classifier/regression_cases.json (по умолчанию);
+- synthetic  — LLM генерит диалоги под целевой вердикт (passed/failed/deadlock);
 - all        — и то, и другое.
 
-Классификация:
-- онлайн (по умолчанию): stored-промпт message_classifier (нужен OPENAI_API_KEY);
-- --offline: детерминированная эвристика без сети (только --mode regression).
+Классификация диалога -> вердикт: онлайн stored-промптом verdict_classifier; --offline —
+детерминированная эвристика (только --mode regression). Метрики/отчёт — через core.
 
-Каждый кейс судится LabelJudge'ом; метрики (accuracy/confusion/by_split) и two-file
-отчёт пишутся через core. Запуск:
-  python -m qa_harness.runners.message_classifier --offline
-  python -m qa_harness.runners.message_classifier --mode all --messages-per-class 3 --seed 42
+  python -m qa_harness.runners.verdict_classifier --offline
+  python -m qa_harness.runners.verdict_classifier --mode all --dialogs-per-verdict 3 --seed 42
 """
 
 from __future__ import annotations
@@ -27,24 +24,23 @@ from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_pro
 from qa_harness.core.cdm import load_cdm_files, load_json
 from qa_harness.core.metrics import classification_metrics, split_summary
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
-from qa_harness.domain.classifiers import HeuristicMessageClassifier, StoredPromptMessageClassifier
-from qa_harness.domain.generators import (
-    CandidateMessageGenerator,
-    MessageSpec,
-    pick_scenario_hint,
-    validate_candidate_message,
+from qa_harness.domain.classifiers import (
+    VERDICTS,
+    HeuristicVerdictClassifier,
+    StoredPromptVerdictClassifier,
 )
-from qa_harness.domain.judge import CLASSES, LabelJudge
+from qa_harness.domain.generators import DialogueGenerator, DialogueSpec, pick_verdict_hint
+from qa_harness.domain.judge import LabelJudge
+from qa_harness.domain.text import CANDIDATE_PREFIX, RECRUITER_PREFIX, speaker_for_line, split_dialogue_lines
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_REGRESSION = REPO_ROOT / "tests" / "fixtures" / "message_classifier" / "regression_cases.json"
+DEFAULT_REGRESSION = REPO_ROOT / "tests" / "fixtures" / "verdict_classifier" / "regression_cases.json"
 DEFAULT_CDM_DIR = REPO_ROOT / "tests" / "fixtures" / "cdm" / "std"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
-RUNNER = "message_classifier"
+RUNNER = "verdict_classifier"
 
-# (source, target, predicted)
-Result = Tuple[str, str, str]
+Result = Tuple[str, str, str]  # (source, target, predicted)
 
 
 def load_regression_cases(path: Path) -> List[Dict[str, Any]]:
@@ -53,17 +49,17 @@ def load_regression_cases(path: Path) -> List[Dict[str, Any]]:
         raise ValueError("regression cases JSON must be a list")
     cases: List[Dict[str, Any]] = []
     for i, item in enumerate(raw, start=1):
-        target = str(item.get("target_class") or "").strip().lower()
-        message = str(item.get("message") or "").strip()
-        if target not in CLASSES:
-            raise ValueError(f"case #{i}: invalid target_class {target!r}")
-        if not message:
-            raise ValueError(f"case #{i}: empty message")
+        target = str(item.get("target_verdict") or "").strip().lower()
+        dialogue = str(item.get("dialogue") or "").strip()
+        if target not in VERDICTS:
+            raise ValueError(f"case #{i}: invalid target_verdict {target!r}")
+        if not dialogue:
+            raise ValueError(f"case #{i}: empty dialogue")
         cases.append(
             {
                 "id": str(item.get("id") or f"case_{i}"),
-                "target_class": target,
-                "message": message,
+                "target_verdict": target,
+                "dialogue": dialogue,
                 "scenario": str(item.get("scenario") or "").strip(),
                 "description": str(item.get("description") or "").strip(),
             }
@@ -71,20 +67,30 @@ def load_regression_cases(path: Path) -> List[Dict[str, Any]]:
     return cases
 
 
+def dialogue_to_transcript(dialogue: str) -> List[Dict[str, Any]]:
+    turns: List[Dict[str, Any]] = []
+    for line in split_dialogue_lines(dialogue):
+        role = speaker_for_line(line)
+        if role is None:
+            continue
+        prefix = RECRUITER_PREFIX if role == "recruiter" else CANDIDATE_PREFIX
+        turns.append({"turn": len(turns) + 1, "role": role, "text": line[len(prefix):].strip()})
+    return turns
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="message_classifier QA runner (new architecture).")
-    p.add_argument("--mode", choices=["regression", "synthetic", "all"], default="regression",
-                   help="Источник кейсов (по умолчанию regression).")
+    p = argparse.ArgumentParser(description="verdict_classifier QA runner (new architecture).")
+    p.add_argument("--mode", choices=["regression", "synthetic", "all"], default="regression")
     p.add_argument("--offline", action="store_true", help="Офлайн-классификация эвристикой (только --mode regression).")
-    p.add_argument("--messages-per-class", type=int, default=0, help="Сколько сообщений генерить на класс (synthetic/all).")
+    p.add_argument("--dialogs-per-verdict", type=int, default=0, help="Сколько диалогов генерить на вердикт (synthetic/all).")
     p.add_argument("--regression-cases", type=Path, default=DEFAULT_REGRESSION)
-    p.add_argument("--cdm-dir", type=Path, default=DEFAULT_CDM_DIR, help="CDM-фикстуры для синтетической генерации.")
-    p.add_argument("--cdm-count", type=int, default=None, help="Взять первые N CDM.")
-    p.add_argument("--noise-level", type=int, default=2, help="0..2, уровень шума в генерации.")
+    p.add_argument("--cdm-dir", type=Path, default=DEFAULT_CDM_DIR)
+    p.add_argument("--cdm-count", type=int, default=None)
+    p.add_argument("--noise-level", type=int, default=2)
     p.add_argument("--scenario-mode", choices=["random", "cycle"], default="random")
-    p.add_argument("--scenario-count-per-class", type=int, default=None)
-    p.add_argument("--max-attempts-multiplier", type=int, default=30, help="Лимит попыток на класс = N * множитель.")
-    p.add_argument("--message-gen-model", default=None, help=f"Модель генерации (по умолчанию {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--scenario-count-per-verdict", type=int, default=None)
+    p.add_argument("--max-attempts-multiplier", type=int, default=30)
+    p.add_argument("--dialogue-gen-model", default=None, help=f"Модель генерации (по умолчанию {DEFAULT_GEN_MODEL}).")
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--prompt-id", default=None)
@@ -96,8 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_regression(rb, classifier, judge, args, clf_bucket, results, quiet) -> None:
     for c in load_regression_cases(args.regression_cases):
-        target, message = c["target_class"], c["message"]
-        predicted, raw, usage = classifier.classify(message)
+        target, dialogue = c["target_verdict"], c["dialogue"]
+        predicted, raw, usage = classifier.classify(dialogue)
         accumulate_usage(clf_bucket, usage)
         verdict = judge.evaluate(predicted, target)
         results.append(("regression", target, predicted))
@@ -107,10 +113,10 @@ def _run_regression(rb, classifier, judge, args, clf_bucket, results, quiet) -> 
                 source="regression",
                 passed=verdict.passed,
                 inputs={
-                    "criterion": f"target_class == {target}",
+                    "criterion": f"verdict == {target}",
                     "scenario": {"name": c["scenario"], "description": c["description"], "target_label": target},
                 },
-                transcript=[{"turn": 1, "role": "candidate", "text": message}],
+                transcript=dialogue_to_transcript(dialogue),
                 output={"raw": raw, "parsed": predicted},
                 verdict=verdict.to_dict(),
             )
@@ -121,25 +127,22 @@ def _run_regression(rb, classifier, judge, args, clf_bucket, results, quiet) -> 
 
 def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, quiet, seed) -> None:
     rng = random.Random(seed)
-    cycle_state: Dict[str, int] = {cls: 0 for cls in CLASSES}
+    cycle_state: Dict[str, int] = {v: 0 for v in VERDICTS}
     cdm_paths = load_cdm_files(args.cdm_dir, args.cdm_count)
 
-    for target in CLASSES:
-        need = args.messages_per_class
+    for target in VERDICTS:
+        need = args.dialogs_per_verdict
         attempts_limit = max(need * args.max_attempts_multiplier, 1)
         got = attempts = idx = 0
         while got < need and attempts < attempts_limit:
             attempts += 1
             cdm_path = rng.choice(cdm_paths)
-            hint = pick_scenario_hint(target, rng, args.scenario_mode, args.scenario_count_per_class, cycle_state)
+            hint = pick_verdict_hint(target, rng, args.scenario_mode, args.scenario_count_per_verdict, cycle_state)
             try:
-                message = generator.generate(MessageSpec(load_json(cdm_path), target, hint, args.noise_level))
-                err = validate_candidate_message(target, message)
-                if err:
-                    raise ValueError(err)
-                predicted, raw, usage = classifier.classify(message)
+                dialogue = generator.generate(DialogueSpec(load_json(cdm_path), target, hint, args.noise_level))
+                predicted, raw, usage = classifier.classify(dialogue)
                 accumulate_usage(clf_bucket, usage)
-            except Exception as e:  # noqa: BLE001 — попытка не удалась, пробуем ещё (как старый раннер)
+            except Exception as e:  # noqa: BLE001 — попытка не удалась (валидация диалога/генерация), пробуем ещё
                 rb.add_error(f"synthetic:{target}:attempt{attempts}", repr(e))
                 continue
             idx += 1
@@ -152,10 +155,10 @@ def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, 
                     source="synthetic",
                     passed=verdict.passed,
                     inputs={
-                        "criterion": f"target_class == {target}",
+                        "criterion": f"verdict == {target}",
                         "scenario": {"hint": hint, "target_label": target, "cdm_file": cdm_path.name},
                     },
-                    transcript=[{"turn": 1, "role": "candidate", "text": message}],
+                    transcript=dialogue_to_transcript(dialogue),
                     output={"raw": raw, "parsed": predicted},
                     verdict=verdict.to_dict(),
                 )
@@ -169,8 +172,8 @@ def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, 
 def run(args: argparse.Namespace) -> Dict[str, Path]:
     if args.offline and args.mode != "regression":
         raise ValueError("--offline поддерживается только с --mode regression (синтетика требует сети).")
-    if args.mode in ("synthetic", "all") and args.messages_per_class <= 0:
-        raise ValueError("--messages-per-class must be > 0 when --mode includes synthetic")
+    if args.mode in ("synthetic", "all") and args.dialogs_per_verdict <= 0:
+        raise ValueError("--dialogs-per-verdict must be > 0 when --mode includes synthetic")
 
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
@@ -178,16 +181,16 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
     seed = args.seed if args.seed is not None else prompt.seed
-    gen_model = args.message_gen_model or DEFAULT_GEN_MODEL
+    gen_model = args.dialogue_gen_model or DEFAULT_GEN_MODEL
 
     if args.offline:
-        classifier: Any = HeuristicMessageClassifier()
+        classifier: Any = HeuristicVerdictClassifier()
     else:
         from qa_harness.core.llm_client import StoredPromptClient
 
-        classifier = StoredPromptMessageClassifier(StoredPromptClient(prompt.prompt_id, prompt.prompt_version))
+        classifier = StoredPromptVerdictClassifier(StoredPromptClient(prompt.prompt_id, prompt.prompt_version))
 
-    judge = LabelJudge(CLASSES)
+    judge = LabelJudge(VERDICTS)
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
@@ -198,7 +201,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         args={
             "mode": args.mode,
             "offline": bool(args.offline),
-            "messages_per_class": args.messages_per_class,
+            "dialogs_per_verdict": args.dialogs_per_verdict,
             "noise_level": args.noise_level,
             "scenario_mode": args.scenario_mode,
         },
@@ -213,7 +216,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     if args.mode in ("synthetic", "all"):
         from qa_harness.core.llm_client import ModelClient
 
-        generator = CandidateMessageGenerator(ModelClient(gen_model))
+        generator = DialogueGenerator(ModelClient(gen_model))
         _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, args.quiet, seed)
         accumulate_usage(gen_bucket, generator.usage)
 
@@ -223,7 +226,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     rb.set_token_usage(usage_total(total_bucket))
 
     all_pairs = [(t, p) for _, t, p in results]
-    classification = classification_metrics(all_pairs, CLASSES)
+    classification = classification_metrics(all_pairs, VERDICTS)
     sources = sorted({s for s, _, _ in results})
     if len(sources) > 1:
         classification["by_split"] = {

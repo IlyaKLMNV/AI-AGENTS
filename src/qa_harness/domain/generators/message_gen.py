@@ -86,7 +86,7 @@ class CandidateMessageGenerator(Generator):
             "7) Return exactly one message in Russian.\n"
         )
 
-    def parse(self, text: str) -> str:
+    def parse(self, text: str, spec: MessageSpec = None) -> str:
         text = (text or "").strip()
         if not text:
             raise ValueError("message generator returned empty message")
