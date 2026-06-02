@@ -1599,7 +1599,7 @@ def main() -> None:
 
     parser.add_argument("--include-salary", action="store_true", help="Include salary_range into expected facts")
     parser.add_argument("--hide-company", action="store_true", help='Force company_name to "СКРЫТО" in all cases')
-    parser.add_argument("--hide-company-ratio", type=float, default=0.0, help="Randomly hide company in N% cases (0..1)")
+    parser.add_argument("--hide-company-ratio", type=float, default=0.0, help="Randomly hide company in N%% cases (0..1)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for hide-company-ratio")
 
     args = parser.parse_args()
