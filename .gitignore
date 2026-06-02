@@ -27,3 +27,5 @@ tests/reports/dialogs/
 src/*.egg-info/
 build/
 dist/
+
+tests/reports_v2/
