@@ -6,10 +6,7 @@
 - `app/` — CLI-раннеры.
 - `adapters/` — преобразования CDM -> input-форматы промптов.
 - `cdm/` — схема CDM и каталог `samples/` (может быть пустым).
-- `messageLabelGenerator/` — обвязка промпта `message_classifier`.
-- `screeningAssistant/` — обвязка промпта `screening_assistant`.
-- `screening_autofill/` — обвязка промпта `screening_autofill`.
-- `verdict_classifier/` — обвязка промпта `verdict_classifier`.
+- `screeningAssistant/` — обвязка промпта `screening_assistant` (используется `screening_guardrails_runner`).
 - `tests/fixtures/` — фикстуры (CDM, screening-сценарии, extractor-кейсы).
 - `tests/tools/` — `model.yaml` и утилиты для генерации baseline-фикстур.
 - `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `first_touch`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).

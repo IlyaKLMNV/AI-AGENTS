@@ -30,8 +30,8 @@ AI-ассистента. Продуктовые промпты хранятся 
 - `tests/fixtures/` — CDM-вакансии (`cdm/std`, `cdm/hh`), `screening_scenarios.csv`, regression-кейсы.
 - `tests/reports/` — отчёты (в `.gitignore`).
 - `cdm/schema.json` — схема Canonical Data Model вакансии.
-- `screeningAssistant/`, `messageLabelGenerator/`, `verdict_classifier/`,
-  `screening_autofill/`, `telegramMessageGenerator-main/` — тонкие обёртки промптов.
+- `screeningAssistant/screeningAss.py` — обёртка промпта `screening_assistant`
+  (единственная используемая; импортируется `screening_guardrails_runner`).
 - README.md — исчерпывающая документация по каждому раннеру и всем флагам.
 
 ## Окружение
