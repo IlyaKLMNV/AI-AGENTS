@@ -57,7 +57,10 @@ def call_backend_search_bool(
     for _ in range(max(1, backend.retries + 1)):
         attempts += 1
         try:
-            r = requests.post(url, headers=headers, json=req_payload, timeout=backend.timeout_s)
+            # allow_redirects=False: search API не должен уводить на страницу логина;
+            # 3xx -> /auth значит «не авторизован», и это надо репортить честно, а не идти по
+            # редиректу и потом падать в bad_json на HTML-странице логина.
+            r = requests.post(url, headers=headers, json=req_payload, timeout=backend.timeout_s, allow_redirects=False)
         except Exception as e:  # noqa: BLE001
             last_err = str(e)
             continue
@@ -65,6 +68,9 @@ def call_backend_search_bool(
         status = r.status_code
         last_status = status
         text = r.text or ""
+        if 300 <= status < 400:
+            loc = r.headers.get("Location") or r.headers.get("location") or ""
+            return "auth_redirect", status, attempts, None, f"redirect_to:{loc}", None
         if status >= 400:
             kind = classify_step3_error(status, text)
             last_kind = kind
