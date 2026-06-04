@@ -117,3 +117,8 @@ one_line/responsibilities → first_touch → screening (std→hh).
 поверх контракта; **поэтапные вердикты**; **качество промпта ≠ инфраструктура** (backend-сбои → `errors`, не `failed`);
 step1 на SDK (`StoredPromptClient`) + строгий парс (ok/dirty/invalid); step2 coverage (`mapping_report`);
 конкурентность + раздельные таймауты + fail-fast по бэкенду + чекпоинты/сохранение по Ctrl+C.
+
+**Общий цикл прогона вынесен в `core/run_loop.py`** (`run_cases`, [тесты](../tests/test_run_loop.py)):
+конкурентный fan-out + последовательный fold в главном потоке (без локов) + чекпоинты + сохранение по Ctrl+C.
+extractor_agent — первый потребитель; fail-fast (`backend_down`) остался в раннере как его shared state — цикл
+о нём не знает. Будущие sourcing/one_line получат оркестрацию даром (см. план: «вынести `core/run_loop`» — done).
