@@ -16,7 +16,7 @@
 | message_classifier | ✅ фичи | ⬜ глазами | `app/message_classifier_runner.py` |
 | verdict_classifier | ✅ фичи | ⬜ глазами | `app/verdict_classifier_runner.py` |
 | extractor_agent | ✅ фичи | ⬜ глазами | `app/extractor_agent_runner.py` |
-| sourcing_assistant | ⬜ | ⬜ | `app/sourcing_assistant_runner.py` |
+| sourcing_assistant | ✅ фичи | ⬜ глазами | `app/sourcing_assistant_runner.py` |
 | one_line_search_query_builder | ✅ фичи | ⬜ глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ⬜ | ⬜ | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ⬜ | ⬜ | `app/screening_autofill_runner.py` |
@@ -150,3 +150,30 @@ shared state — цикл о нём не знает. Будущие раннер
 - **quality ≠ infra**: `passed = format & no_leakage & semantic`; backend `count>0` больше НЕ гейтит качество (это retrieval-инфо), инфра-сбои builder/extractor/backend → `errors`, не `failed`;
 - по умолчанию `--steps 1` (качество билдера полностью на step1; 2/3 — downstream-инфо);
 - схема `report.cases.schema.json` дополнена `source: anchor|golden` — заодно стал валиден и extractor (он эмитит `source=anchor`).
+
+---
+
+## sourcing_assistant — детальный чек-лист
+
+Старый: `python -m app.sourcing_assistant_runner`. Новый: `python -m qa_harness.runners.sourcing_assistant`.
+Тестируем промпт sourcing_assistant (кандидат ↔ требования вакансии). Кейс = **ВАКАНСИЯ**, `subjects[]` = N
+кандидатов. Переиспользует `core/run_loop` + `pipeline/` (backend-поиск). **Первый раннер с `subjects[]`.**
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Требования 1..5 из CDM (key_requirements / stack+skills) | ✅ | `domain/sourcing/build.py` (`requirements_from_cdm`) |
+| backend-поиск реальных кандидатов по `extractor_entities` (limit=pool) | ✅ | runner + `pipeline` (`build_step3_payload`/`call_backend_search_bool`) |
+| Сэмпл N профилей (first/random) | ✅ | runner (`--candidate-sample-size`/`--sample-mode`) |
+| Профиль кандидата из backend-выдачи (about/skills/positions) | ✅ | `domain/sourcing/build.py` (`build_candidate_profile`) |
+| Промпт на каждого кандидата `{requirements, profile}` → массив | ✅ | runner + `core.StoredPromptClient` |
+| Контракт вывода (длина 1:1, форма {requirement,comment,passed}, точный echo) | ✅ | `domain/sourcing/contract.py` (`check_contract`/`parse_sourcing_output`) |
+| Two-file отчёт + `subjects[]` + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` (subjects[]) + `core/run_loop` |
+| Источник требований `responsibilities_parser` (LLM) | ⬜ | пропущен (есть `cdm_key_requirements`/`stack_skills`; это отдельный раннер) |
+| Офлайн без сети | ➕ | `--offline` replay канонных кандидатов (`tests/fixtures/sourcing_assistant/offline.yaml`) |
+| Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
+
+**Осознанные отличия от легаси:**
+- `case.passed` = ВСЕ оценённые кандидаты прошли контракт (легаси: «≥1 прошёл» — мягче; новое строже и честнее для теста надёжности формата);
+- **quality ≠ infra**: backend-сбои / нет entities / нет кандидатов / сетевые ошибки промпта → `errors`, не `failed`; в `cases[]` попадают только «оценённые» вакансии;
+- семантической оценки нет (как и в легаси): кандидаты живые, без разметки — только контракт формы;
+- дефолты мелкие (`--candidate-pool-size 10`, `--candidate-sample-size 5`): backend-профили (`limit>0`) — медленный путь.

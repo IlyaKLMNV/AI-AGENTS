@@ -20,7 +20,7 @@
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
   `reports_v2/` (новые two-file отчёты).
 
-Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder**
+Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant**
 (остальные компоненты пока только в `app/`).
 
 ## Подготовка окружения

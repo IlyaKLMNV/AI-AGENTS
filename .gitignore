@@ -21,6 +21,8 @@ tests/fixtures/*
 !tests/fixtures/extractor_agent/anchors.yaml
 !tests/fixtures/one_line_search_query_builder/
 !tests/fixtures/one_line_search_query_builder/golden.yaml
+!tests/fixtures/sourcing_assistant/
+!tests/fixtures/sourcing_assistant/offline.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
