@@ -17,6 +17,8 @@ tests/fixtures/*
 !tests/fixtures/message_classifier/**
 !tests/fixtures/verdict_classifier/
 !tests/fixtures/verdict_classifier/**
+!tests/fixtures/extractor_agent/
+!tests/fixtures/extractor_agent/anchors.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/

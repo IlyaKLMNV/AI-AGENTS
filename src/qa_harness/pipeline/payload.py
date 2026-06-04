@@ -117,6 +117,60 @@ def make_base_payload(
     }
 
 
+# entity-bucket extractor_json -> поле payload (для проверки покрытия step2)
+_ENTITY_TO_PAYLOAD = {
+    "positions": "positions",
+    "skills": "skills",
+    "locations": "geos",
+    "companies": "firms",
+    "keywords": "keys",
+}
+
+
+def _bucket_raw_texts(extractor_json: Dict[str, Any], bucket: str) -> List[str]:
+    out: List[str] = []
+    vals = extractor_json.get(bucket)
+    if isinstance(vals, list):
+        for e in vals:
+            if isinstance(e, dict) and isinstance(e.get("raw_text"), str) and e["raw_text"].strip():
+                out.append(e["raw_text"].strip().lower())
+    return out
+
+
+def _payload_group_terms(payload: Dict[str, Any], field: str) -> set:
+    terms = set()
+    for g in payload.get(field) or []:
+        if isinstance(g, list) and len(g) == 2 and isinstance(g[1], list):
+            for v in g[1]:
+                terms.add(str(v).strip().lower())
+    return terms
+
+
+def mapping_report(extractor_json: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Проверка покрытия step2: что потеряно/санитизировано/не замаплено.
+
+    - dropped: термин из extractor_json не доехал до payload (тихая потеря) — это плохо;
+    - sanitized: слово-формат удалено из locations->geos — это ОК (информация);
+    - unmapped_fields: bucket извлечён, но build_step3_payload его не использует (например,
+      business_spheres) — сигнал, что часть извлечения игнорируется.
+    """
+    dropped: List[str] = []
+    sanitized: List[str] = []
+    for ebucket, pfield in _ENTITY_TO_PAYLOAD.items():
+        out_terms = _payload_group_terms(payload, pfield)
+        for t in _bucket_raw_texts(extractor_json, ebucket):
+            if t in out_terms:
+                continue
+            if ebucket == "locations" and t in OFFICE_GEO_TRASH:
+                sanitized.append(t)
+            else:
+                dropped.append(f"{ebucket}:{t}")
+    unmapped_fields: List[str] = []
+    if extractor_json.get("business_spheres"):
+        unmapped_fields.append("business_spheres")
+    return {"dropped": dropped, "sanitized": sanitized, "unmapped_fields": unmapped_fields}
+
+
 def build_step3_payload(
     extractor_json: Dict[str, Any],
     user_phrase: str,

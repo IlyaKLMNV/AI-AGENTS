@@ -111,3 +111,9 @@ one_line/responsibilities → first_touch → screening (std→hh).
 
 `stages[]` отработал на конвейерной форме — схема отчёта (спроектированная против classifier+extractor, P0-5)
 держит и многошаговый раннер без переписывания. `pipeline/` — общий слой для будущих one_line/sourcing.
+
+**Пересборка v2 (см. [EXTRACTOR_REDESIGN.md](EXTRACTOR_REDESIGN.md)):** кейсы → курируемые якоря с golden
+(`anchors.yaml`), real(263)/suite/synthetic удалены; добавлена **семантическая** оценка (`domain/extractor/semantic.py`)
+поверх контракта; **поэтапные вердикты**; **качество промпта ≠ инфраструктура** (backend-сбои → `errors`, не `failed`);
+step1 на SDK (`StoredPromptClient`) + строгий парс (ok/dirty/invalid); step2 coverage (`mapping_report`);
+конкурентность + раздельные таймауты + fail-fast по бэкенду + чекпоинты/сохранение по Ctrl+C.

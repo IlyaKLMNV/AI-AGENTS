@@ -1,0 +1,116 @@
+# Курируемый набор якорных фраз для теста промпта extractor_agent.
+# Каждый якорь: input + golden-ожидания (необязательные).
+#   expect.<bucket>: список терминов, которые ДОЛЖНЫ присутствовать (подстрочно,
+#                    без регистра) в raw_text сущностей этого bucket'а extractor_json.
+#   forbid.<bucket>: термины, которых там быть НЕ должно (ловит «город уехал в позиции»).
+#   expect.level: список уровней (junior..c-level), которые должны быть в extractor_json.level.
+#   expect.languages: {russian|english: bool} — точное совпадение флага.
+#   expect.experience/age/management_experience: {from|to: int} — совпадение диапазона.
+# Buckets — это поля extractor_json (locations, НЕ geos!): positions, skills, locations,
+# companies, keywords, business_spheres, level, languages, experience, age, management_experience.
+# Встроенное всегда-правило: слова-форматы (офис/удалёнка/remote/гибрид) НЕ должны оставаться в locations.
+
+- name: anchor_python_dev
+  input: "Python разработчик"
+  expect:
+    positions: ["Python"]
+
+- name: anchor_react_dev
+  input: "React developer"
+  expect:
+    skills: ["React"]
+
+- name: anchor_keywords_person
+  input: "ключевые слова: Иван Петров"
+  expect:
+    keywords: ["Иван"]
+
+- name: anchor_react_stack_and
+  input: "React + TypeScript + Next.js"
+  expect:
+    skills: ["React", "TypeScript", "Next"]
+
+- name: anchor_django_or_flask
+  input: "Django или Flask"
+  expect:
+    skills: ["Django", "Flask"]
+
+- name: anchor_python_not_django
+  input: "Python developer, но не Django"
+  expect:
+    skills: ["Python", "Django"]
+
+- name: anchor_sre_devops
+  input: "SRE / DevOps"
+  expect:
+    positions: ["SRE", "DevOps"]
+
+- name: anchor_cpp
+  input: "C++ developer"
+  expect:
+    skills: ["C++"]
+
+- name: anchor_gpp_clang
+  input: "опыт с g++ и clang"
+  expect:
+    skills: ["clang"]
+
+- name: anchor_languages_ru_required_en_soft
+  input: "React, русский обязателен, английский желателен"
+  expect:
+    skills: ["React"]
+    languages: { russian: true }
+  # english «желателен» — мягкое требование; в идеале НЕ помечается обязательным.
+  # Проверку этого делает контракт (warning languages_english_soft_requirement_marked_required).
+
+- name: anchor_languages_en_b2_no_ru
+  input: "React, английский B2, русский не нужен"
+  expect:
+    skills: ["React"]
+
+- name: anchor_geo_office_sanitize
+  input: "Backend разработчик Москва офис"
+  expect:
+    locations: ["Москва"]
+  forbid:
+    positions: ["Москва", "офис"]
+    locations: ["офис"]
+
+- name: anchor_experience_from5
+  input: "Python разработчик опыт от 5 лет"
+  expect:
+    experience: { from: 5 }
+  forbid:
+    positions: ["5", "опыт", "лет"]
+    skills: ["5", "опыт"]
+
+- name: anchor_experience_range
+  input: "DevOps инженер опыт 3-5 лет"
+  expect:
+    experience: { from: 3, to: 5 }
+  forbid:
+    positions: ["3", "5", "лет"]
+
+- name: anchor_keywords_contacts
+  input: "контакт: ivan.petrov@gmail.com, +7 999 123-45-67"
+  expect:
+    keywords: ["ivan.petrov@gmail.com"]
+
+- name: anchor_keywords_name_position
+  input: "Платов Анатолий backend"
+  expect:
+    keywords: ["Платов"]
+
+- name: anchor_business_sphere
+  input: "DevOps из финтеха"
+  expect:
+    positions: ["DevOps"]
+  forbid:
+    positions: ["финтех", "финтеха"]
+
+- name: anchor_company_last_workplace
+  input: "SRE, последнее место работы: Яндекс"
+  expect:
+    companies: ["Яндекс"]
+  forbid:
+    positions: ["Яндекс"]

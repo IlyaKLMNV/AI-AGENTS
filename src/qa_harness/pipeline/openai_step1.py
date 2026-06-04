@@ -12,6 +12,25 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
+from qa_harness.core.jsonio import safe_json_loads
+
+
+def parse_extractor_json(text: str) -> Tuple[Optional[dict], str]:
+    """Распарсить вывод step1 строго, с явным различением «грязного» вывода.
+
+    Возвращает (obj, status):
+    - "ok"      — голый валидный JSON-объект (как и требует промпт);
+    - "dirty"   — JSON удалось вытащить из обёртки/текста (промпт нарушил «только JSON»);
+    - "invalid" — распарсить не удалось вовсе.
+    """
+    obj, err = safe_json_loads(text or "")  # строгий парс
+    if err is None and isinstance(obj, dict):
+        return obj, "ok"
+    obj2, err2 = safe_json_loads(text or "", lenient=True)  # выдернуть подстроку {…}
+    if err2 is None and isinstance(obj2, dict):
+        return obj2, "dirty"
+    return None, "invalid"
+
 
 @dataclass
 class PromptCfg:

@@ -1,10 +1,18 @@
-"""Тонкий раннер extractor_agent — конвейер step1 (LLM parse) -> step2 (payload) -> step3 (backend).
+"""Раннер extractor_agent (пересобран): конвейер step1->step2->step3, оценка ПОЭТАПНО.
 
-Структурно другой раннер: НЕТ LLM-судьи, оценка контрактная; каждый кейс в отчёте — это
-`stages[]` (step1_parse / step2_payload / step3_backend) с артефактом и pass/fail на каждом шаге.
+Ключевые принципы новой модели:
+- кейсы — курируемые якоря с golden-ожиданиями (tests/fixtures/extractor_agent/anchors.yaml);
+- каждый шаг оценивается своим критерием:
+    step1 = contract (форма) + semantic (golden) + format (голый ли JSON);
+    step2 = mapping integrity (ничего не потеряно при сборке payload);
+    step3 = retrieval (success/insufficient/count) — ИНФОРМАЦИЯ, не pass/fail промпта;
+- итог кейса (passed) = ТОЛЬКО качество промпта (contract & semantic & mapping);
+- инфра-сбои (step1 сеть, step3 auth/timeout/http) идут в errors, а НЕ в failed;
+- step1 через core StoredPromptClient (SDK, ретраи/бэкофф), раздельные таймауты step1/step3;
+- конкурентность (пул потоков) + fail-fast по бэкенду + чекпоинты + сохранение при Ctrl+C.
 
-  python -m qa_harness.runners.extractor_agent --steps 1                  # только промпт (нужен OPENAI_API_KEY)
-  python -m qa_harness.runners.extractor_agent --steps 1,2,3 ...          # + backend (нужны AI_SEARCH_*)
+  python -m qa_harness.runners.extractor_agent --steps 1                 # только промпт (OPENAI_API_KEY)
+  python -m qa_harness.runners.extractor_agent --steps 1,2,3 ...         # + backend (AI_SEARCH_*)
 """
 
 from __future__ import annotations
@@ -12,49 +20,49 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, usage_total
-from qa_harness.core.jsonio import safe_json_loads
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
+from qa_harness.domain.extractor import check_semantics
 from qa_harness.pipeline import (
     BackendCfg,
-    PromptCfg,
     build_step3_payload,
     call_backend_search_bool,
-    call_openai_step1,
     make_base_payload,
+    mapping_report,
+    parse_extractor_json,
     validate_step1_contract,
 )
-from qa_harness.pipeline.cases import build_suite_cases, build_synthetic_cases, load_cases_from_dir, parse_steps
+from qa_harness.pipeline.cases import Anchor, load_anchors, parse_steps
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CASES_DIR = REPO_ROOT / "tests" / "fixtures" / "extractor_agent"
+DEFAULT_ANCHORS = REPO_ROOT / "tests" / "fixtures" / "extractor_agent" / "anchors.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
-DEFAULT_MODEL = "gpt-4.1-mini"
 RUNNER = "extractor_agent"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="extractor_agent QA runner (step1/2/3 pipeline, new architecture).")
+    p = argparse.ArgumentParser(description="extractor_agent QA runner (per-stage, new architecture).")
     p.add_argument("--steps", default="1,2,3", help="Какие шаги гонять: 1 | 1,2 | 1,2,3.")
-    p.add_argument("--cases-dir", type=Path, default=DEFAULT_CASES_DIR)
-    p.add_argument("--cases-count", type=int, default=None, help="Сколько real-кейсов взять (по умолчанию все).")
-    p.add_argument("--suite-count", type=int, default=0, help="Сколько встроенных suite-кейсов добавить.")
-    p.add_argument("--synthetic-count", type=int, default=0, help="Сколько синтетических деградированных запросов.")
-    p.add_argument("--mix-seed", type=int, default=42)
-    p.add_argument("--model", default=DEFAULT_MODEL, help="Модель для step1.")
+    p.add_argument("--anchors", type=Path, default=DEFAULT_ANCHORS, help="Курируемые якоря с golden.")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    p.add_argument("--workers", type=int, default=6, help="Параллельных воркеров (I/O-bound).")
+    p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызова step1 (LLM), сек.")
+    p.add_argument("--step3-timeout", type=int, default=45, help="Таймаут вызова step3 (backend), сек.")
+    p.add_argument("--backend-fail-fast", type=int, default=8, help="Стоп step3 после N инфра-ошибок подряд по бэкенду.")
+    p.add_argument("--checkpoint-every", type=int, default=20, help="Перезапись отчёта каждые N кейсов (0=только в конце).")
     # backend (step3)
     p.add_argument("--base-url", default=None, help="AI search base url (или env AI_SEARCH_BASE_URL).")
     p.add_argument("--token", default=None, help="AI search token (или env AI_SEARCH_AUTH_TOKEN).")
     p.add_argument("--step3-path", default="/site/searchBool")
-    p.add_argument("--timeout-s", type=int, default=30)
     p.add_argument("--step3-retries", type=int, default=1)
-    p.add_argument("--token-in-body", action="store_true")
+    p.add_argument("--token-in-body", action="store_true", help="Слать токен в теле (нужно для hlebusheck-бэкенда).")
     p.add_argument("--no-sanitize-office-geo", action="store_true")
     # search flags
     p.add_argument("--only-russian", action="store_true")
@@ -64,23 +72,63 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--current-position-title", action="store_true")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--offset", type=int, default=0)
-    p.add_argument("--shuffle", action="store_true")
-    p.add_argument("--highlight", action="store_true")
-    p.add_argument("--max-cases", type=int, default=None, help="Жёсткий лимит на общее число кейсов (после сбора real+suite+syn).")
-    p.add_argument("--checkpoint-every", type=int, default=20, help="Перезаписывать отчёт каждые N кейсов (0 = только в конце).")
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--quiet", action="store_true")
     return p
 
 
-def _gather_cases(args) -> List:
-    real = load_cases_from_dir(args.cases_dir)
-    if args.cases_count:
-        real = real[: args.cases_count]
-    suite = build_suite_cases(args.suite_count, args.mix_seed) if args.suite_count else []
-    syn = build_synthetic_cases(real + suite, args.synthetic_count, args.mix_seed) if args.synthetic_count else []
-    return real + suite + syn
+def _process(
+    anchor: Anchor,
+    client: Any,
+    steps: List[int],
+    base_payload: Dict[str, Any],
+    sanitize_geo: bool,
+    backend: Optional[BackendCfg],
+    token: str,
+    backend_down: threading.Event,
+) -> Dict[str, Any]:
+    """Полный конвейер для одного якоря. Сеть внутри; возвращает структурный результат."""
+    res: Dict[str, Any] = {
+        "anchor": anchor, "text": None, "extractor_json": None, "usage": None,
+        "step1_status": None, "contract_ok": False, "contract_errors": [], "contract_warnings": [],
+        "semantic_ok": None, "semantic_diffs": [], "mapping_ok": None, "mapping": None,
+        "payload": None, "step3": None, "infra_error": None, "skipped_step3": False,
+    }
+    try:
+        text, usage = client.run(anchor.input)
+        res["text"], res["usage"] = text, usage
+    except Exception as e:  # noqa: BLE001 — сетевой/HTTP сбой step1 = инфра
+        res["step1_status"] = "call_error"
+        res["infra_error"] = f"step1:{type(e).__name__}:{e}"
+        return res
+
+    obj, status = parse_extractor_json(text)
+    res["step1_status"] = status
+    if obj is None:
+        return res  # invalid_json -> качество fail, дальше нечего
+
+    res["extractor_json"] = obj
+    ok, errors, warnings = validate_step1_contract(obj, anchor.input)
+    res["contract_ok"], res["contract_errors"], res["contract_warnings"] = ok, errors, warnings
+    sem_ok, diffs = check_semantics(obj, anchor.expect, anchor.forbid)
+    res["semantic_ok"], res["semantic_diffs"] = sem_ok, diffs
+
+    if 2 in steps:
+        payload = build_step3_payload(obj, anchor.input, base_payload, sanitize_geo)
+        rep = mapping_report(obj, payload)
+        res["payload"], res["mapping"] = payload, rep
+        res["mapping_ok"] = (not rep["dropped"] and not rep["unmapped_fields"])
+
+    if 3 in steps and backend is not None and res["payload"] is not None:
+        if backend_down.is_set():
+            res["skipped_step3"] = True
+        else:
+            kind, status_code, _att, count, berr, _json = call_backend_search_bool(backend, token, res["payload"])
+            res["step3"] = {"kind": kind, "status": status_code, "count": count}
+            if kind not in ("success", "insufficient_search_terms"):
+                res["infra_error"] = f"step3:{kind}:{berr or status_code}"
+    return res
 
 
 def run(args: argparse.Namespace) -> Dict[str, Path]:
@@ -91,9 +139,11 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    from qa_harness.core.llm_client import StoredPromptClient, get_client
+
+    if not os.environ.get("OPENAI_API_KEY"):
         raise EnvironmentError("OPENAI_API_KEY is not set (step1 requires it)")
+    client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
 
     backend: Optional[BackendCfg] = None
     token = ""
@@ -104,142 +154,176 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             raise EnvironmentError("--steps включает 3, но нет AI_SEARCH_BASE_URL/AI_SEARCH_AUTH_TOKEN (или --base-url/--token)")
         backend = BackendCfg(
             base_url=base_url, step3_path=args.step3_path, token_in_body=bool(args.token_in_body),
-            timeout_s=args.timeout_s, retries=args.step3_retries,
+            timeout_s=args.step3_timeout, retries=args.step3_retries,
         )
 
     base_payload = make_base_payload(
         only_russian=args.only_russian, only_english=args.only_english,
         only_with_contacts=args.only_with_contacts, only_with_higher_education=args.only_with_higher_education,
         current_position_title=args.current_position_title, limit=args.limit, offset=args.offset,
-        shuffle=args.shuffle, highlight=args.highlight,
     )
     sanitize_geo = not args.no_sanitize_office_geo
-    prompt_cfg = PromptCfg(prompt_id=prompt.prompt_id, prompt_version=prompt.prompt_version, model=args.model)
+    anchors = load_anchors(args.anchors)
 
-    cases = _gather_cases(args)
-    if args.max_cases:
-        cases = cases[: args.max_cases]
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": None, "evaluator": None},
-        seed=args.mix_seed,
-        args={"steps": steps, "cases": len(cases)},
+        seed=prompt.seed,
+        args={"steps": steps, "anchors": len(anchors), "workers": args.workers},
     )
 
     usage_bucket = blank_usage()
-    reason_hist: Counter = Counter()
-    backend_stats = Counter()
-    by_source: Dict[str, Dict[str, int]] = {}
+    m1, m2, m3 = Counter(), Counter(), Counter()
+    reasons: Counter = Counter()
+    backend_down = threading.Event()
+    state = {"infra_step3": 0}
 
     def _flush(interrupted: bool = False):
-        """Собрать и записать отчёт по текущему состоянию (чекпоинт/финал/прерывание)."""
         rb.set_token_usage(usage_total(usage_bucket))
-        metrics_extra: Dict[str, Any] = {"deterministic": dict(reason_hist), "by_source": by_source}
+        metrics_extra: Dict[str, Any] = {"step1": dict(m1), "reasons": dict(reasons)}
+        if 2 in steps:
+            metrics_extra["step2"] = dict(m2)
         if 3 in steps:
-            metrics_extra["backend"] = dict(backend_stats)
+            metrics_extra["step3"] = dict(m3)
         if interrupted:
             metrics_extra["interrupted"] = True
         finished = datetime.datetime.now()
-        md, cd = rb.finalize(
-            metrics_extra,
-            finished_at=finished.isoformat(timespec="seconds"),
-            duration_s=round((finished - started).total_seconds(), 3),
-        )
-        mp, cp = write_reports(args.out_dir, RUNNER, run_id, md, cd)
-        return mp, cp, md
+        md, cd = rb.finalize(metrics_extra, finished_at=finished.isoformat(timespec="seconds"),
+                             duration_s=round((finished - started).total_seconds(), 3))
+        return write_reports(args.out_dir, RUNNER, run_id, md, cd)
 
-    total = len(cases)
-    interrupted = False
-    try:
-        for i, case in enumerate(cases, start=1):
-            stages: List[Dict[str, Any]] = []
-            reason_codes: List[str] = []
-            extractor_json: Optional[dict] = None
+    def _fold(res: Dict[str, Any]) -> None:
+        anchor: Anchor = res["anchor"]
+        accumulate_usage(usage_bucket, res["usage"])
+        cid = f"anchor:{anchor.name}:v1"
 
-            text, usage, err = call_openai_step1(api_key, prompt_cfg, case.input, timeout_s=args.timeout_s)
-            accumulate_usage(usage_bucket, usage)
-
-            if err:
-                step1_ok = False
-                reason_codes.append("step1_call_error")
-                reason_hist["step1_call_error"] += 1
-            else:
-                obj, jerr = safe_json_loads(text or "", lenient=True)
-                if jerr or not isinstance(obj, dict):
-                    step1_ok = False
-                    reason_codes.append("invalid_json")
-                    reason_hist["invalid_json"] += 1
-                else:
-                    extractor_json = obj
-                    ok, errors, _warnings = validate_step1_contract(obj, case.input)
-                    step1_ok = ok
-                    if not ok:
-                        reason_codes.extend(errors)
-                        reason_hist["contract_fail"] += 1
-            stages.append({"name": "step1_parse", "artifact": extractor_json, "passed": step1_ok, "reason_codes": list(reason_codes)})
-
-            overall_ok = step1_ok
-            payload: Optional[dict] = None
-            if 2 in steps and step1_ok and extractor_json is not None:
-                payload = build_step3_payload(extractor_json, case.input, base_payload, sanitize_geo)
-                stages.append({"name": "step2_payload", "artifact": payload, "passed": True})
-
-            if 3 in steps and backend is not None and payload is not None:
-                kind, status, _attempts, count, _berr, _json = call_backend_search_bool(backend, token, payload)
-                step3_ok = kind in ("success", "insufficient_search_terms")
-                backend_stats["step3_calls"] += 1
-                backend_stats[kind] += 1
-                if kind == "success" and isinstance(count, int) and count > 0:
-                    backend_stats["retrieval_ok"] += 1
-                stages.append({
-                    "name": "step3_backend",
-                    "artifact": {"kind": kind, "status": status, "count": count},
-                    "passed": step3_ok,
-                    "reason_codes": [] if kind == "success" else [kind],
-                })
-                if not step3_ok:
-                    reason_codes.append(kind)
-                    reason_hist[kind] += 1
-                overall_ok = overall_ok and step3_ok
-
-            src = case.source
-            by_source.setdefault(src, {"total": 0, "passed": 0})
-            by_source[src]["total"] += 1
-            if overall_ok:
-                by_source[src]["passed"] += 1
-
-            rb.add_case(
-                CaseRecord(
-                    case_id=f"{src}:{case.name}:v1",
-                    source=src,
-                    passed=overall_ok,
-                    inputs={"criterion": "step1 contract valid" + (" + step3 retrieval ok" if 3 in steps else ""), "query": case.input},
-                    output={"raw": text, "parsed": extractor_json},
-                    verdict={"evaluator": "pipeline", "passed": overall_ok, "reason_codes": reason_codes},
-                    stages=stages,
-                )
-            )
+        # step1 сетевой сбой -> инфра, НЕ кейс качества
+        if res["step1_status"] == "call_error":
+            rb.add_error(cid, res["infra_error"])
+            reasons["step1_call_error"] += 1
+            m1["call_error"] += 1
             if not args.quiet:
-                print(f"  [{i}/{total}] [{'ok' if overall_ok else 'MISS'}] {src}:{case.name} step1_ok={step1_ok}")
+                print(f"  [ERR ] {anchor.name}: {res['infra_error']}")
+            return
 
-            if args.checkpoint_every and i % args.checkpoint_every == 0:
-                mp, _cp, _md = _flush()
-                if not args.quiet:
-                    print(f"  [checkpoint] отчёт сохранён ({i}/{total}) -> {mp}")
+        m1["total"] += 1
+        rc: List[str] = []
+        if res["step1_status"] == "invalid":
+            reasons["invalid_json"] += 1
+            m1["invalid_json"] += 1
+            rc.append("invalid_json")
+        elif res["step1_status"] == "dirty":
+            reasons["output_not_bare_json"] += 1
+            m1["dirty_output"] += 1
+            rc.append("output_not_bare_json")  # warning, не валит качество
+
+        contract_ok = res["contract_ok"]
+        semantic_ok = res["semantic_ok"]
+        mapping_ok = res["mapping_ok"]
+        if contract_ok:
+            m1["contract_pass"] += 1
+        elif res["extractor_json"] is not None:
+            reasons["contract_fail"] += 1
+            rc += [f"contract:{e}" for e in res["contract_errors"][:6]]
+        if semantic_ok is True:
+            m1["semantic_pass"] += 1
+        elif semantic_ok is False:
+            reasons["semantic_fail"] += 1
+            rc += [f"semantic:{d}" for d in res["semantic_diffs"][:6]]
+
+        if 2 in steps and mapping_ok is not None:
+            if mapping_ok:
+                m2["mapping_pass"] += 1
+            else:
+                reasons["mapping_fail"] += 1
+            rep = res["mapping"] or {}
+            m2["dropped_total"] += len(rep.get("dropped", []))
+            m2["sanitized_total"] += len(rep.get("sanitized", []))
+            m2["unmapped_total"] += len(rep.get("unmapped_fields", []))
+            rc += [f"dropped:{x}" for x in rep.get("dropped", [])[:4]]
+            rc += [f"unmapped:{x}" for x in rep.get("unmapped_fields", [])]
+
+        # итог качества: contract & semantic & mapping (None = шаг не гонялся -> не валит)
+        quality_passed = bool(contract_ok) and (semantic_ok is not False) and (mapping_ok is not False)
+
+        stages: List[Dict[str, Any]] = [
+            {"name": "step1_parse", "artifact": res["extractor_json"], "passed": contract_ok,
+             "reason_codes": (["invalid_json"] if res["step1_status"] == "invalid" else []) + res["contract_errors"][:6]},
+        ]
+        checks = [
+            {"rule": "contract", "passed": bool(contract_ok), "detail": ",".join(res["contract_errors"][:6])},
+            {"rule": "semantic", "passed": bool(semantic_ok), "detail": ",".join(res["semantic_diffs"][:8])},
+            {"rule": "output_bare_json", "passed": res["step1_status"] != "dirty"},
+        ]
+        if 2 in steps and mapping_ok is not None:
+            stages.append({"name": "step2_payload", "artifact": res["payload"], "passed": bool(mapping_ok),
+                           "reason_codes": [f"dropped:{x}" for x in (res['mapping'] or {}).get('dropped', [])]
+                                           + [f"unmapped:{x}" for x in (res['mapping'] or {}).get('unmapped_fields', [])]})
+            checks.append({"rule": "mapping", "passed": bool(mapping_ok), "detail": str(res["mapping"])})
+
+        # step3 — retrieval-инфо + инфра отдельно (НЕ гейтит quality)
+        if 3 in steps:
+            if res["skipped_step3"]:
+                m3["skipped"] += 1
+            elif res["step3"] is not None:
+                kind = res["step3"]["kind"]
+                count = res["step3"]["count"]
+                m3[kind] += 1
+                if kind == "success" and (count or 0) == 0:
+                    m3["zero_count"] += 1
+                stages.append({"name": "step3_backend", "artifact": res["step3"],
+                               "passed": kind in ("success", "insufficient_search_terms"),
+                               "reason_codes": [] if kind == "success" else [kind]})
+                if res["infra_error"]:
+                    m3["infra_errors"] += 1
+                    reasons[f"step3:{kind}"] += 1
+                    rb.add_error(cid, res["infra_error"])
+                    state["infra_step3"] += 1
+                    if state["infra_step3"] >= args.backend_fail_fast:
+                        backend_down.set()
+
+        rb.add_case(CaseRecord(
+            case_id=cid, source="anchor", passed=quality_passed,
+            inputs={"criterion": "contract + semantic(golden) + mapping integrity",
+                    "query": anchor.input, "expect": anchor.expect, "forbid": anchor.forbid},
+            output={"raw": res["text"], "parsed": res["extractor_json"]},
+            verdict={"evaluator": "extractor_quality", "passed": quality_passed, "reason_codes": rc},
+            checks=checks, stages=stages,
+        ))
+        if not args.quiet:
+            s3 = f" step3={res['step3']['kind']}/{res['step3']['count']}" if res.get("step3") else ""
+            print(f"  [{'ok ' if quality_passed else 'MISS'}] {anchor.name} contract={int(bool(contract_ok))} semantic={semantic_ok} mapping={mapping_ok}{s3}")
+
+    total = len(anchors)
+    interrupted = False
+    done = 0
+    ex = ThreadPoolExecutor(max_workers=max(1, args.workers))
+    futures = {ex.submit(_process, a, client, steps, base_payload, sanitize_geo, backend, token, backend_down): a for a in anchors}
+    try:
+        for fut in as_completed(futures):
+            _fold(fut.result())
+            done += 1
+            if args.checkpoint_every and done % args.checkpoint_every == 0:
+                _flush()
     except KeyboardInterrupt:
         interrupted = True
+        for f in futures:
+            f.cancel()
         if not args.quiet:
-            print("\n[interrupted] прерывание — сохраняю частичный отчёт по уже обработанным кейсам...")
+            print("\n[interrupted] сохраняю частичный отчёт...")
+    finally:
+        ex.shutdown(wait=not interrupted, cancel_futures=interrupted)
 
-    metrics_path, cases_path, metrics_doc = _flush(interrupted=interrupted)
-
+    metrics_path, cases_path = _flush(interrupted=interrupted)
     if not args.quiet:
-        s = metrics_doc["summary"]
+        # summary берём из только что записанного metrics
+        import json as _json
+        s = _json.loads(Path(metrics_path).read_text(encoding="utf-8"))["summary"]
         tag = "partial" if interrupted else "summary"
-        print(f"[{tag}] steps={steps} done={s['total']}/{total} passed={s['passed']} failed={s['failed']} pass_rate={s['pass_rate']}%")
+        print(f"[{tag}] steps={steps} quality_cases={s['total']} passed={s['passed']} failed={s['failed']} errors(infra)={s['errors']} done={done}/{total}")
         print(f"[done] metrics -> {metrics_path}")
         print(f"[done] cases   -> {cases_path}")
     return {"metrics": metrics_path, "cases": cases_path}
