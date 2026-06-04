@@ -1,74 +1,66 @@
 # AI Agents — QA-харнесс рекрутинговых промптов
 
-Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового
-AI-ассистента. Продуктовые промпты хранятся в OpenAI как stored prompts
-(`prompt_id` + `prompt_version`); этот репозиторий гоняет их через сценарии и
-оценивает ответы. Всё на русском. Python 3.12.
+Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового AI-ассистента.
+Продуктовые промпты хранятся в OpenAI как stored prompts (`prompt_id` + `prompt_version`; реестр —
+`tests/tools/model.yaml`). Всё на русском. Python 3.12. «Тесты промптов» = CLI-раннеры; `pytest` —
+только для юнит-тестов кода харнесса.
 
-## Как устроено
-Каждый раннер в `app/`: берёт/генерит тестовые данные → дёргает stored-промпт
-через `client.responses.create(prompt={"id":..., "version":...})` → проверяет
-ответ → пишет JSON-отчёт в `tests/reports/<runner>/`.
+## Архитектура (идёт миграция — два дерева)
+- **`src/qa_harness/`** — НОВАЯ архитектура (целевая), устанавливается `pip install -e .`:
+  - `core/` — инфраструктура (llm_client, config, usage, jsonio, metrics, reporting, cdm);
+  - `domain/` — рекрутинг (judge, generators, classifiers, extractor, text);
+  - `pipeline/` — AI-поиск (step1 parse → step2 payload → step3 backend);
+  - `runners/` — тонкие раннеры (`python -m qa_harness.runners.<name>`).
+- **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, `python -m app.<runner>`). **НЕ удалять до cutover.**
+- `adapters/`, `screeningAssistant/screeningAss.py` — нужны легаси `screening_*`-раннерам.
+- `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
+  `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
-Оценка двухслойная:
-- **LLM-судья** (`gpt-4.1` / `gpt-4.1-mini`): отдельный вызов с инструкцией
-  «строгий QA-ревьюер», на вход `expected_behavior` (трактуется как ТЗ) + ответ
-  ассистента, на выход `{"score":0|1,"comment":...}`.
-- **Детерминированные правила**: для критичных кейсов (точные скрипты отказа,
-  обязательный `END`, скрытие компании) проверка кодом, а не моделью.
-- Для классификаторов — accuracy + confusion matrix.
+Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent**.
+Остальные (screening_scenarios(+hh), screening_guardrails, first_touch(+hh/event),
+screening_autofill, sourcing_assistant, one_line_search_query_builder, responsibilities_parser) — пока в `app/`.
 
-Тестируемый конвейер: `first_touch` → `screening_assistant` →
-`message_classifier` → `verdict_classifier` → `screening_autofill`.
-Ветка поиска: `extractor_agent` → `one_line_search_query_builder` /
-`responsibilities_parser` → `sourcing_assistant` (ходят в backend `/site/searchBool`).
-Есть HH-варианты (агентство) и event-invite.
-
-## Карта репозитория
-- `app/` — CLI-раннеры (запуск: `python -m app.<runner>`). **pytest не используется.**
-- `tests/tools/model.yaml` — реестр `prompt_id`/`prompt_version` всех компонентов. Источник правды.
-- `tests/fixtures/` — CDM-вакансии (`cdm/std`, `cdm/hh`), `screening_scenarios.csv`, regression-кейсы.
-- `tests/reports/` — отчёты (в `.gitignore`).
-- `cdm/schema.json` — схема Canonical Data Model вакансии.
-- `screeningAssistant/screeningAss.py` — обёртка промпта `screening_assistant`
-  (единственная используемая; импортируется `screening_guardrails_runner`).
-- README.md — исчерпывающая документация по каждому раннеру и всем флагам.
+## Новые раннеры
+Запуск `python -m qa_harness.runners.<name>`; отчёт — два файла в `tests/reports_v2/<runner>/`
+(`*.metrics.json` + `*.cases.json`, схема — `docs/REPORT_SCHEMA.md`). `summary.passed/failed` =
+**качество промпта**; инфра-сбои → `summary.errors` (не в `failed`).
+- классификаторы (message/verdict): `LabelJudge` (метка), accuracy + confusion + by_split; `--offline` без сети.
+- extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
+  (step1/step2/step3); конкурентность + fail-fast + чекпоинты. См. `docs/EXTRACTOR_REDESIGN.md`.
 
 ## Окружение
 ```bash
-python -m venv .venv && .venv\Scripts\Activate.ps1   # Windows
-python -m pip install -r requirements.txt
+python3 -m venv .venv && source .venv/bin/activate     # WSL/Linux
+pip install -e .[dev]                                   # qa_harness + pytest/jsonschema/vcrpy/import-linter
+pytest -q ; lint-imports                                # юнит-тесты + контракт qa_harness ⊥ app
 ```
-Нужен `OPENAI_API_KEY` (всем LLM-раннерам). Для backend-search раннеров
-(`extractor_agent`, `one_line_search_query_builder`, `sourcing_assistant`) —
-`AI_SEARCH_BASE_URL` и `AI_SEARCH_AUTH_TOKEN`.
+`OPENAI_API_KEY` — всем LLM-раннерам. Для backend-поиска (extractor step2/3, будущие one_line/sourcing):
+`AI_SEARCH_BASE_URL` + `AI_SEARCH_AUTH_TOKEN`. Backend тест-стенда: **`https://testsecond.hlebusheck.ru`**
+(эндпоинт `/site/searchBool`), токен — **в теле** (флаг `--token-in-body`). `podbor.io/search` — это веб-UI, НЕ API.
 
 ## Грабли (важно!)
-- **Большинство раннеров НЕ читают `.env`** — переменные надо экспортировать в
-  окружение. `.env` автоподхватывают только `first_touch_event_runner` и
-  `enrich_cdm_with_extractor_entities`.
-- `screening_scenarios_runner` и `screening_guardrails_runner`
-  берут `prompt_id` **только из `model.yaml`**, env-override на них не действует.
-- Остальные раннеры можно переопределять env-переменными `<COMPONENT>_PROMPT_ID/_VERSION`
-  или флагами `--prompt-id/--prompt-version`.
-- Sourcing-раннеры требуют в CDM `vacancy.extractor_entities` и/или `raw_vacancy`.
-  После изменения промпта `extractor_agent` перегенерь сущности:
-  `python app/enrich_cdm_with_extractor_entities.py`.
-- `tests/tools/make_vacancies.py` генерит baseline-CDM **без**
-  `raw_vacancy`/`key_requirements`/`extractor_entities` (нужны sourcing-раннерам).
-- chain-группы сценариев зашиты в коде `screening_scenarios_runner.py`
-  (напр. `chain_salary_3x = [12,29,30]`).
+- **Большинство раннеров НЕ читают `.env`** — экспортируй в окружение (`set -a; source .env; set +a`).
+- `prompt_id`/`version` — **только из `model.yaml`** (источник правды); env/CLI-override опционально,
+  а `screening_scenarios_runner`/`screening_guardrails_runner` override игнорируют.
+- **extractor step3: по умолчанию `limit=0` (только count).** Backend отдаёт `count` за ~11с, но
+  тяжёлые `profiles` (limit>0) — минутами/таймаут. Не ставь большой `--step3-limit` без нужды.
+- extractor: **качество промпта ≠ инфраструктура** — backend timeout/auth/http идут в `errors`, не в `failed`.
+- Окружение машины: рабочий venv — Linux/WSL; если терминал MSYS/git-bash — гоняй через
+  `wsl.exe -e bash -lc '... source .venv/bin/activate ...'`.
+- Sourcing-раннеры (легаси) требуют в CDM `vacancy.extractor_entities`/`raw_vacancy`
+  (`python app/enrich_cdm_with_extractor_entities.py`). `make_vacancies.py` их не генерит.
+- chain-группы сценариев зашиты в коде `app/screening_scenarios_runner.py`.
 
-## Частые команды
+## Частые команды (новые раннеры)
 ```bash
-python -m app.screening_scenarios_runner --csv-path tests/fixtures/screening_scenarios.csv --cdm-dir tests/fixtures/cdm --messages-per-scenario 3
-python -m app.message_classifier_runner --messages-per-class 3 --seed 42
-python -m app.verdict_classifier_runner --dialogs-per-verdict 5
-python -m app.screening_autofill_runner --cdm-count 5 --variants-per-cdm 3
-python -m app.first_touch_runner --limit 5 --require-question
+python -m qa_harness.runners.message_classifier --offline
+python -m qa_harness.runners.verdict_classifier --mode all --dialogs-per-verdict 3 --seed 42
+python -m qa_harness.runners.extractor_agent --steps 1                      # тест промпта без backend
+python -m qa_harness.runners.extractor_agent --steps 1,2,3 --token-in-body  # + count из backend
 ```
 
 ## Конвенции
-- Все промпты, сценарии, комментарии судей — на русском. Сохраняй язык.
+- Всё (промпты, сценарии, golden, комментарии) — на русском. Сохраняй язык.
 - JSON-отчёты и фикстуры — UTF-8 без BOM, `ensure_ascii=False`.
-- Меняя версию промпта — правь `tests/tools/model.yaml` (и при необходимости `.env.example`), не хардкодь в раннерах.
+- Меняя версию промпта — правь `tests/tools/model.yaml`, не хардкодь.
+- Новый код — в `qa_harness`, не в `app/`; новое не должно импортировать `app/` (проверяет `lint-imports`).
