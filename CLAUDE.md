@@ -2,8 +2,9 @@
 
 Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового AI-ассистента.
 Продуктовые промпты хранятся в OpenAI как stored prompts (`prompt_id` + `prompt_version`; реестр —
-`tests/tools/model.yaml`). Всё на русском. Python 3.12. «Тесты промптов» = CLI-раннеры; `pytest` —
-только для юнит-тестов кода харнесса.
+`tests/tools/model.yaml`). Всё на русском. Python 3.12. «Тесты промптов» = CLI-раннеры (единственный вид
+тестов здесь): корректность раннеров проверяется их `--offline`-режимами и прогоном глазами. Юнит-тестов
+(`pytest`) на код харнесса НЕ держим — структурный контракт `qa_harness ⊥ app` проверяет `lint-imports`.
 
 ## Архитектура (идёт миграция — два дерева)
 - **`src/qa_harness/`** — НОВАЯ архитектура (целевая), устанавливается `pip install -e .`:
@@ -16,9 +17,9 @@
 - `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
   `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
-Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent**.
+Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder**.
 Остальные (screening_scenarios(+hh), screening_guardrails, first_touch(+hh/event),
-screening_autofill, sourcing_assistant, one_line_search_query_builder, responsibilities_parser) — пока в `app/`.
+screening_autofill, sourcing_assistant, responsibilities_parser) — пока в `app/`.
 
 ## Новые раннеры
 Запуск `python -m qa_harness.runners.<name>`; отчёт — два файла в `tests/reports_v2/<runner>/`
@@ -31,8 +32,8 @@ screening_autofill, sourcing_assistant, one_line_search_query_builder, responsib
 ## Окружение
 ```bash
 python3 -m venv .venv && source .venv/bin/activate     # WSL/Linux
-pip install -e .[dev]                                   # qa_harness + pytest/jsonschema/vcrpy/import-linter
-pytest -q ; lint-imports                                # юнит-тесты + контракт qa_harness ⊥ app
+pip install -e .[dev]                                   # qa_harness + dev-инструменты (import-linter и пр.)
+lint-imports                                            # контракт qa_harness ⊥ app (pytest-тестов в репо нет)
 ```
 `OPENAI_API_KEY` — всем LLM-раннерам. Для backend-поиска (extractor step2/3, будущие one_line/sourcing):
 `AI_SEARCH_BASE_URL` + `AI_SEARCH_AUTH_TOKEN`. Backend тест-стенда: **`https://testsecond.hlebusheck.ru`**

@@ -3,7 +3,7 @@
 Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового AI-ассистента.
 Продуктовые промпты хранятся в OpenAI как stored prompts (`prompt_id` + `prompt_version`; реестр —
 `tests/tools/model.yaml`); раннеры гоняют их по сценариям и оценивают ответы. Всё на русском, Python 3.12.
-«Тесты промптов» — это CLI-раннеры; `pytest` используется только для юнит-тестов кода харнесса.
+«Тесты промптов» — это CLI-раннеры (единственный вид тестов здесь); юнит-тестов (`pytest`) на код харнесса не держим — корректность раннеров проверяется их `--offline`-режимами и прогоном глазами.
 
 ## Архитектура (идёт миграция)
 Проект переходит на новый устанавливаемый пакет **`qa_harness`** (src-layout). На время миграции
@@ -18,16 +18,16 @@
 - `adapters/`, `screeningAssistant/screeningAss.py` — используются легаси-раннерами (не трогаем до cutover).
 - `docs/` — план рефакторинга, схема отчётов, статус миграции, разбор extractor.
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
-  `reports_v2/` (новые two-file отчёты), `test_*.py` (pytest юнит-тесты).
+  `reports_v2/` (новые two-file отчёты).
 
-Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent**
+Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder**
 (остальные компоненты пока только в `app/`).
 
 ## Подготовка окружения
 ```bash
 python3 -m venv .venv && source .venv/bin/activate      # WSL/Linux
 #   (Windows: python -m venv .venv ; .venv\Scripts\Activate.ps1)
-pip install -e .[dev]    # пакет qa_harness + dev-инструменты (pytest, jsonschema, vcrpy, import-linter)
+pip install -e .[dev]    # пакет qa_harness + dev-инструменты (import-linter и пр.)
 ```
 Легаси-`app/`-раннеры запускаются как и раньше (editable-install ставит и зависимости из requirements.txt).
 
@@ -118,9 +118,9 @@ fail-fast по бэкенду (`--backend-fail-fast`), чекпоинты (`--ch
 отчёта по Ctrl+C. В отчёте: `stages[]` (step1/step2/step3), `checks[]` (contract/semantic/mapping),
 `metrics.step1/step2/step3`.
 
-### Юнит-тесты пакета и гейты
+### Гейт изоляции импортов
 ```bash
-pytest -q       # юнит-тесты qa_harness (core/domain/pipeline + offline e2e раннеров)
+# юнит-тестов (pytest) в репо нет — раннеры проверяем их --offline-режимами и глазами
 lint-imports    # контракт изоляции: qa_harness не зависит от app/
 ```
 
