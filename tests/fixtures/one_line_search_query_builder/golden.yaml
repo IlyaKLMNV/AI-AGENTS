@@ -1,0 +1,78 @@
+# Курируемые golden-кейсы для теста промпта one_line_search_query_builder.
+# Вход билдера — `vacancy` (сырой текст вакансии). Ожидания заданы на СТРОКУ запроса,
+# которую билдер должен выдать:
+#   expect — список ИЛИ-групп обязательных терминов: каждая группа удовлетворена, если
+#            в запросе есть хотя бы одна из её форм (подстрока, регистронезависимо);
+#   forbid — термины, которых в запросе быть НЕ должно (помимо глобальных утечек —
+#            формат работы / зарплата / процесс найма — они запрещены всегда);
+#   offline_query — что мог бы выдать хороший билдер; используется в --offline (replay,
+#            без сети), а также как референс. Должен проходить expect/forbid и анти-утечку.
+
+- name: python_backend
+  vacancy: |
+    Python-разработчик (Backend). Опыт работы: от 3 лет.
+    Стек: Python, Django, PostgreSQL, REST API, Docker. Москва, гибрид.
+    Зарплата: от 250000 руб. на руки.
+  expect:
+    - [python]
+    - [django, flask]
+    - [postgresql, postgres]
+  forbid: [react, frontend]
+  offline_query: 'Python AND (Django OR Flask) AND PostgreSQL AND REST'
+
+- name: react_frontend
+  vacancy: |
+    Frontend-разработчик. Требования: React, TypeScript, Redux, вёрстка.
+    Формат: удалённо. Зарплата обсуждается на собеседовании.
+  expect:
+    - [react]
+    - [typescript]
+    - [redux]
+  forbid: [python, django, backend]
+  offline_query: 'React AND TypeScript AND Redux'
+
+- name: devops_sre
+  vacancy: |
+    SRE / DevOps инженер. Опыт от 4 лет.
+    Kubernetes, Docker, Terraform, CI/CD, AWS, мониторинг (Prometheus).
+  expect:
+    - [sre, devops]
+    - [kubernetes, k8s]
+    - [docker]
+    - [terraform]
+  forbid: []
+  offline_query: '(SRE OR DevOps) AND Kubernetes AND Docker AND Terraform AND AWS'
+
+- name: data_scientist
+  vacancy: |
+    Data Scientist. Python, машинное обучение, PyTorch, NLP.
+    Приветствуется PhD. Офис в Санкт-Петербурге.
+  expect:
+    - [python]
+    - [pytorch, tensorflow]
+    - [nlp, "natural language"]
+  forbid: [java, "1с"]
+  offline_query: 'Python AND (PyTorch OR TensorFlow) AND NLP AND "machine learning"'
+
+- name: qa_automation
+  vacancy: |
+    QA Automation Engineer. Selenium, Python, pytest, API-тестирование.
+    Опыт автоматизации от 2 лет.
+  expect:
+    - [qa, "quality assurance"]
+    - [selenium]
+    - [python]
+    - [pytest]
+  forbid: [manual]
+  offline_query: 'QA AND Automation AND Selenium AND Python AND pytest'
+
+- name: golang_backend
+  vacancy: |
+    Backend-разработчик Go (Golang). gRPC, PostgreSQL, Kafka, микросервисы.
+    Удалённая работа, оформление по ТК. Бонусы по KPI.
+  expect:
+    - [golang, "go developer"]
+    - [grpc]
+    - [kafka]
+  forbid: [python, php]
+  offline_query: '(Golang OR "Go developer") AND gRPC AND Kafka AND PostgreSQL'

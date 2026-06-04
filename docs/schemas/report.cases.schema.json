@@ -47,7 +47,7 @@
       "required": ["case_id", "source", "passed", "inputs", "verdict"],
       "properties": {
         "case_id": { "type": "string", "description": "stable, human-readable, unique per run; per-runner id-builder" },
-        "source": { "type": "string", "enum": ["cdm", "regression", "synthetic", "suite", "real"] },
+        "source": { "type": "string", "enum": ["cdm", "regression", "synthetic", "suite", "real", "anchor", "golden"] },
         "passed": { "type": "boolean" },
         "inputs": {
           "type": "object",

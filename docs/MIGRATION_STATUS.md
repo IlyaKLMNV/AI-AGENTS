@@ -17,7 +17,7 @@
 | verdict_classifier | ✅ фичи | ⬜ глазами | `app/verdict_classifier_runner.py` |
 | extractor_agent | ✅ фичи | ⬜ глазами | `app/extractor_agent_runner.py` |
 | sourcing_assistant | ⬜ | ⬜ | `app/sourcing_assistant_runner.py` |
-| one_line_search_query_builder | ⬜ | ⬜ | `app/one_line_search_query_builder_runner.py` |
+| one_line_search_query_builder | ✅ фичи | ⬜ глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ⬜ | ⬜ | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ⬜ | ⬜ | `app/screening_autofill_runner.py` |
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
@@ -120,5 +120,33 @@ step1 на SDK (`StoredPromptClient`) + строгий парс (ok/dirty/invali
 
 **Общий цикл прогона вынесен в `core/run_loop.py`** (`run_cases`, [тесты](../tests/test_run_loop.py)):
 конкурентный fan-out + последовательный fold в главном потоке (без локов) + чекпоинты + сохранение по Ctrl+C.
-extractor_agent — первый потребитель; fail-fast (`backend_down`) остался в раннере как его shared state — цикл
-о нём не знает. Будущие sourcing/one_line получат оркестрацию даром (см. план: «вынести `core/run_loop`» — done).
+extractor_agent и one_line_search_query_builder — потребители; fail-fast (`backend_down`) остаётся в раннере как
+shared state — цикл о нём не знает. Будущие раннеры (sourcing, …) получают оркестрацию даром (план: «вынести `core/run_loop`» — done).
+
+---
+
+## one_line_search_query_builder — детальный чек-лист
+
+Старый: `python -m app.one_line_search_query_builder_runner`. Новый: `python -m qa_harness.runners.one_line_search_query_builder`.
+Тестируем промпт-**билдер** (вакансия → однострочный boolean-запрос). Конвейер step1(builder)→step2(extractor)→step3(backend),
+оценка поэтапная, кейс в отчёте = `stages[]` (как extractor). Переиспользует `core/run_loop` + `pipeline/`.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| step1: builder-промпт vacancy → query (сырой /responses) | ✅ | `core.StoredPromptClient` (SDK, ретраи, раздельный таймаут) |
+| Формальные проверки запроса (одна строка / не пусто / без JSON) | ✅ | `domain/query_builder/checks.py` (`build_query_checks`) |
+| Анти-утечка (формат работы / зарплата / процесс найма) | ✅ | `domain/query_builder/checks.py` (`detect_leakage`, бывш. `FORBIDDEN_PATTERNS`) |
+| step2: query → extractor-промпт → extractor_json + payload | ✅ | `pipeline/` (`parse_extractor_json`/`validate_step1_contract`/`build_step3_payload`/`mapping_report`) |
+| step3: backend `/site/searchBool` → count | ✅ | `pipeline/backend_client.py` |
+| `--steps 1\|1,2\|1,2,3`, backend/search-флаги, `--token-in-body` | ✅ | runner (как extractor) |
+| Two-file отчёт + `stages[]` + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
+| Раздельный override промпта extractor (`--extractor-prompt-id/version`) | ✅ | runner (резолв `extractor_agent` из `model.yaml`) |
+| Офлайн без сети | ➕ | `--offline` replay `offline_query` из golden |
+| Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
+
+**Осознанные отличия от легаси:**
+- источник кейсов: CDM-вакансии → курируемые **golden-вакансии** (`tests/fixtures/one_line_search_query_builder/golden.yaml`) с `expect`/`forbid` на строке запроса;
+- мёртвый `evaluate_semantics`/anchor-coverage (в `main()` не вызывался) заменён живой **golden-семантикой** (`domain/query_builder/semantic.py`);
+- **quality ≠ infra**: `passed = format & no_leakage & semantic`; backend `count>0` больше НЕ гейтит качество (это retrieval-инфо), инфра-сбои builder/extractor/backend → `errors`, не `failed`;
+- по умолчанию `--steps 1` (качество билдера полностью на step1; 2/3 — downstream-инфо);
+- схема `report.cases.schema.json` дополнена `source: anchor|golden` — заодно стал валиден и extractor (он эмитит `source=anchor`).

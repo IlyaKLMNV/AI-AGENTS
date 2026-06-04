@@ -19,6 +19,8 @@ tests/fixtures/*
 !tests/fixtures/verdict_classifier/**
 !tests/fixtures/extractor_agent/
 !tests/fixtures/extractor_agent/anchors.yaml
+!tests/fixtures/one_line_search_query_builder/
+!tests/fixtures/one_line_search_query_builder/golden.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
