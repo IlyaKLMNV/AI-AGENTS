@@ -61,8 +61,12 @@ def call_backend_search_bool(
             # 3xx -> /auth значит «не авторизован», и это надо репортить честно, а не идти по
             # редиректу и потом падать в bad_json на HTML-странице логина.
             r = requests.post(url, headers=headers, json=req_payload, timeout=backend.timeout_s, allow_redirects=False)
-        except Exception as e:  # noqa: BLE001
-            last_err = str(e)
+        except requests.exceptions.Timeout as e:
+            # таймаут — отдельный kind: это латентность бэкенда, не «ошибка запроса»
+            last_err, last_kind = str(e), "timeout"
+            continue
+        except requests.exceptions.RequestException as e:
+            last_err, last_kind = str(e), "connection_error"
             continue
 
         status = r.status_code

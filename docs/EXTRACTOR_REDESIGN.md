@@ -30,6 +30,10 @@ backend-payload) → **step3** (поиск в backend `/site/searchBool`).
    таймауты (`--step1-timeout`/`--step3-timeout`), fail-fast по бэкенду (`--backend-fail-fast` N
    инфра-ошибок → `--steps 3` пропускается), чекпоинты (`--checkpoint-every`) и сохранение
    частичного отчёта по Ctrl+C.
+7. **step3 — только count (`--step3-limit`, по умолчанию 0).** Измерено: backend отдаёт `count`
+   за ~11с, но тяжёлый массив `profiles` (limit=20) не успевает и за 180с. Для QA профили не нужны —
+   нужен только `count`, поэтому по умолчанию `limit=0` (count-only). Таймаут бэкенда — отдельный
+   `kind=timeout` в `metrics.step3` (виден отдельно от `http_error`).
 
 ## Отчёт (two-file, как у всех раннеров)
 - `metrics.step1` = {total, contract_pass, semantic_pass, dirty_output, invalid_json};

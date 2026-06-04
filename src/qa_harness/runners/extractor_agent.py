@@ -70,7 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only-with-contacts", action="store_true")
     p.add_argument("--only-with-higher-education", action="store_true")
     p.add_argument("--current-position-title", action="store_true")
-    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--step3-limit", type=int, default=0,
+                   help="limit профилей в step3: 0 = только count (быстро, ~сек). Профили для QA не нужны; "
+                        "большой limit заставляет backend отдавать тяжёлую выдачу минутами.")
     p.add_argument("--offset", type=int, default=0)
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--cfg", type=Path, default=None)
@@ -160,7 +162,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     base_payload = make_base_payload(
         only_russian=args.only_russian, only_english=args.only_english,
         only_with_contacts=args.only_with_contacts, only_with_higher_education=args.only_with_higher_education,
-        current_position_title=args.current_position_title, limit=args.limit, offset=args.offset,
+        current_position_title=args.current_position_title, limit=args.step3_limit, offset=args.offset,
     )
     sanitize_geo = not args.no_sanitize_office_geo
     anchors = load_anchors(args.anchors)
