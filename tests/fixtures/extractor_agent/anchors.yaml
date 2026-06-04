@@ -18,7 +18,7 @@
 - name: anchor_react_dev
   input: "React developer"
   expect:
-    skills: ["React"]
+    positions: ["React"]   # «React developer» — должность (тех. уточнение в названии), не skill (см. спеку §2)
 
 - name: anchor_keywords_person
   input: "ключевые слова: Иван Петров"
@@ -38,7 +38,8 @@
 - name: anchor_python_not_django
   input: "Python developer, но не Django"
   expect:
-    skills: ["Python", "Django"]
+    positions: ["Python"]   # «Python developer» -> position
+    skills: ["Django"]      # «не Django» -> skill (оператор NOT; semantic проверяет только присутствие)
 
 - name: anchor_sre_devops
   input: "SRE / DevOps"
@@ -48,7 +49,7 @@
 - name: anchor_cpp
   input: "C++ developer"
   expect:
-    skills: ["C++"]
+    positions: ["C++"]   # «C++ developer» -> position
 
 - name: anchor_gpp_clang
   input: "опыт с g++ и clang"

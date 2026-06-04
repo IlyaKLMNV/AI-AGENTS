@@ -120,7 +120,9 @@ def _process(
         payload = build_step3_payload(obj, anchor.input, base_payload, sanitize_geo)
         rep = mapping_report(obj, payload)
         res["payload"], res["mapping"] = payload, rep
-        res["mapping_ok"] = (not rep["dropped"] and not rep["unmapped_fields"])
+        # dropped = тихая потеря данных => fail; unmapped_fields (напр. business_spheres,
+        # который payload пока не использует) => warning, качество не валит.
+        res["mapping_ok"] = not rep["dropped"]
 
     if 3 in steps and backend is not None and res["payload"] is not None:
         if backend_down.is_set():
