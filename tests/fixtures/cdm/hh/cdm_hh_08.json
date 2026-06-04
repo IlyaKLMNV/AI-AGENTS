@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Backend Engineer",
+    "company_name": "DataCloud",
+    "company_description": "Команда backend-разработки для внутренней B2B-платформы.",
+    "location": "Москва",
+    "work_format": "ON_SITE",
+    "salary_range_from": 180000,
+    "salary_range_to": 260000,
+    "responsibilities": "Разработка backend-сервисов на Python и поддержка API.",
+    "vacancy_description": "Работа на месте работодателя в Москве. Нужно явно подтвердить готовность к такому формату.\nРазработка backend-сервисов на Python и поддержка API.\nКоманда backend-разработки для внутренней B2B-платформы.\nhttps://careers.example/cdm_hh_08",
+    "questions": "1. Есть ли у вас опыт с Python и FastAPI?\n2. Работали ли вы с микросервисной архитектурой?"
+  },
+  "candidate": {
+    "recruiter_name": "Анна",
+    "candidate_name": "Вадим",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-backend-onsite"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Backend Engineer",
+        "company": "CloudBase"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Python",
+        "quantile": 4.2
+      },
+      {
+        "skill": "FastAPI",
+        "quantile": 3.9
+      }
+    ]
+  }
+}

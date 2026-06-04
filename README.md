@@ -1,118 +1,137 @@
-﻿# AI Agents Workspace
+﻿# AI Agents — QA-харнесс рекрутинговых промптов
 
-Набор CLI-раннеров для тестирования рекрутмент-промптов и связанных prompt-пайплайнов. Основной текущий способ прогона - специализированные раннеры по отдельным компонентам: `screening_scenarios_runner`, `screening_guardrails_runner`, `extractor_agent_runner`, `telegram_generator_runner`, `first_touch_event_runner`, `message_classifier_runner`, `screening_autofill_runner`, `verdict_classifier_runner`, `responsibilities_parser_runner`, `one_line_search_query_builder_runner`, `sourcing_assistant_runner`. `app/runner.py` сохранён как исторический интеграционный сценарий end-to-end симуляции.
+Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового AI-ассистента.
+Продуктовые промпты хранятся в OpenAI как stored prompts (`prompt_id` + `prompt_version`; реестр —
+`tests/tools/model.yaml`); раннеры гоняют их по сценариям и оценивают ответы. Всё на русском, Python 3.12.
+«Тесты промптов» — это CLI-раннеры; `pytest` используется только для юнит-тестов кода харнесса.
 
-## Структура проекта
-- `app/` — CLI-раннеры.
-- `adapters/` — преобразования CDM -> input-форматы промптов.
-- `cdm/` — схема CDM и каталог `samples/` (может быть пустым).
-- `messageLabelGenerator/` — обвязка промпта `message_classifier`.
-- `screeningAssistant/` — обвязка промпта `screening_assistant`.
-- `screening_autofill/` — обвязка промпта `screening_autofill`.
-- `verdict_classifier/` — обвязка промпта `verdict_classifier`.
-- `telegramMessageGenerator-main/` — генератор первого сообщения в Telegram.
-- `tests/fixtures/` — фикстуры (CDM, screening-сценарии, extractor-кейсы).
-- `tests/tools/` — `model.yaml` и утилиты для генерации baseline-фикстур.
-- `tests/reports/` — отчёты раннеров в отдельных подкаталогах по имени раннера (`screening_scenarios`, `screening_guardrails`, `message_classifier`, `telegram_generator`, `first_touch_event`, `screening_autofill`, `verdict_classifier`, `extractor_agent_full`, `responsibilities_parser`, `one_line_search_query_builder`, `sourcing_assistant`, `runs` и др.).
+## Архитектура (идёт миграция)
+Проект переходит на новый устанавливаемый пакет **`qa_harness`** (src-layout). На время миграции
+два дерева сосуществуют, старое не удаляется до финального cutover (см. `docs/REFACTOR_PLAN.md`):
+
+- **`src/qa_harness/`** — НОВАЯ архитектура (целевая): переиспользуемое ядро + тонкие раннеры:
+  - `core/` — инфраструктура (llm_client, config, usage, jsonio, metrics, reporting, cdm);
+  - `domain/` — рекрутинговая логика (judge, generators, classifiers, extractor, text);
+  - `pipeline/` — конвейер AI-поиска (step1 parse → step2 payload → step3 backend);
+  - `runners/` — тонкие CLI-раннеры.
+- **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, мигрируются по одному; статус — `docs/MIGRATION_STATUS.md`).
+- `adapters/`, `screeningAssistant/screeningAss.py` — используются легаси-раннерами (не трогаем до cutover).
+- `docs/` — план рефакторинга, схема отчётов, статус миграции, разбор extractor.
+- `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
+  `reports_v2/` (новые two-file отчёты), `test_*.py` (pytest юнит-тесты).
+
+Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent**
+(остальные компоненты пока только в `app/`).
 
 ## Подготовка окружения
 ```bash
-# WSL (Ubuntu)
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-# Windows (PowerShell)
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python3 -m venv .venv && source .venv/bin/activate      # WSL/Linux
+#   (Windows: python -m venv .venv ; .venv\Scripts\Activate.ps1)
+pip install -e .[dev]    # пакет qa_harness + dev-инструменты (pytest, jsonschema, vcrpy, import-linter)
 ```
+Легаси-`app/`-раннеры запускаются как и раньше (editable-install ставит и зависимости из requirements.txt).
 
-Создайте `.env` (можно скопировать из `.env.example`) и задайте как минимум:
-```bash
-OPENAI_API_KEY=sk-...
+### Переменные окружения (шаблон — `.env.example`)
+Большинство раннеров **не читают `.env` автоматически** — экспортируй в окружение:
+`set -a; source .env; set +a`.
+- `OPENAI_API_KEY` — нужен всем LLM-раннерам.
+- `OPENAI_BASE_URL` — опционально, кастомный OpenAI-совместимый эндпоинт.
+- `AI_SEARCH_BASE_URL` — API-хост поиска кандидатов (эндпоинт `{URL}/site/searchBool`); для тест-стенда
+  `https://testsecond.hlebusheck.ru`. ⚠️ `https://testsecond.podbor.io/search` — это веб-UI (редирект на /auth), НЕ API.
+- `AI_SEARCH_AUTH_TOKEN` — токен бэкенда; передаётся **в теле** запроса (раннер с флагом `--token-in-body`).
 
-# Для backend search раннеров:
-AI_SEARCH_BASE_URL=https://...
-AI_SEARCH_AUTH_TOKEN=...
-```
+`prompt_id`/`prompt_version` — в `tests/tools/model.yaml` (источник правды), НЕ в `.env`. При необходимости
+можно переопределить env-переменными `<COMPONENT>_PROMPT_ID/_VERSION` или флагами `--prompt-id/--prompt-version`.
 
-Важно:
-- Большинство раннеров не читают `.env` автоматически. Для них переменные должны быть выставлены в окружении текущего процесса/терминала.
-- `.env` автоматически подхватывают только `app/first_touch_event_runner.py` и `app/enrich_cdm_with_extractor_entities.py`.
-- `OPENAI_API_KEY` нужен всем раннерам, которые обращаются к LLM. Исключение: `python -m app.runner gen-fixtures`.
-- `AI_SEARCH_BASE_URL` и `AI_SEARCH_AUTH_TOKEN` нужны для backend-шагов в `extractor_agent_runner.py`, `one_line_search_query_builder_runner.py`, `sourcing_assistant_runner.py`.
-- `OPENAI_BASE_URL` опционален и используется только `app/extractor_agent_runner.py` для Step1.
+## Конфигурация промптов
+`tests/tools/model.yaml` — единый реестр `prompt_id`/`prompt_version` всех компонентов
+(`first_touch`(+`_hh`/`_event_invite`), `message_classifier`, `screening_assistant`(+`_hh`),
+`screening_autofill`, `verdict_classifier`, `extractor_agent`, `one_line_search_query_builder`,
+`responsibilities_parser`, `sourcing_assistant`). **Меняя версию промпта — правь `model.yaml`**,
+не хардкодь в раннерах. Переопределение на один прогон — env `<COMPONENT>_PROMPT_ID/_VERSION`
+или флаги `--prompt-id/--prompt-version` (где раннер их поддерживает).
 
-## Конфигурация промптов и профилей
-`tests/tools/model.yaml` хранит `prompt_id`/`prompt_version` для:
-- `first_touch`
-- `first_touch_event_invite`
-- `message_classifier`
-- `screening_assistant`
-- `screening_autofill`
-- `verdict_classifier`
-- `extractor_agent`
-- `one_line_search_query_builder`
-- `responsibilities_parser`
-- `sourcing_assistant`
-- `candidate_simulator` (профили кандидатов для `app/runner.py`)
-
-Переменные окружения для переопределения:
-- `FIRST_TOUCH_PROMPT_ID` — для `app/telegram_generator_runner.py` и генератора первого касания в `app/runner.py`.
-- `FIRST_TOUCH_EVENT_PROMPT_ID`, `FIRST_TOUCH_EVENT_PROMPT_VERSION` — для `app/first_touch_event_runner.py`.
-- `MESSAGE_CLASSIFIER_PROMPT_ID`, `MESSAGE_CLASSIFIER_PROMPT_VERSION` — для `app/message_classifier_runner.py`.
-- `SCREENING_AUTOFILL_PROMPT_ID`, `SCREENING_AUTOFILL_PROMPT_VERSION` — для `app/screening_autofill_runner.py`.
-- `VERDICT_CLASSIFIER_PROMPT_ID`, `VERDICT_CLASSIFIER_PROMPT_VERSION` — для `app/verdict_classifier_runner.py`.
-- `EXTRACTOR_AGENT_PROMPT_ID`, `EXTRACTOR_AGENT_PROMPT_VERSION` — для `app/extractor_agent_runner.py`.
-- `ONE_LINE_SEARCH_QUERY_BUILDER_PROMPT_ID`, `ONE_LINE_SEARCH_QUERY_BUILDER_PROMPT_VERSION` — для builder prompt в `app/one_line_search_query_builder_runner.py`.
-- `RESPONSIBILITIES_PARSER_PROMPT_ID`, `RESPONSIBILITIES_PARSER_PROMPT_VERSION` — для `app/responsibilities_parser_runner.py` и для режима `--requirements-source responsibilities_parser` в `app/sourcing_assistant_runner.py`.
-- `SOURCING_ASSISTANT_PROMPT_ID`, `SOURCING_ASSISTANT_PROMPT_VERSION` — для `app/sourcing_assistant_runner.py`.
-
-Важно:
-- `app/screening_scenarios_runner.py` и `app/screening_guardrails_runner.py` читают `screening_assistant.prompt_id/prompt_version` только из `tests/tools/model.yaml`.
-- `app/runner.py` читает `screening_assistant`, `screening_autofill`, `verdict_classifier`, `message_classifier` и `candidate_simulator` только из `tests/tools/model.yaml`.
+> `app/screening_scenarios_runner.py` и `app/screening_guardrails_runner.py` берут prompt
+> только из `model.yaml` (env-override на них не действует).
 
 ## Фикстуры и данные
-- `tests/fixtures/cdm/` — CDM-фикстуры вакансий.
-  Checked-in фикстуры в репозитории уже могут содержать дополнительные поля `vacancy.raw_vacancy`, `vacancy.key_requirements`, `vacancy.extractor_entities`.
-  Команда `python -m app.runner gen-fixtures` удаляет текущие `cdm_*.json` и заново генерирует 10 baseline-CDM через `tests/tools/make_vacancies.py`.
-  Эти baseline-CDM подходят для smoke/e2e-сценариев, но не добавляют `raw_vacancy`, `key_requirements`, `extractor_entities`.
-- `tests/fixtures/screening_scenarios.csv` — сценарии для проверки `screening_assistant`.
-- `tests/fixtures/extractor_agent/` — кейсы для проверки `extractor_agent_runner.py` (сейчас хранятся в `cases.yaml`).
+- `tests/fixtures/cdm/{std,hh}/` — CDM-вакансии. Baseline генерит `tests/tools/make_vacancies.py`
+  (без `raw_vacancy`/`key_requirements`/`extractor_entities` — их добавляют отдельно).
+- `tests/fixtures/extractor_agent/anchors.yaml` — курируемые якоря + golden-ожидания для нового extractor.
+- `tests/fixtures/message_classifier/` и `tests/fixtures/verdict_classifier/` — regression-кейсы классификаторов.
+- `tests/fixtures/screening_scenarios.csv` (+ `_hh`) — сценарии для `screening_assistant`.
 - `cdm/schema.json` — схема CDM.
 
-Дополнительные требования к данным:
-- `responsibilities_parser_runner.py` и `one_line_search_query_builder_runner.py` требуют `vacancy.raw_vacancy`.
-- `sourcing_assistant_runner.py` использует `vacancy.extractor_entities` для backend search и предпочитает `vacancy.key_requirements` как основной источник требований.
-- `app/enrich_cdm_with_extractor_entities.py` заполняет только `vacancy.extractor_entities`; поля `raw_vacancy` и `key_requirements` он не генерирует.
+Требования к данным для **легаси** sourcing-раннеров: `responsibilities_parser`/`one_line` требуют
+`vacancy.raw_vacancy`; `sourcing_assistant` — `vacancy.extractor_entities` (и предпочитает `key_requirements`).
+`app/enrich_cdm_with_extractor_entities.py` заполняет только `vacancy.extractor_entities`.
 
-## Раннеры (`app/`)
+## Раннеры новой архитектуры (`qa_harness`)
+Запуск: `python -m qa_harness.runners.<name>`. Отчёт — **два файла** на прогон в
+`tests/reports_v2/<runner>/`: `*.metrics.json` (лёгкий: `meta` + `summary` + `metrics` +
+`failures_index`) и `*.cases.json` (по кейсам: входы, транскрипт/артефакты, вердикт). Полная схема —
+`docs/REPORT_SCHEMA.md`. `summary.passed/failed` отражает **качество промпта**, а инфра-сбои идут в
+`summary.errors` (а не в `failed`).
 
-### `app/runner.py` — исторический end-to-end интеграционный раннер
-Статус:
-- Сейчас обычно не используется как основной способ регрессионной проверки.
-- Это первоначальная концепция сквозной симуляции сценария `одна вакансия x один профиль кандидата` через цепочку `first_touch` / `telegramMessageGenerator` -> `candidate_simulator` -> `screening_assistant` -> `message_classifier` -> `verdict_classifier` -> `screening_autofill`.
-
-Как работает:
-- Берет CDM-фикстуры и прогоняет их по всем профилям из `candidate_simulator`.
-- Стартовое сообщение генерируется через `telegramMessageGenerator` (если доступен), иначе берется шаблон из CDM или fallback.
-- Диалог проходит через `screening_assistant`, `message_classifier`, `verdict_classifier`, `screening_autofill`, собираются метрики и usage.
-
-Запуск:
+### message_classifier — классификация реплики кандидата
+Классы: `reason_farewell / no_reason / acceptance / human_needed`. Источник кейсов — фиксированные
+размеченные сообщения (`tests/fixtures/message_classifier/regression_cases.json`) и/или синтетика
+(LLM генерит сообщения с известным классом). Судья — `LabelJudge` (точное совпадение метки).
+Считает: accuracy, per-class accuracy, разреженную confusion matrix, `by_split` (regression/synthetic).
 ```bash
-python -m app.runner gen-fixtures
-python -m app.runner unit --limit 5 --candidate-profiles difficult ideal
+python -m qa_harness.runners.message_classifier --offline                      # без сети (эвристика, для CI/демо)
+python -m qa_harness.runners.message_classifier                                # онлайн, реальный промпт
+python -m qa_harness.runners.message_classifier --mode all --messages-per-class 3 --seed 42
+```
+Ключевые флаги: `--mode regression|synthetic|all`, `--messages-per-class N`, `--offline`,
+`--noise-level 0..2`, `--scenario-mode random|cycle`, `--seed`, `--prompt-id/--prompt-version`.
+
+### verdict_classifier — итоговый вердикт диалога
+Метки: `passed / failed / deadlock`. На вход — полный диалог Рекрутер/Кандидат (фиксированные из
+`tests/fixtures/verdict_classifier/regression_cases.json` и/или синтетические через `DialogueGenerator`
+с валидацией формата/чередования/END). Судья — `LabelJudge`; те же метрики + `by_split`.
+```bash
+python -m qa_harness.runners.verdict_classifier --offline
+python -m qa_harness.runners.verdict_classifier --mode all --dialogs-per-verdict 3 --seed 42
+```
+Флаги аналогичны message_classifier, плюс `--dialogs-per-verdict N`.
+
+### extractor_agent — конвейер AI-поиска (step1→step2→step3), поэтапная оценка
+Фраза рекрутера → сущности (`step1`, LLM-промпт) → backend-payload (`step2`, маппинг) →
+поиск в backend (`step3`, count). **LLM-судьи нет**: оценка контрактная + семантическая по golden.
+Кейсы — курируемые якоря `tests/fixtures/extractor_agent/anchors.yaml` (фраза + `expect`/`forbid`).
+Каждый шаг оценивается отдельно (подробно — `docs/EXTRACTOR_REDESIGN.md`):
+- `step1`: contract (форма JSON) + semantic (golden: попали ли термины в нужные bucket'ы, не уехал ли
+  город в positions и т.п.) + format (вернул ли голый JSON);
+- `step2`: mapping integrity (ничего не потеряно при сборке payload);
+- `step3`: retrieval — `count` (это **информация**, не pass/fail промпта).
+
+**Качество ≠ инфра:** `passed = contract & semantic & mapping`; сбои бэкенда (timeout/auth/http) → в `errors`.
+```bash
+# Тест ПРОМПТА на всех якорях, без бэкенда (нужен только OPENAI_API_KEY) — основной режим QA:
+python -m qa_harness.runners.extractor_agent --steps 1
+# + backend (count): нужны AI_SEARCH_*; токен в теле; step3 по умолчанию limit=0 (только count, быстро):
+python -m qa_harness.runners.extractor_agent --steps 1,2,3 --token-in-body --step3-timeout 45 --workers 4
+```
+Особенности: конкурентность (`--workers`), раздельные таймауты (`--step1-timeout`/`--step3-timeout`),
+fail-fast по бэкенду (`--backend-fail-fast`), чекпоинты (`--checkpoint-every`) и сохранение частичного
+отчёта по Ctrl+C. В отчёте: `stages[]` (step1/step2/step3), `checks[]` (contract/semantic/mapping),
+`metrics.step1/step2/step3`.
+
+### Юнит-тесты пакета и гейты
+```bash
+pytest -q       # юнит-тесты qa_harness (core/domain/pipeline + offline e2e раннеров)
+lint-imports    # контракт изоляции: qa_harness не зависит от app/
 ```
 
-Параметры:
-- `gen-fixtures` — удаляет текущие `tests/fixtures/cdm/cdm_*.json` и генерирует 10 baseline-CDM через `tests.tools.make_vacancies` (ключ не нужен).
-- `unit --limit` — сколько CDM брать в прогон (по умолчанию 5).
-- `unit --candidate-profiles` — список профилей из `candidate_simulator` (по умолчанию все).
+---
 
-Отчеты:
-- `tests/reports/runs/<run_id>/report-<run_id>.json`
-- `tests/reports/runs/<run_id>/dialogs/*.json`
+## Раннеры (`app/`) — ЛЕГАСИ (мигрируются)
+> Ещё рабочие и пока единственный способ тестировать НЕ мигрированные компоненты (screening,
+> first_touch, sourcing, one_line, responsibilities, autofill). Для `message_classifier`,
+> `verdict_classifier`, `extractor_agent` есть новые версии в `qa_harness` (выше) — `app/`-варианты
+> оставлены до cutover. Исторический `app/runner.py` удалён; baseline-CDM генерит
+> `tests/tools/make_vacancies.py`. Отчёты этих раннеров — в `tests/reports/<runner>/`.
 
 ### `app/screening_scenarios_runner.py` — сценарии для `screening_assistant`
 Как работает:
@@ -329,16 +348,18 @@ python -m app.message_classifier_runner --messages-per-class 3 --seed 42
 Отчеты:
 - `tests/reports/message_classifier/message_classifier_report_<run_id>.json`
 
-### `app/telegram_generator_runner.py` — тест первого касания (Telegram)
+### `app/first_touch_runner.py` — тест первого касания
 Как работает:
-- Строит `InputForm` из CDM и генерирует сообщение через `telegramMessageGenerator`.
+- Строит `InputForm` из CDM и генерирует сообщение через сохранённый prompt `first_touch`
+  (встроенный `FirstTouchGenerator`, по аналогии с `first_touch_hh_runner`; контракт
+  input-переменных и постобработка подписи сохранены от прежнего внешнего генератора).
 - Проверяет наличие фактов и галлюцинаций с помощью LLM-оценщика.
 - Опционально требует вопрос в сообщении.
-- Требует `telegramMessageGenerator-main` (если модуль не импортируется, раннер завершится с ошибкой).
+- `prompt_id` берётся из `FIRST_TOUCH_PROMPT_ID`/`model.yaml` (секция `first_touch`).
 
 Запуск:
 ```bash
-python -m app.telegram_generator_runner --limit 5 --require-question
+python -m app.first_touch_runner --limit 5 --require-question
 ```
 
 Параметры:
@@ -352,11 +373,11 @@ python -m app.telegram_generator_runner --limit 5 --require-question
 - `--seed` — сид для `--hide-company-ratio`.
 
 Отчеты:
-- `tests/reports/telegram_generator/telegram_generator_report_<run_id>.json`
+- `tests/reports/first_touch/first_touch_report_<run_id>.json`
 
 ### `app/first_touch_event_runner.py` — простой раннер для event-invite prompt
 Как работает:
-- Напрямую вызывает сохранённый prompt по `prompt_id/prompt_version`, без CDM и без `telegramMessageGenerator`.
+- Напрямую вызывает сохранённый prompt по `prompt_id/prompt_version`, без CDM и без построения `InputForm`.
 - На вход подаёт только `candidate_name` в JSON (`{"candidate_name": ...}`).
 - Генерирует сообщения для набора имён, отдельно прогоняет кейс с пустым именем.
 - Проверяет каждое сообщение на обязательные факты, выдуманные детали и финальный вопрос про ссылку на регистрацию.

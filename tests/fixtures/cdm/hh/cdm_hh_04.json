@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Field Service Engineer",
+    "company_name": "RouteTech",
+    "company_description": "Инженерная команда, обслуживающая оборудование у клиентов по Москве и области.",
+    "location": "Москва",
+    "work_format": "FIELD_WORK",
+    "salary_range_from": 170000,
+    "salary_range_to": 240000,
+    "responsibilities": "Выезды к клиентам, диагностика оборудования, техническая поддержка на площадках.",
+    "vacancy_description": "Разъездной формат по Москве и области. Нужно проверить готовность к регулярным выездам.\nВыезды к клиентам, диагностика оборудования, техническая поддержка на площадках.\nИнженерная команда, обслуживающая оборудование у клиентов по Москве и области.\nhttps://careers.example/cdm_hh_04",
+    "questions": "1. Есть ли у вас опыт выездной инженерной поддержки?\n2. Работали ли вы с сетевым или серверным оборудованием?"
+  },
+  "candidate": {
+    "recruiter_name": "Сабина",
+    "candidate_name": "Артем",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-field"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Field Engineer",
+        "company": "NetWorks"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Field support",
+        "quantile": 4.0
+      },
+      {
+        "skill": "Networking",
+        "quantile": 3.8
+      }
+    ]
+  }
+}

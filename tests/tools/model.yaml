@@ -1,6 +1,11 @@
 first_touch:  
   prompt_id: pmpt_694a88c0ce708196ae2722f68b452760081b5f35879bbd4e
-  prompt_version: 9
+  prompt_version: 14
+  seed: 1234
+
+first_touch_hh:
+  prompt_id: pmpt_69b1c0e900988196bc62ef7809e7939c07e3907d5493ecc5
+  prompt_version: 3
   seed: 1234
 
 first_touch_event_invite:
@@ -10,12 +15,17 @@ first_touch_event_invite:
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
-  prompt_version: 8
+  prompt_version: 11
   seed: 1234
 
 screening_assistant:
   prompt_id: pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf
-  prompt_version: 44
+  prompt_version: 49
+  seed: 1234
+
+screening_assistant_hh:
+  prompt_id: pmpt_69fcfc0bced48193ba7d544092b466050a5817bedd826d40
+  prompt_version: 5
   seed: 1234
 
 screening_autofill:
@@ -25,7 +35,7 @@ screening_autofill:
 
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
-  prompt_version: 7
+  prompt_version: 9
   seed: 1234
 
 extractor_agent:
