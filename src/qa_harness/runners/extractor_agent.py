@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offset", type=int, default=0)
     p.add_argument("--shuffle", action="store_true")
     p.add_argument("--highlight", action="store_true")
+    p.add_argument("--max-cases", type=int, default=None, help="Жёсткий лимит на общее число кейсов (после сбора real+suite+syn).")
+    p.add_argument("--checkpoint-every", type=int, default=20, help="Перезаписывать отчёт каждые N кейсов (0 = только в конце).")
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--quiet", action="store_true")
@@ -115,6 +117,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     prompt_cfg = PromptCfg(prompt_id=prompt.prompt_id, prompt_version=prompt.prompt_version, model=args.model)
 
     cases = _gather_cases(args)
+    if args.max_cases:
+        cases = cases[: args.max_cases]
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
@@ -130,94 +134,112 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     backend_stats = Counter()
     by_source: Dict[str, Dict[str, int]] = {}
 
-    for case in cases:
-        stages: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
-        extractor_json: Optional[dict] = None
-
-        text, usage, err = call_openai_step1(api_key, prompt_cfg, case.input, timeout_s=args.timeout_s)
-        accumulate_usage(usage_bucket, usage)
-
-        if err:
-            step1_ok = False
-            reason_codes.append("step1_call_error")
-            reason_hist["step1_call_error"] += 1
-        else:
-            obj, jerr = safe_json_loads(text or "", lenient=True)
-            if jerr or not isinstance(obj, dict):
-                step1_ok = False
-                reason_codes.append("invalid_json")
-                reason_hist["invalid_json"] += 1
-            else:
-                extractor_json = obj
-                ok, errors, _warnings = validate_step1_contract(obj, case.input)
-                step1_ok = ok
-                if not ok:
-                    reason_codes.extend(errors)
-                    reason_hist["contract_fail"] += 1
-        stages.append({"name": "step1_parse", "artifact": extractor_json, "passed": step1_ok, "reason_codes": list(reason_codes)})
-
-        overall_ok = step1_ok
-        payload: Optional[dict] = None
-        if 2 in steps and step1_ok and extractor_json is not None:
-            payload = build_step3_payload(extractor_json, case.input, base_payload, sanitize_geo)
-            stages.append({"name": "step2_payload", "artifact": payload, "passed": True})
-
-        if 3 in steps and backend is not None and payload is not None:
-            kind, status, attempts, count, berr, _json = call_backend_search_bool(backend, token, payload)
-            step3_ok = kind in ("success", "insufficient_search_terms")
-            backend_stats["step3_calls"] += 1
-            backend_stats[kind] += 1
-            if kind == "success" and isinstance(count, int) and count > 0:
-                backend_stats["retrieval_ok"] += 1
-            s3_reasons = [] if kind == "success" else [kind]
-            stages.append({
-                "name": "step3_backend",
-                "artifact": {"kind": kind, "status": status, "count": count},
-                "passed": step3_ok,
-                "reason_codes": s3_reasons,
-            })
-            if not step3_ok:
-                reason_codes.append(kind)
-                reason_hist[kind] += 1
-            overall_ok = overall_ok and step3_ok
-
-        src = case.source
-        by_source.setdefault(src, {"total": 0, "passed": 0})
-        by_source[src]["total"] += 1
-        if overall_ok:
-            by_source[src]["passed"] += 1
-
-        rb.add_case(
-            CaseRecord(
-                case_id=f"{src}:{case.name}:v1",
-                source=src,
-                passed=overall_ok,
-                inputs={"criterion": "step1 contract valid" + (" + step3 retrieval ok" if 3 in steps else ""), "query": case.input},
-                output={"raw": text, "parsed": extractor_json},
-                verdict={"evaluator": "pipeline", "passed": overall_ok, "reason_codes": reason_codes},
-                stages=stages,
-            )
+    def _flush(interrupted: bool = False):
+        """Собрать и записать отчёт по текущему состоянию (чекпоинт/финал/прерывание)."""
+        rb.set_token_usage(usage_total(usage_bucket))
+        metrics_extra: Dict[str, Any] = {"deterministic": dict(reason_hist), "by_source": by_source}
+        if 3 in steps:
+            metrics_extra["backend"] = dict(backend_stats)
+        if interrupted:
+            metrics_extra["interrupted"] = True
+        finished = datetime.datetime.now()
+        md, cd = rb.finalize(
+            metrics_extra,
+            finished_at=finished.isoformat(timespec="seconds"),
+            duration_s=round((finished - started).total_seconds(), 3),
         )
+        mp, cp = write_reports(args.out_dir, RUNNER, run_id, md, cd)
+        return mp, cp, md
+
+    total = len(cases)
+    interrupted = False
+    try:
+        for i, case in enumerate(cases, start=1):
+            stages: List[Dict[str, Any]] = []
+            reason_codes: List[str] = []
+            extractor_json: Optional[dict] = None
+
+            text, usage, err = call_openai_step1(api_key, prompt_cfg, case.input, timeout_s=args.timeout_s)
+            accumulate_usage(usage_bucket, usage)
+
+            if err:
+                step1_ok = False
+                reason_codes.append("step1_call_error")
+                reason_hist["step1_call_error"] += 1
+            else:
+                obj, jerr = safe_json_loads(text or "", lenient=True)
+                if jerr or not isinstance(obj, dict):
+                    step1_ok = False
+                    reason_codes.append("invalid_json")
+                    reason_hist["invalid_json"] += 1
+                else:
+                    extractor_json = obj
+                    ok, errors, _warnings = validate_step1_contract(obj, case.input)
+                    step1_ok = ok
+                    if not ok:
+                        reason_codes.extend(errors)
+                        reason_hist["contract_fail"] += 1
+            stages.append({"name": "step1_parse", "artifact": extractor_json, "passed": step1_ok, "reason_codes": list(reason_codes)})
+
+            overall_ok = step1_ok
+            payload: Optional[dict] = None
+            if 2 in steps and step1_ok and extractor_json is not None:
+                payload = build_step3_payload(extractor_json, case.input, base_payload, sanitize_geo)
+                stages.append({"name": "step2_payload", "artifact": payload, "passed": True})
+
+            if 3 in steps and backend is not None and payload is not None:
+                kind, status, _attempts, count, _berr, _json = call_backend_search_bool(backend, token, payload)
+                step3_ok = kind in ("success", "insufficient_search_terms")
+                backend_stats["step3_calls"] += 1
+                backend_stats[kind] += 1
+                if kind == "success" and isinstance(count, int) and count > 0:
+                    backend_stats["retrieval_ok"] += 1
+                stages.append({
+                    "name": "step3_backend",
+                    "artifact": {"kind": kind, "status": status, "count": count},
+                    "passed": step3_ok,
+                    "reason_codes": [] if kind == "success" else [kind],
+                })
+                if not step3_ok:
+                    reason_codes.append(kind)
+                    reason_hist[kind] += 1
+                overall_ok = overall_ok and step3_ok
+
+            src = case.source
+            by_source.setdefault(src, {"total": 0, "passed": 0})
+            by_source[src]["total"] += 1
+            if overall_ok:
+                by_source[src]["passed"] += 1
+
+            rb.add_case(
+                CaseRecord(
+                    case_id=f"{src}:{case.name}:v1",
+                    source=src,
+                    passed=overall_ok,
+                    inputs={"criterion": "step1 contract valid" + (" + step3 retrieval ok" if 3 in steps else ""), "query": case.input},
+                    output={"raw": text, "parsed": extractor_json},
+                    verdict={"evaluator": "pipeline", "passed": overall_ok, "reason_codes": reason_codes},
+                    stages=stages,
+                )
+            )
+            if not args.quiet:
+                print(f"  [{i}/{total}] [{'ok' if overall_ok else 'MISS'}] {src}:{case.name} step1_ok={step1_ok}")
+
+            if args.checkpoint_every and i % args.checkpoint_every == 0:
+                mp, _cp, _md = _flush()
+                if not args.quiet:
+                    print(f"  [checkpoint] отчёт сохранён ({i}/{total}) -> {mp}")
+    except KeyboardInterrupt:
+        interrupted = True
         if not args.quiet:
-            print(f"  [{'ok' if overall_ok else 'MISS'}] {src}:{case.name} step1_ok={step1_ok}")
+            print("\n[interrupted] прерывание — сохраняю частичный отчёт по уже обработанным кейсам...")
 
-    rb.set_token_usage(usage_total(usage_bucket))
-    metrics_extra: Dict[str, Any] = {"deterministic": dict(reason_hist), "by_source": by_source}
-    if 3 in steps:
-        metrics_extra["backend"] = dict(backend_stats)
-
-    finished = datetime.datetime.now()
-    metrics_doc, cases_doc = rb.finalize(
-        metrics_extra,
-        finished_at=finished.isoformat(timespec="seconds"),
-        duration_s=round((finished - started).total_seconds(), 3),
-    )
-    metrics_path, cases_path = write_reports(args.out_dir, RUNNER, run_id, metrics_doc, cases_doc)
+    metrics_path, cases_path, metrics_doc = _flush(interrupted=interrupted)
 
     if not args.quiet:
         s = metrics_doc["summary"]
-        print(f"[summary] steps={steps} total={s['total']} passed={s['passed']} failed={s['failed']} pass_rate={s['pass_rate']}%")
+        tag = "partial" if interrupted else "summary"
+        print(f"[{tag}] steps={steps} done={s['total']}/{total} passed={s['passed']} failed={s['failed']} pass_rate={s['pass_rate']}%")
         print(f"[done] metrics -> {metrics_path}")
         print(f"[done] cases   -> {cases_path}")
     return {"metrics": metrics_path, "cases": cases_path}
