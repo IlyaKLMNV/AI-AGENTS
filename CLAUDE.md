@@ -17,9 +17,9 @@
 - `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
   `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
-Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant**.
+Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser**.
 Остальные (screening_scenarios(+hh), screening_guardrails, first_touch(+hh/event),
-screening_autofill, responsibilities_parser) — пока в `app/`.
+screening_autofill) — пока в `app/`.
 
 ## Новые раннеры
 Запуск `python -m qa_harness.runners.<name>`; отчёт — два файла в `tests/reports_v2/<runner>/`

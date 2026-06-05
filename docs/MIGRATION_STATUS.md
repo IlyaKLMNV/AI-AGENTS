@@ -18,7 +18,7 @@
 | extractor_agent | ✅ фичи | ⬜ глазами | `app/extractor_agent_runner.py` |
 | sourcing_assistant | ✅ фичи | ⬜ глазами | `app/sourcing_assistant_runner.py` |
 | one_line_search_query_builder | ✅ фичи | ⬜ глазами | `app/one_line_search_query_builder_runner.py` |
-| responsibilities_parser | ⬜ | ⬜ | `app/responsibilities_parser_runner.py` |
+| responsibilities_parser | ✅ фичи | ⬜ глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ⬜ | ⬜ | `app/screening_autofill_runner.py` |
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
@@ -177,3 +177,28 @@ shared state — цикл о нём не знает. Будущие раннер
 - **quality ≠ infra**: backend-сбои / нет entities / нет кандидатов / сетевые ошибки промпта → `errors`, не `failed`; в `cases[]` попадают только «оценённые» вакансии;
 - семантической оценки нет (как и в легаси): кандидаты живые, без разметки — только контракт формы;
 - дефолты мелкие (`--candidate-pool-size 10`, `--candidate-sample-size 5`): backend-профили (`limit>0`) — медленный путь.
+
+---
+
+## responsibilities_parser — детальный чек-лист
+
+Старый: `python -m app.responsibilities_parser_runner`. Новый: `python -m qa_harness.runners.responsibilities_parser`.
+**Без бэкенда** (только LLM): текст вакансии → JSON-массив ключевых терминов. Структурно как one_line (golden).
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Промпт vacancy → JSON-массив строк (ключевые слова) | ✅ | `core.StoredPromptClient` |
+| Контракт: 1..5 терминов, 1..3 слова, без чисел-одиночек/запятых, ≤60 | ✅ | `domain/responsibilities/contract.py` |
+| Без дублей (нормализованных) | ✅ | `contract.find_duplicates` |
+| Заземление: термины найдены в тексте вакансии | ✅ сигнал | `domain/responsibilities/semantic.py` (`grounding_misses`) |
+| Совпадение с ожидаемым (`vacancy_stack∪skills`) | заменено | golden `expect`/`forbid` (`check_semantics`) |
+| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Офлайн без сети | ➕ | `--offline` replay `offline_output` из golden |
+| Парити-сверка | ⬜ глазами | (вручную) |
+
+**Осознанные отличия от легаси:**
+- источник кейсов: CDM-вакансии → курируемые **golden-вакансии** (`tests/fixtures/responsibilities_parser/golden.yaml`);
+- `passed = contract & semantic(golden)`; заземление в тексте — **сигнал-предупреждение** (не gate), как warning в легаси;
+- семантика по golden `expect`/`forbid` вместо нечёткого матчинга против `vacancy_stack∪skills`;
+- grounding — строгая подстрока (lower+ё→е, без стемминга) → может ложно метить склонённые формы (напр. «микросервисы» vs «микросервисов»); это лишь сигнал, качество не валит;
+- quality ≠ infra: сетевой сбой промпта → `errors`; невалидный JSON-вывод → contract-фейл (качество).

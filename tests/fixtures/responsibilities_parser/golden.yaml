@@ -1,0 +1,73 @@
+# Курируемые golden-кейсы для теста промпта responsibilities_parser.
+# Вход — `vacancy` (текст). Ожидания на СПИСОК ключевых слов, который должен вернуть промпт:
+#   expect — ИЛИ-группы обязательных терминов (группа ок, если хоть одна форма совпала с ключевым словом);
+#   forbid — термины, которых в списке быть НЕ должно;
+#   offline_output — что мог бы выдать промпт; для `--offline` (replay). Должен проходить контракт формы
+#     (1..5 терминов, каждый 1..3 слова, без чисел-одиночек/запятых, ≤60), expect/forbid и заземление в тексте.
+
+- name: python_backend
+  vacancy: |
+    Python-разработчик (Backend). Обязанности: разработка на Django, проектирование REST API,
+    работа с PostgreSQL, контейнеризация в Docker, написание тестов.
+    Требования: Python, Django, PostgreSQL, Docker.
+  expect:
+    - [Python]
+    - [Django]
+    - [PostgreSQL, Postgres]
+  forbid: [React]
+  offline_output: ["Python", "Django", "PostgreSQL", "REST API", "Docker"]
+
+- name: react_frontend
+  vacancy: |
+    Frontend-разработчик. Обязанности: разработка интерфейсов на React, типизация TypeScript,
+    управление состоянием Redux, адаптивная вёрстка.
+  expect:
+    - [React]
+    - [TypeScript]
+    - [Redux]
+  forbid: [Python]
+  offline_output: ["React", "TypeScript", "Redux", "вёрстка"]
+
+- name: devops_sre
+  vacancy: |
+    SRE / DevOps инженер. Обязанности: эксплуатация Kubernetes, сборки в Docker, инфраструктура
+    как код через Terraform, настройка CI/CD, мониторинг сервисов.
+  expect:
+    - [Kubernetes, k8s]
+    - [Docker]
+    - [Terraform]
+  forbid: []
+  offline_output: ["Kubernetes", "Docker", "Terraform", "CI/CD", "мониторинг"]
+
+- name: data_scientist
+  vacancy: |
+    Data Scientist. Обязанности: построение моделей машинного обучения на Python,
+    обучение сетей в PyTorch, задачи NLP, эксперименты и метрики.
+  expect:
+    - [Python]
+    - [PyTorch, TensorFlow]
+    - [NLP]
+  forbid: [Java]
+  offline_output: ["Python", "PyTorch", "NLP", "метрики"]
+
+- name: qa_automation
+  vacancy: |
+    QA Automation Engineer. Обязанности: автоматизация тестов на Selenium и Python,
+    написание pytest-сценариев, API-тестирование сервисов.
+  expect:
+    - [Selenium]
+    - [Python]
+    - [pytest]
+  forbid: [manual]
+  offline_output: ["Selenium", "Python", "pytest", "API-тестирование"]
+
+- name: golang_backend
+  vacancy: |
+    Backend-разработчик Go (Golang). Обязанности: разработка микросервисов, gRPC-интерфейсы,
+    работа с PostgreSQL и Kafka, высоконагруженные сервисы.
+  expect:
+    - [Golang, Go]
+    - [gRPC]
+    - [Kafka]
+  forbid: [Python, PHP]
+  offline_output: ["Golang", "gRPC", "Kafka", "PostgreSQL", "микросервисы"]
