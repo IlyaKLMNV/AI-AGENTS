@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--candidate-pool-size", type=int, default=10, help="limit профилей из backend на вакансию (limit>0 = медленно!).")
     p.add_argument("--candidate-sample-size", type=int, default=5, help="Сколько профилей оценить промптом.")
     p.add_argument("--sample-mode", choices=["first", "random"], default="first")
+    p.add_argument("--count-only", action="store_true",
+                   help="Только ЧИСЛО кандидатов на вакансию (limit=0, быстро, без таймаутов): профили НЕ тянем "
+                        "и промпт НЕ зовём. Диагностика доступности, не тест качества.")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--workers", type=int, default=4, help="Параллельных вакансий (бэкенд-профили тяжёлые — не задирай).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызова промпта sourcing, сек.")
@@ -172,6 +175,89 @@ def _process_offline(idx_case) -> Dict[str, Any]:
     return res
 
 
+def _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo) -> Dict[str, Path]:
+    """Диагностика: число кандидатов на вакансию (limit=0, быстро). Профили не тянем, промпт не зовём."""
+    count_payload = make_base_payload(only_with_contacts=True, current_position_title=True, limit=0, offset=0)
+    backend_down = threading.Event()
+    counts: Dict[str, int] = {}
+    errors: List[Any] = []
+    state = {"infra": 0}
+
+    def work(item):
+        _idx, cdm_path = item
+        vacancy = (load_json(cdm_path).get("vacancy") or {})
+        name = Path(cdm_path).stem
+        r: Dict[str, Any] = {"name": name, "count": None, "infra": None}
+        title = str(vacancy.get("title") or "").strip()
+        entities = vacancy.get("extractor_entities")
+        if not title:
+            r["infra"] = "no_title_in_cdm"
+            return r
+        if not isinstance(entities, dict):
+            r["infra"] = "no_search_entities_in_cdm"
+            return r
+        payload = build_step3_payload(entities, title, count_payload, sanitize_office_geo=sanitize_geo)
+        if not any(k in payload for k in ("positions", "skills", "keys")):
+            r["infra"] = "no_search_entities_in_cdm"
+            return r
+        if backend_down.is_set():
+            r["infra"] = "backend_down(skipped)"
+            return r
+        kind, status, _a, count, berr, _j = call_backend_search_bool(backend, token, payload)
+        if kind not in ("success", "insufficient_search_terms"):
+            r["infra"] = f"backend:{kind}:{berr or status}"
+            return r
+        r["count"] = int(count or 0)
+        return r
+
+    def fold(r):
+        if r["infra"]:
+            errors.append((r["name"], r["infra"]))
+            if r["infra"].startswith("backend:"):
+                state["infra"] += 1
+                if state["infra"] >= args.backend_fail_fast:
+                    backend_down.set()
+            if not args.quiet:
+                print(f"  [ERR ] {r['name']}: {r['infra']}")
+        else:
+            counts[r["name"]] = r["count"]
+            if not args.quiet:
+                print(f"  [count] {r['name']} count={r['count']}")
+
+    outcome = run_cases(items, work=work, fold=fold, max_workers=max(1, args.workers), checkpoint_every=0,
+                        on_interrupt=(lambda: None) if args.quiet else (lambda: print("\n[interrupted]")))
+
+    vals = sorted(counts.values())
+    nonzero = [v for v in vals if v > 0]
+    search_counts = {
+        "per_vacancy": counts, "vacancies": len(counts), "with_candidates": len(nonzero),
+        "zero": len(vals) - len(nonzero), "sum": sum(vals),
+        "min": (vals[0] if vals else 0), "max": (vals[-1] if vals else 0),
+        "avg": round(sum(vals) / len(vals), 1) if vals else 0,
+    }
+    rb = ReportBuilder(
+        runner=RUNNER,
+        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        run_id=run_id, started_at=started.isoformat(timespec="seconds"),
+        models={"generator": None, "evaluator": None}, seed=prompt.seed,
+        args={"count_only": True, "cases": len(items), "workers": args.workers},
+    )
+    rb.set_token_usage({"input": 0, "output": 0, "total": 0})
+    for name, reason in errors:
+        rb.add_error(f"cdm:{name}:v1", reason)
+    finished = datetime.datetime.now()
+    md, cd = rb.finalize({"search_counts": search_counts}, finished_at=finished.isoformat(timespec="seconds"),
+                         duration_s=round((finished - started).total_seconds(), 3))
+    metrics_path, cases_path = write_reports(args.out_dir, RUNNER, run_id, md, cd)
+    if not args.quiet:
+        sc = search_counts
+        print(f"[count-only] vacancies={sc['vacancies']} with_candidates={sc['with_candidates']} zero={sc['zero']} "
+              f"sum={sc['sum']} avg={sc['avg']} min={sc['min']} max={sc['max']} errors={len(errors)} done={outcome.done}/{len(items)}")
+        print(f"[done] metrics -> {metrics_path}")
+        print(f"[done] cases   -> {cases_path}")
+    return {"metrics": metrics_path, "cases": cases_path}
+
+
 def run(args: argparse.Namespace) -> Dict[str, Path]:
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
@@ -179,6 +265,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
     seed = args.seed if args.seed is not None else prompt.seed
+    if args.count_only and args.offline:
+        raise ValueError("--count-only требует онлайн-бэкенд (несовместим с --offline)")
 
     sourcing_client = None
     backend: Optional[BackendCfg] = None
@@ -210,6 +298,9 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     base_payload = make_base_payload(only_with_contacts=True, current_position_title=True,
                                      limit=args.candidate_pool_size, offset=0)
     sanitize_geo = not args.no_sanitize_office_geo
+
+    if args.count_only:
+        return _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo)
 
     rb = ReportBuilder(
         runner=RUNNER,
