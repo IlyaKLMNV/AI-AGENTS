@@ -25,6 +25,8 @@ tests/fixtures/*
 !tests/fixtures/sourcing_assistant/offline.yaml
 !tests/fixtures/responsibilities_parser/
 !tests/fixtures/responsibilities_parser/golden.yaml
+!tests/fixtures/screening_autofill/
+!tests/fixtures/screening_autofill/golden.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/

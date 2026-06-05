@@ -1,0 +1,173 @@
+# Курируемые golden-кейсы для теста промпта screening_autofill.
+# Вход — `dialogue` (рекрутер/кандидат; раннер «расплющивает» в одну строку, как прод).
+# Ожидания:
+#   expect — подмножество полей формы. work_format — точным значением ("", remote, office, hybrid);
+#            зарплата/локация — спецзначением "<nonempty>" (точный формат варьируется).
+#   forbid_in_additional_info — темы, которых не должно быть в доп. вопросах (salary/location/work_format).
+#   expect_additional_info_nonempty — должен ли additional_info быть непустым (был не-исключённый вопрос).
+#   offline_output — каннная форма для `--offline` (replay без сети); проходит schema + expect + no-leak.
+
+- name: wf_hybrid_explicit
+  dialogue: |
+    Рекрутер: Здравствуйте! По вакансии Python-разработчик. Рассматриваете гибридный формат, 1-2 дня в офисе?
+    Кандидат: Да, гибрид мне подходит, 1-2 дня в офисе ок.
+    Рекрутер: Отлично. Какой у вас опыт с Django?
+    Кандидат: Три года писал на Django бэкенды.
+  expect: {work_format: hybrid}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: hybrid
+    additional_info:
+      - {question: "Какой у вас опыт с Django?", answer: "Три года, писал бэкенды"}
+
+- name: wf_remote_explicit
+  dialogue: |
+    Рекрутер: Формат у нас удалённый. Вам подходит полностью удалёнка?
+    Кандидат: Да, удалёнка для меня идеальна.
+    Рекрутер: Какой у вас стек?
+    Кандидат: В основном Go и PostgreSQL.
+  expect: {work_format: remote}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: remote
+    additional_info:
+      - {question: "Какой у вас стек?", answer: "Go и PostgreSQL"}
+
+- name: wf_office_explicit
+  dialogue: |
+    Рекрутер: Работа из офиса в центре. Готовы работать очно фулл-тайм?
+    Кандидат: Да, офис мне подходит, готов работать на площадке.
+    Рекрутер: Расскажите про опыт с Kubernetes?
+    Кандидат: Два года эксплуатировал кластеры Kubernetes.
+  expect: {work_format: office}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: office
+    additional_info:
+      - {question: "Расскажите про опыт с Kubernetes?", answer: "Два года эксплуатировал кластеры"}
+
+- name: wf_silent_stays_empty
+  dialogue: |
+    Рекрутер: Расскажите про ваш опыт?
+    Кандидат: Пять лет занимался аналитикой данных на Python.
+    Рекрутер: А с какими базами данных работали?
+    Кандидат: ClickHouse и PostgreSQL.
+  expect: {work_format: ""}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: ""
+    additional_info:
+      - {question: "С какими базами данных работали?", answer: "ClickHouse и PostgreSQL"}
+
+- name: wf_recruiter_only_stays_empty
+  dialogue: |
+    Рекрутер: У нас гибридный формат, 2 дня в офисе. Какой у вас опыт с React?
+    Кандидат: С React работал четыре года, делал SPA.
+  expect: {work_format: ""}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: ""
+    additional_info:
+      - {question: "Какой у вас опыт с React?", answer: "Четыре года, делал SPA"}
+
+- name: wf_rejects_hybrid_only_remote
+  dialogue: |
+    Рекрутер: У нас гибрид, 2 дня в офисе. Как вам?
+    Кандидат: Гибрид не подходит, рассматриваю только удалёнку.
+    Рекрутер: Понял. Опыт с Docker?
+    Кандидат: Да, активно использую Docker.
+  expect: {work_format: remote}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: remote
+    additional_info:
+      - {question: "Опыт с Docker?", answer: "Да, активно использую"}
+
+- name: salary_provided
+  dialogue: |
+    Рекрутер: Какие у вас зарплатные ожидания?
+    Кандидат: Ожидаю от 300000 до 400000 рублей на руки.
+    Рекрутер: Понял. Опыт с Kafka есть?
+    Кандидат: Да, два года работал с Kafka.
+  expect: {min_salary: "<nonempty>", max_salary: "<nonempty>"}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: ""
+    min_salary: "300000"
+    max_salary: "400000"
+    work_format: ""
+    additional_info:
+      - {question: "Опыт с Kafka есть?", answer: "Да, два года"}
+
+- name: location_provided
+  dialogue: |
+    Рекрутер: В каком городе вы находитесь?
+    Кандидат: Живу в Москве, переезд не рассматриваю.
+    Рекрутер: Хорошо. Опыт с Terraform?
+    Кандидат: Год писал инфраструктуру на Terraform.
+  expect: {preferred_location: "<nonempty>"}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: "Москва"
+    min_salary: ""
+    max_salary: ""
+    work_format: ""
+    additional_info:
+      - {question: "Опыт с Terraform?", answer: "Год писал инфраструктуру"}
+
+- name: full_form
+  dialogue: |
+    Рекрутер: Здравствуйте! Расскажите про желаемый формат, город и ожидания по деньгам.
+    Кандидат: Удалёнка предпочтительна, живу в Казани, ожидаю около 250000 рублей.
+    Рекрутер: Принято. Какой у вас опыт с Python и FastAPI?
+    Кандидат: Четыре года на Python, два — с FastAPI.
+  expect: {work_format: remote, preferred_location: "<nonempty>"}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: true
+  offline_output:
+    preferred_location: "Казань"
+    min_salary: "250000"
+    max_salary: ""
+    work_format: remote
+    additional_info:
+      - {question: "Какой у вас опыт с Python и FastAPI?", answer: "Четыре года Python, два FastAPI"}
+
+- name: only_format_no_extra_questions
+  dialogue: |
+    Рекрутер: У нас удалённый формат. Подходит?
+    Кандидат: Да, удалёнка подходит.
+  expect: {work_format: remote}
+  forbid_in_additional_info: [salary, location, work_format]
+  expect_additional_info_nonempty: false
+  offline_output:
+    preferred_location: ""
+    min_salary: ""
+    max_salary: ""
+    work_format: remote
+    additional_info: []

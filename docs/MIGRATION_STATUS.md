@@ -19,7 +19,7 @@
 | sourcing_assistant | ✅ фичи | ⬜ глазами | `app/sourcing_assistant_runner.py` |
 | one_line_search_query_builder | ✅ фичи | ⬜ глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
-| screening_autofill | ⬜ | ⬜ | `app/screening_autofill_runner.py` |
+| screening_autofill | ✅ фичи | ⬜ глазами | `app/screening_autofill_runner.py` |
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
@@ -202,3 +202,31 @@ shared state — цикл о нём не знает. Будущие раннер
 - семантика по golden `expect`/`forbid` вместо нечёткого матчинга против `vacancy_stack∪skills`;
 - grounding — строгая подстрока (lower+ё→е, без стемминга) → может ложно метить склонённые формы (напр. «микросервисы» vs «микросервисов»); это лишь сигнал, качество не валит;
 - quality ≠ infra: сетевой сбой промпта → `errors`; невалидный JSON-вывод → contract-фейл (качество).
+
+---
+
+## screening_autofill — детальный чек-лист
+
+Старый: `python -m app.screening_autofill_runner`. Новый: `python -m qa_harness.runners.screening_autofill`.
+**Без бэкенда** (только LLM): диалог → JSON-форма скрининга. Объём — **curated-golden** (решение пользователя):
+синтетик-LLM-генератор диалогов и детерминированные билдеры (~600 строк) НЕ переносим, берём ручные диалоги.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Промпт диалог → форма {location, salary×2, work_format, additional_info} | ✅ | `core.StoredPromptClient` (обёртка-инструкция как в легаси-клиенте) |
+| Схема формы (ключи/типы/enum work_format/digits зарплат/форма additional_info) | ✅ | `domain/screening_autofill/contract.py` (`validate_schema`) |
+| Расплющивание диалога в одну строку (как прод) | ✅ | runner (`_flatten`; `--no-flatten` чтобы отключить) |
+| 12 work_format-сценариев (explicit/silent/ignored/rejected/multiple/…) | 🟡 | свёрнуты в golden-диалоги (hybrid/remote/office/silent/recruiter-only/rejects) |
+| Извлечение зарплата/локация/формат | ✅ | golden `expect` (work_format точно; зарплата/локация — `<nonempty>`) |
+| Анти-утечка в additional_info (темы + метки спикера) | ✅ | `domain/screening_autofill/semantic.py` (`additional_info_leaks`) |
+| additional_info непустой при не-исключённом вопросе | ✅ | `expect_additional_info_nonempty` в golden |
+| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Офлайн без сети | ➕ | `--offline` replay `offline_output` из golden |
+| Синтетик-генератор диалогов (LLM) + детерминир. билдеры | ⬜ | НЕ переносим (curated-golden); при нужде — отдельно |
+| Парити-сверка | ⬜ глазами | (вручную) |
+
+**Осознанные отличия от легаси:**
+- источник кейсов: синтетика + регрессия-билдеры → курируемые **golden-диалоги** (`tests/fixtures/screening_autofill/golden.yaml`, 10 шт);
+- `passed = schema & expect(golden) & no_leak & (additional_info_nonempty?)`; в легаси semantic для регрессии был warning — здесь no_leak/expect это gate;
+- зарплата/локация — `<nonempty>` (точный формат варьируется), work_format — точным значением (enum стабилен);
+- quality ≠ infra: сетевой сбой → `errors`; невалидный JSON → schema-фейл (качество).
