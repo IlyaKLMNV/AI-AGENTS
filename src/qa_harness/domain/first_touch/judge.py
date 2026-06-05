@@ -66,10 +66,8 @@ class FactJudge:
             ensure_ascii=False,
         )
         raw, usage = self._client.create(payload)
-        try:
-            data = safe_json_loads(raw)
-        except Exception:  # noqa: BLE001 — судья вернул не-JSON: считаем факты неподтверждёнными
-            data = None
+        # core.safe_json_loads возвращает (obj, err); lenient=True выдёргивает JSON из текста/фенсов
+        data, _err = safe_json_loads(raw, lenient=True)
 
         present_raw = data.get("facts_present") if isinstance(data, dict) else None
         facts_present = {
