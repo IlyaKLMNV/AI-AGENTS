@@ -23,7 +23,8 @@
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
-| first_touch / _hh / _event | ⬜ | ⬜ | `app/first_touch*_runner.py` |
+| first_touch (base) | ✅ фичи | ⬜ глазами | `app/first_touch_runner.py` |
+| first_touch_hh / _event | ⬜ | ⬜ | `app/first_touch_hh_runner.py` + `_event` |
 | verdict/message: общие фичи | — | — | — |
 
 Порядок (от непохожих к похожим, чтобы трудные формы всплыли рано):
@@ -230,3 +231,31 @@ shared state — цикл о нём не знает. Будущие раннер
 - `passed = schema & expect(golden) & no_leak & (additional_info_nonempty?)`; в легаси semantic для регрессии был warning — здесь no_leak/expect это gate;
 - зарплата/локация — `<nonempty>` (точный формат варьируется), work_format — точным значением (enum стабилен);
 - quality ≠ infra: сетевой сбой → `errors`; невалидный JSON → schema-фейл (качество).
+
+---
+
+## first_touch (base) — детальный чек-лист
+
+Старый: `python -m app.first_touch_runner`. Новый: `python -m qa_harness.runners.first_touch`.
+**Без бэкенда**; генерация первого касания → **LLM-судья фактов** + эвристики. Объём — **база + LLM-судья**
+(решение пользователя): `_hh`/`_event` и нишевые prompt_rule/possessive-проверки пока НЕ переносим.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Генерация first_touch (payload → сообщение) | ✅ | `core.StoredPromptClient` (text-формат + срез подписи) |
+| LLM-судья: facts_present / hallucinated_facts / question | ✅ | `domain/first_touch/judge.py` (`FactJudge` на `ModelClient` — первый LLM-судья) |
+| extra_numbers (выдуманные числа) | ✅ ≥5 цифр | `domain/first_touch/checks.py` |
+| company_hidden — нет утечки названия | ✅ | `checks.company_name_leaked` |
+| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Офлайн без сети | ➕ | `--offline` replay offline_message + эвристика вместо судьи |
+| Варианты `_hh` / `_event` | ⬜ | пока не переносим (отдельно) |
+| Нишевые prompt_rule / possessive-source проверки | ⬜ | не переносим (curated-golden) |
+| Парити-сверка | ⬜ глазами | (вручную) |
+
+**Осознанные отличия от легаси:**
+- источник кейсов: CDM + possessive + prompt_rule → курируемые **golden** (`tests/fixtures/first_touch/golden.yaml`, 6 шт: видимая/скрытая компания, с зарплатой/без, formal/informal);
+- `passed = facts(required) & no_hallucination & no_extra_numbers & question & company_hidden` (в легаси no_hallucination был strict-only — здесь это gate, как договорились в объёме);
+- extra_numbers гейтит только числа ≥5 цифр (зарплата-величина), чтобы не ловить ложно годы/счётчики;
+- зарплата — `optional_facts` (отсутствие не валит passed);
+- `--offline` использует эвристику фактов (стем-токены) вместо LLM-судьи; галлюцинации офлайн не ловятся;
+- quality ≠ infra: сбой генерации/судьи → `errors`.
