@@ -50,6 +50,9 @@ lint-imports                                            # контракт qa_ha
   `wsl.exe -e bash -lc '... source .venv/bin/activate ...'`.
 - Sourcing-раннеры (легаси) требуют в CDM `vacancy.extractor_entities`/`raw_vacancy`
   (`python app/enrich_cdm_with_extractor_entities.py`). `make_vacancies.py` их не генерит.
+- `sourcing_assistant` (новый): профили (`limit>0`) — медленный путь, таймаутят ШИРОКИЕ вакансии (высокий
+  count), не настройка. Триаж — `--count-only` (limit=0, ~сек) → потом полный прогон по узким. `SSLEOFError`/
+  `Max retries` — транзиентный обрыв соединения (не таймаут), лечится повтором.
 - chain-группы сценариев зашиты в коде `app/screening_scenarios_runner.py`.
 
 ## Частые команды (новые раннеры)

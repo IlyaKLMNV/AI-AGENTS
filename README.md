@@ -45,6 +45,8 @@ pip install -e .[dev]    # пакет qa_harness + dev-инструменты (i
 > отдаёт `Read timed out`. Щадящий вызов:
 > `python -m qa_harness.runners.sourcing_assistant --workers 1 --candidate-pool-size 5 --candidate-sample-size 5 --step3-timeout 120 --token-in-body`.
 > Только узнать ЧИСЛО кандидатов по всем вакансиям (быстро, `limit=0`, без таймаутов): добавь `--count-only`.
+> Профильные таймауты бьют по ШИРОКИМ вакансиям (большой `count`), не по конкретной настройке — сначала
+> `--count-only` для триажа, потом полный прогон по узким. `SSLEOFError`/`Max retries` — транзиентный обрыв (повтори).
 > Таймауты и `no_candidates_found` идут в `errors` (не в `failed`) — флакот бэкенда не портит сигнал
 > качества; узкие вакансии законно дают 0–1 кандидата. `one_line`/`extractor` ходят за `count`
 > (`limit=0`, ~секунды) — им щадящий режим не нужен.
