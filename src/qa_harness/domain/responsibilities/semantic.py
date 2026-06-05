@@ -2,10 +2,11 @@
 
 Контракт (contract.py) проверяет ФОРМУ списка; здесь — СМЫСЛ:
 - `check_semantics(predicted, expect, forbid)` (gate): ожидаемые термины извлечены, запрещённые — нет.
-  expect — список ИЛИ-групп: группа удовлетворена, если хоть одна её форма совпала с каким-то ключевым
-  словом (по нормализованной подстроке в обе стороны).
+  expect — список ИЛИ-групп: группа удовлетворена, если хоть одна форма совпала с каким-то ключевым
+  словом (нормализованная подстрока в обе стороны).
 - `grounding_misses(predicted, vacancy_text)` (СИГНАЛ, не gate): какие ключевые слова не найдены в тексте
-  вакансии (возможная галлюцинация). Возвращается как предупреждение в отчёт, качество не валит.
+  вакансии. Матчинг с лёгким стеммером (англ./рус. окончания) + prefix, чтобы не ловить ложные miss на
+  склонениях («микросервисы» ≈ «микросервисов», «модели» ≈ «моделей»). Стеммер перенесён из легаси.
 """
 
 from __future__ import annotations
@@ -48,7 +49,54 @@ def check_semantics(
     return (len(diffs) == 0), diffs
 
 
+# ----- заземление: лёгкий стеммер (перенос из легаси _soft_word_key) -----
+
+_EN_SUFFIXES = ("ings", "ing", "ers", "ies", "es", "s")
+_RU_SUFFIXES = (
+    "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "его", "ией",
+    "ий", "ый", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ых", "их", "ую", "юю",
+    "ов", "ев", "ей", "ам", "ям", "ах", "ях", "ом", "ем",
+    "а", "я", "ы", "и", "у", "ю", "е", "о",
+)
+
+
+def _stem(word: str) -> str:
+    """Грубый стем: нормализация + срез одного англ. и одного рус. окончания (с защитой по длине)."""
+    t = re.sub(r"[^a-z0-9а-я]+", "", (word or "").strip().lower().replace("ё", "е"))
+    if not t:
+        return ""
+    for suf in _EN_SUFFIXES:
+        if len(t) > len(suf) + 2 and t.endswith(suf):
+            t = t[: -len(suf)]
+            break
+    for suf in _RU_SUFFIXES:
+        if len(t) > len(suf) + 2 and t.endswith(suf):
+            t = t[: -len(suf)]
+            break
+    return t
+
+
+def _stem_tokens(s: str) -> List[str]:
+    return [st for st in (_stem(tok) for tok in re.findall(r"[A-Za-z0-9А-Яа-я#+]+", str(s or ""))) if st]
+
+
+def _token_match(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    shorter, longer = sorted((a, b), key=len)
+    return len(shorter) >= 4 and longer.startswith(shorter)  # склонение/стем-вариация
+
+
 def grounding_misses(predicted: List[str], vacancy_text: str) -> List[str]:
-    """Ключевые слова, не найденные в тексте вакансии (нормализованная подстрока). Сигнал, не gate."""
-    tx = _norm(vacancy_text)
-    return [k for k in predicted if _norm(k) and _norm(k) not in tx]
+    """Ключевые слова, не заземлённые в тексте вакансии (по стем-токенам). Сигнал, не gate."""
+    text_tokens = _stem_tokens(vacancy_text)
+    misses: List[str] = []
+    for kw in predicted:
+        kw_tokens = _stem_tokens(kw)
+        if not kw_tokens:
+            continue
+        if not all(any(_token_match(kt, tt) for tt in text_tokens) for kt in kw_tokens):
+            misses.append(kw)
+    return misses
