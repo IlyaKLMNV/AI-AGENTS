@@ -111,7 +111,7 @@ def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bo
         verdict, jusage = judge.evaluate(turn, reply, result.conversation_end)
         res["turns"].append({"candidate": turn, "reply": reply, "end": result.conversation_end,
                              "self_answer": verdict.self_answer, "repeated": verdict.repeated_questions,
-                             "premature": verdict.premature, "topics": verdict.repeated_topics,
+                             "premature": verdict.premature_end, "topics": verdict.repeated_topics,
                              "comment": verdict.comment, "used_heuristics": verdict.used_heuristics,
                              "usage": result.usage, "judge_usage": jusage})
         if result.conversation_end:
