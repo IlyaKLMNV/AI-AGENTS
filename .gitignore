@@ -29,6 +29,8 @@ tests/fixtures/*
 !tests/fixtures/screening_autofill/golden.yaml
 !tests/fixtures/first_touch/
 !tests/fixtures/first_touch/golden.yaml
+!tests/fixtures/first_touch_hh/
+!tests/fixtures/first_touch_hh/golden.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/

@@ -1,0 +1,75 @@
+# Курируемые golden-кейсы для теста промпта first_touch_hh (вариант для HeadHunter).
+# input — payload генерации (candidate_name, recruiter_name, hiring_company_name, vacancy_name, vacancy_text);
+# expected_facts — что сообщение должно содержать (vacancy_name/company + remote/accreditation, если в тексте);
+# forbid_in_message — НЕ упоминать источник (сообщение шлётся на hh): hh/хедхантер/резюме/отклик;
+# offline_message — каннное сообщение для --offline (факты дословно, с CTA, без упоминания источника).
+
+- name: backend_remote
+  input:
+    candidate_name: "Иван"
+    recruiter_name: "Анна"
+    hiring_company_name: "Акме"
+    vacancy_name: "Python разработчик"
+    vacancy_text: "Удалённый формат работы. Бэкенд на Python и Django, PostgreSQL."
+  expected_facts:
+    vacancy_name: "Python разработчик"
+    company_name: "Акме"
+    remote: "удаленный формат работы"
+  forbid_in_message: ["hh", "хедхантер", "headhunter", "резюме", "ваш отклик"]
+  require_question: true
+  offline_message: |
+    Здравствуйте, Иван! Меня зовут Анна.
+    В компании Акме открыта вакансия Python разработчик: удаленный формат работы, бэкенд на Python и Django.
+    Готовы обсудить детали?
+
+- name: frontend_accredited
+  input:
+    candidate_name: "Мария"
+    recruiter_name: "Олег"
+    hiring_company_name: "ТехКорп"
+    vacancy_name: "Frontend разработчик"
+    vacancy_text: "Компания с IT-аккредитацией. Интерфейсы на React и TypeScript."
+  expected_facts:
+    vacancy_name: "Frontend разработчик"
+    company_name: "ТехКорп"
+    accreditation: "IT-аккредитация"
+  forbid_in_message: ["hh", "хедхантер", "headhunter", "резюме", "ваш отклик"]
+  require_question: true
+  offline_message: |
+    Здравствуйте, Мария! Меня зовут Олег.
+    В ТехКорп открыта вакансия Frontend разработчик: у компании есть IT-аккредитация, стек React и TypeScript.
+    Интересно обсудить?
+
+- name: devops_basic
+  input:
+    candidate_name: "Пётр"
+    recruiter_name: "Светлана"
+    hiring_company_name: "Облако"
+    vacancy_name: "DevOps инженер"
+    vacancy_text: "Эксплуатация Kubernetes и Terraform, CI/CD."
+  expected_facts:
+    vacancy_name: "DevOps инженер"
+    company_name: "Облако"
+  forbid_in_message: ["hh", "хедхантер", "headhunter", "резюме", "ваш отклик"]
+  require_question: true
+  offline_message: |
+    Здравствуйте, Пётр! Меня зовут Светлана.
+    В компании Облако открыта вакансия DevOps инженер: эксплуатация Kubernetes и Terraform, CI/CD.
+    Готовы обсудить?
+
+- name: qa_source_rule
+  input:
+    candidate_name: "Нина"
+    recruiter_name: "Игорь"
+    hiring_company_name: "ТестПро"
+    vacancy_name: "QA инженер"
+    vacancy_text: "Автотесты на Selenium и Python, API-тестирование."
+  expected_facts:
+    vacancy_name: "QA инженер"
+    company_name: "ТестПро"
+  forbid_in_message: ["hh", "хедхантер", "headhunter", "резюме", "ваш отклик"]
+  require_question: true
+  offline_message: |
+    Здравствуйте, Нина! Меня зовут Игорь.
+    В компании ТестПро открыта вакансия QA инженер: автотесты на Selenium и Python, API-тестирование.
+    Готовы пообщаться?

@@ -33,6 +33,7 @@ from qa_harness.domain.first_touch import (
     company_name_leaked,
     extra_numbers,
     facts_present_heuristic,
+    forbidden_phrases,
     load_golden,
 )
 
@@ -48,9 +49,10 @@ PAYLOAD_KEYS = (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(default_component: str = "first_touch", default_golden: Path = DEFAULT_GOLDEN) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="first_touch QA runner (generate + LLM fact-judge + heuristics).")
-    p.add_argument("--golden", type=Path, default=DEFAULT_GOLDEN, help="Курируемые golden-кейсы (input + expected_facts).")
+    p.add_argument("--component", default=default_component, help="prompt-компонент из model.yaml: first_touch | first_touch_hh.")
+    p.add_argument("--golden", type=Path, default=default_golden, help="Курируемые golden-кейсы (input + expected_facts).")
     p.add_argument("--offline", action="store_true", help="Replay offline_message + эвристика вместо LLM-судьи (без сети).")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель LLM-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
@@ -86,7 +88,7 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
         res["question_present"] = "?" in msg
         return res
 
-    payload = {k: str(case.input.get(k, "") or "") for k in PAYLOAD_KEYS}
+    payload = dict(case.input)
     if case.company_hidden:
         payload["hiring_company_name"] = ""  # прод прячет название; промпт опирается на company_description
     try:
@@ -118,9 +120,10 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
 def run(args: argparse.Namespace) -> Dict[str, Path]:
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
+    component = args.component
 
     cfg = load_cfg(args.cfg)
-    prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    prompt = resolve_prompt(cfg, component, cli_id=args.prompt_id, cli_version=args.prompt_version)
 
     gen_client = judge = None
     eval_model = None
@@ -138,8 +141,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cases = load_golden(args.golden)
 
     rb = ReportBuilder(
-        runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        runner=component,
+        prompt_under_test={"component": component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": prompt.prompt_id, "evaluator": eval_model},
@@ -158,7 +161,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         finished = datetime.datetime.now()
         md, cd = rb.finalize(extra, finished_at=finished.isoformat(timespec="seconds"),
                              duration_s=round((finished - started).total_seconds(), 3))
-        return write_reports(args.out_dir, RUNNER, run_id, md, cd)
+        return write_reports(args.out_dir, component, run_id, md, cd)
 
     def _fold(res: Dict[str, Any]) -> None:
         case: GoldenCase = res["case"]
@@ -188,10 +191,11 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         extra_nums = extra_numbers(list(case.expected_facts.values()), res["message"])
         question_ok = res["question_present"] if case.require_question else True
         company_leak = case.company_hidden and company_name_leaked(str(case.input.get("hiring_company_name") or ""), res["message"])
+        forbidden_in_msg = forbidden_phrases(res["message"], case.forbid_in_message)
         hallucinated = res["hallucinated"] or []
 
         # hallucinated — СИГНАЛ, не gate: LLM-судья шумит на общих фразах (в легаси это было strict-only)
-        quality_passed = (not missing_required) and (not extra_nums) and question_ok and (not company_leak)
+        quality_passed = (not missing_required) and (not extra_nums) and question_ok and (not company_leak) and (not forbidden_in_msg)
         rc: List[str] = []
         if missing_required:
             reasons["missing_facts"] += 1
@@ -213,6 +217,11 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             rc.append("company_name_leaked")
         else:
             m["company_hidden_ok"] += 1
+        if forbidden_in_msg:
+            reasons["forbidden_in_message"] += 1
+            rc += [f"forbidden_in_message:{p}" for p in forbidden_in_msg]
+        else:
+            m["no_forbidden_phrases"] += 1
         if hallucinated:
             reasons["hallucination"] += 1
             m["hallucination_total"] += len(hallucinated)
@@ -225,6 +234,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             {"rule": "question", "passed": bool(question_ok), "detail": ""},
             {"rule": "company_hidden", "passed": not company_leak,
              "detail": str(case.input.get("hiring_company_name") or "") if company_leak else ""},
+            {"rule": "no_forbidden_phrases", "passed": not forbidden_in_msg, "detail": ",".join(forbidden_in_msg)},
             {"rule": "no_hallucination(info)", "passed": not hallucinated, "detail": "; ".join(hallucinated[:5])},
         ]
         rb.add_case(CaseRecord(

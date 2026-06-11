@@ -32,6 +32,12 @@ def company_name_leaked(company_name: str, message: str) -> bool:
     return bool(name) and name in _norm(message)
 
 
+def forbidden_phrases(message: str, phrases: List[str]) -> List[str]:
+    """Какие из запрещённых фраз встречаются в сообщении (нормализованно). Для HH — упоминание источника."""
+    nm = _norm(message)
+    return [p for p in (phrases or []) if str(p).strip() and _norm(str(p)) in nm]
+
+
 def facts_present_heuristic(expected_facts: Dict[str, str], message: str) -> Dict[str, bool]:
     """Офлайн-стенд-ин LLM-судьи: факт «есть», если ≥половины значимых токенов значения в сообщении."""
     norm_msg = _norm(message)

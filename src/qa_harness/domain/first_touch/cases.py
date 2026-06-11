@@ -28,6 +28,7 @@ class GoldenCase:
     expected_facts: Dict[str, str] = field(default_factory=dict)
     allowed_context_facts: Dict[str, str] = field(default_factory=dict)
     optional_facts: List[str] = field(default_factory=list)
+    forbid_in_message: List[str] = field(default_factory=list)  # фразы, которых не должно быть (HH: источник)
     company_hidden: bool = False
     require_question: bool = True
     offline_message: Optional[str] = None
@@ -60,6 +61,7 @@ def load_golden(path: Path) -> List[GoldenCase]:
                 expected_facts={k: str(v) for k, v in expected.items()},
                 allowed_context_facts={k: str(v) for k, v in (item.get("allowed_context_facts") or {}).items()},
                 optional_facts=list(item.get("optional_facts") or []),
+                forbid_in_message=list(item.get("forbid_in_message") or []),
                 company_hidden=bool(item.get("company_hidden")),
                 require_question=bool(item.get("require_question", True)),
                 offline_message=str(om) if om is not None else None,

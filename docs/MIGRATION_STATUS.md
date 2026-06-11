@@ -24,7 +24,8 @@
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
-| first_touch_hh / _event | ⬜ | ⬜ | `app/first_touch_hh_runner.py` + `_event` |
+| first_touch_hh | ✅ фичи | ⬜ глазами | `app/first_touch_hh_runner.py` |
+| first_touch_event | ⬜ | ⬜ | `app/first_touch_event_runner.py` |
 | verdict/message: общие фичи | — | — | — |
 
 Порядок (от непохожих к похожим, чтобы трудные формы всплыли рано):
@@ -259,3 +260,9 @@ shared state — цикл о нём не знает. Будущие раннер
 - зарплата — `optional_facts` (отсутствие не валит passed);
 - `--offline` использует эвристику фактов (стем-токены) вместо LLM-судьи; галлюцинации офлайн не ловятся;
 - quality ≠ infra: сбой генерации/судьи → `errors`.
+
+**Вариант `first_touch_hh`** (`runners/first_touch_hh.py`, тонкая обёртка): тот же конвейер через
+`--component first_touch_hh` + своя golden-фикстура + правило `forbid_in_message` (HH — источник НЕ упоминать,
+проверка `forbidden_phrases`). База `first_touch` обобщена: payload = `case.input`, `--component` выбирает промпт.
+**`first_touch_event`** ещё не перенесён — он структурно другой (фиксированное мероприятие + судья на
+`forbidden_claims`: время/цена/спикеры/день недели), нужен отдельный мелкий event-судья.
