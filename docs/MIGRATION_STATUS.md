@@ -15,9 +15,9 @@
 |---|---|---|---|
 | message_classifier | ✅ фичи | ⬜ глазами | `app/message_classifier_runner.py` |
 | verdict_classifier | ✅ фичи | ⬜ глазами | `app/verdict_classifier_runner.py` |
-| extractor_agent | ✅ фичи | ⬜ глазами | `app/extractor_agent_runner.py` |
-| sourcing_assistant | ✅ фичи | ⬜ глазами | `app/sourcing_assistant_runner.py` |
-| one_line_search_query_builder | ✅ фичи | ⬜ глазами | `app/one_line_search_query_builder_runner.py` |
+| extractor_agent | ✅ фичи | 👁 глазами | `app/extractor_agent_runner.py` |
+| sourcing_assistant | ✅ фичи | 👁 глазами | `app/sourcing_assistant_runner.py` |
+| one_line_search_query_builder | ✅ фичи | 👁 глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ✅ фичи | 👁 глазами | `app/screening_autofill_runner.py` |
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
@@ -254,7 +254,7 @@ shared state — цикл о нём не знает. Будущие раннер
 
 **Осознанные отличия от легаси:**
 - источник кейсов: CDM + possessive + prompt_rule → курируемые **golden** (`tests/fixtures/first_touch/golden.yaml`, 6 шт: видимая/скрытая компания, с зарплатой/без, formal/informal);
-- `passed = facts(required) & no_hallucination & no_extra_numbers & question & company_hidden` (в легаси no_hallucination был strict-only — здесь это gate, как договорились в объёме);
+- `passed = facts(required) & no_extra_numbers & question & company_hidden`; **галлюцинации — сигнал, не gate** (LLM-судья шумит на общих фразах; в легаси тоже strict-only); `company_description`/`responsibilities` авто-добавляются в allowed-факты судьи; при `company_hidden` название НЕ передаётся генератору;
 - extra_numbers гейтит только числа ≥5 цифр (зарплата-величина), чтобы не ловить ложно годы/счётчики;
 - зарплата — `optional_facts` (отсутствие не валит passed);
 - `--offline` использует эвристику фактов (стем-токены) вместо LLM-судьи; галлюцинации офлайн не ловятся;

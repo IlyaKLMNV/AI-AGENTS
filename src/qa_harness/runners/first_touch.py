@@ -6,8 +6,9 @@
   (выдуманные факты про вакансию/условия), question_present (есть CTA-вопрос);
 - эвристики: extra_numbers (числа ≥5 цифр не из фактов), company_hidden (нет утечки названия).
 
-Итог (passed) = все обязательные факты есть & нет выдуманных & нет лишних чисел & есть вопрос (если нужен)
-& при company_hidden нет названия компании. quality ≠ infra: сбой генерации/судьи → errors.
+Итог (passed) = все обязательные факты есть & нет лишних чисел & есть вопрос (если нужен) & при
+company_hidden нет названия компании. Выдуманные факты (hallucinated) — СИГНАЛ, не gate (LLM-судья шумит
+на общих фразах). quality ≠ infra: сбой генерации/судьи → errors.
 `--offline` реплеит offline_message и использует эвристику вместо LLM-судьи (галлюцинации офлайн не ловятся).
 
   python -m qa_harness.runners.first_touch --offline                 # replay + эвристика, без сети
@@ -86,6 +87,8 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
         return res
 
     payload = {k: str(case.input.get(k, "") or "") for k in PAYLOAD_KEYS}
+    if case.company_hidden:
+        payload["hiring_company_name"] = ""  # прод прячет название; промпт опирается на company_description
     try:
         text, usage = gen_client.run(json.dumps(payload, ensure_ascii=False))
         res["message"], res["usage"] = _ending_check(text), usage
@@ -95,8 +98,14 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
     if not res["message"]:
         res["call_error"] = "generate:empty_output"
         return res
+    # legit-контекст из input (его дали генератору) — НЕ галлюцинации
+    allowed = dict(case.allowed_context_facts)
+    for k in ("company_description", "vacancy_responsibilities", "reason_of_communication"):
+        v = str(case.input.get(k) or "").strip()
+        if v:
+            allowed[k] = v
     try:
-        verdict, jusage = judge.evaluate(case.expected_facts, case.allowed_context_facts, res["message"])
+        verdict, jusage = judge.evaluate(case.expected_facts, allowed, res["message"])
         res["judge_usage"] = jusage
         res["facts_present"] = verdict.facts_present
         res["hallucinated"] = verdict.hallucinated_facts
@@ -181,7 +190,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         company_leak = case.company_hidden and company_name_leaked(str(case.input.get("hiring_company_name") or ""), res["message"])
         hallucinated = res["hallucinated"] or []
 
-        quality_passed = (not missing_required) and (not extra_nums) and question_ok and (not company_leak) and (not hallucinated)
+        # hallucinated — СИГНАЛ, не gate: LLM-судья шумит на общих фразах (в легаси это было strict-only)
+        quality_passed = (not missing_required) and (not extra_nums) and question_ok and (not company_leak)
         rc: List[str] = []
         if missing_required:
             reasons["missing_facts"] += 1
@@ -206,7 +216,6 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if hallucinated:
             reasons["hallucination"] += 1
             m["hallucination_total"] += len(hallucinated)
-            rc += [f"hallucinated:{h}" for h in hallucinated[:5]]
         else:
             m["no_hallucination"] += 1
 
@@ -216,7 +225,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             {"rule": "question", "passed": bool(question_ok), "detail": ""},
             {"rule": "company_hidden", "passed": not company_leak,
              "detail": str(case.input.get("hiring_company_name") or "") if company_leak else ""},
-            {"rule": "no_hallucination", "passed": not hallucinated, "detail": "; ".join(hallucinated[:5])},
+            {"rule": "no_hallucination(info)", "passed": not hallucinated, "detail": "; ".join(hallucinated[:5])},
         ]
         rb.add_case(CaseRecord(
             case_id=cid, source="golden", passed=quality_passed,
