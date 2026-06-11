@@ -20,7 +20,7 @@
 | one_line_search_query_builder | ✅ фичи | 👁 глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ✅ фичи | 👁 глазами | `app/screening_autofill_runner.py` |
-| screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
+| screening_guardrails | ✅ фичи | ⬜ глазами | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
@@ -269,3 +269,30 @@ shared state — цикл о нём не знает. Будущие раннер
 (greeting «Имя, здравствуйте!», финальный вопрос про регистрацию, extra_numbers с allow={4}). golden = имена
 кандидатов + offline_message; payload генерации = `{candidate_name}`. `passed = greeting & final_question &
 no_missing & no_hallucinated & no_forbidden & no_extra_numbers`.
+
+---
+
+## screening_guardrails — детальный чек-лист
+
+Старый: `python -m app.screening_guardrails_runner`. Новый: `python -m qa_harness.runners.screening_guardrails`.
+Гоняет **ЖИВОЙ** промпт `screening_assistant` в мультитёрн-разговоре и ловит нарушения-гардрейлы в каждом
+ответе. Новая общая инфра разговора — `domain/screening/conversation.py` (Conversations API, БЕЗ легаси
+`screeningAssistant/`), переиспользуется и для scenarios.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Мультитёрн со screening_assistant (Conversations API + сид вакансии) | ✅ | `domain/screening/conversation.py` (`ScreeningConversation`) |
+| LLM-судья 3 нарушений (self_answer / repeated_questions / premature_end) | ✅ | `domain/screening_guardrails/judge.py` (`GuardrailJudge`) |
+| Эвристики-фолбэк + жёсткий гейт (нет вопросов → premature=false) | ✅ | `domain/screening_guardrails/detectors.py` |
+| Per-turn разметка флагов в отчёте | ✅ | `transcript[].flags` (схема) |
+| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Офлайн без сети | ➕ | `--offline` replay `offline_turns` + эвристики (без судьи) |
+| Синтетик-генератор диалогов кандидата (GEN_MODEL) | ⬜ | заменён курируемыми golden-разговорами |
+| Парити-сверка | ⬜ глазами | (вручную) |
+
+**Осознанные отличия от легаси:**
+- источник разговоров: синтетик-генерация → курируемые **golden** (`tests/fixtures/screening_guardrails/golden.yaml`);
+- `passed` (кейс = разговор) = ни один ответ ассистента не нарушил гардрейлы;
+- судья при сбое/непарсе graceful-фолбэк на эвристики (как легаси), видно по `verdict.meta.used_heuristics`;
+- `--offline` гоняет эвристики на canned `offline_turns` (без живого ассистента/судьи);
+- quality ≠ infra: сбой разговора (Conversations API) → `errors`, не `failed`.

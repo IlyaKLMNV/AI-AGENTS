@@ -17,8 +17,8 @@
 - `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
   `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
-Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event**.
-Остальные (screening_scenarios(+hh), screening_guardrails)
+Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails**.
+Остальные (screening_scenarios(+hh))
 — пока в `app/`.
 
 ## Новые раннеры

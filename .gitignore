@@ -33,6 +33,8 @@ tests/fixtures/*
 !tests/fixtures/first_touch_hh/golden.yaml
 !tests/fixtures/first_touch_event/
 !tests/fixtures/first_touch_event/golden.yaml
+!tests/fixtures/screening_guardrails/
+!tests/fixtures/screening_guardrails/golden.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
