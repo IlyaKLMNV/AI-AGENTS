@@ -20,7 +20,7 @@
 | one_line_search_query_builder | ✅ фичи | 👁 глазами | `app/one_line_search_query_builder_runner.py` |
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ✅ фичи | 👁 глазами | `app/screening_autofill_runner.py` |
-| screening_guardrails | ✅ фичи | ⬜ глазами | `app/screening_guardrails_runner.py` |
+| screening_guardrails | ✅ фичи | 👁 глазами | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
