@@ -24,8 +24,8 @@
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
-| first_touch_hh | ✅ фичи | ⬜ глазами | `app/first_touch_hh_runner.py` |
-| first_touch_event | ✅ фичи | ⬜ глазами | `app/first_touch_event_runner.py` |
+| first_touch_hh | ✅ фичи | 👁 глазами | `app/first_touch_hh_runner.py` |
+| first_touch_event | ✅ фичи | 👁 глазами | `app/first_touch_event_runner.py` |
 | verdict/message: общие фичи | — | — | — |
 
 Порядок (от непохожих к похожим, чтобы трудные формы всплыли рано):

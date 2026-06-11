@@ -102,7 +102,7 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
         return res
     # legit-контекст из input (его дали генератору) — НЕ галлюцинации
     allowed = dict(case.allowed_context_facts)
-    for k in ("company_description", "vacancy_responsibilities", "reason_of_communication"):
+    for k in ("company_description", "vacancy_responsibilities", "vacancy_text", "reason_of_communication"):
         v = str(case.input.get(k) or "").strip()
         if v:
             allowed[k] = v
