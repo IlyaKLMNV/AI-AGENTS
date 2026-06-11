@@ -23,7 +23,7 @@
 | screening_guardrails | ⬜ | ⬜ | `app/screening_guardrails_runner.py` |
 | screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
-| first_touch (base) | ✅ фичи | ⬜ глазами | `app/first_touch_runner.py` |
+| first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
 | first_touch_hh / _event | ⬜ | ⬜ | `app/first_touch_hh_runner.py` + `_event` |
 | verdict/message: общие фичи | — | — | — |
 
