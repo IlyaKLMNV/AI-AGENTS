@@ -25,7 +25,7 @@
 | screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
 | first_touch_hh | ✅ фичи | ⬜ глазами | `app/first_touch_hh_runner.py` |
-| first_touch_event | ⬜ | ⬜ | `app/first_touch_event_runner.py` |
+| first_touch_event | ✅ фичи | ⬜ глазами | `app/first_touch_event_runner.py` |
 | verdict/message: общие фичи | — | — | — |
 
 Порядок (от непохожих к похожим, чтобы трудные формы всплыли рано):
@@ -264,5 +264,8 @@ shared state — цикл о нём не знает. Будущие раннер
 **Вариант `first_touch_hh`** (`runners/first_touch_hh.py`, тонкая обёртка): тот же конвейер через
 `--component first_touch_hh` + своя golden-фикстура + правило `forbid_in_message` (HH — источник НЕ упоминать,
 проверка `forbidden_phrases`). База `first_touch` обобщена: payload = `case.input`, `--component` выбирает промпт.
-**`first_touch_event`** ещё не перенесён — он структурно другой (фиксированное мероприятие + судья на
-`forbidden_claims`: время/цена/спикеры/день недели), нужен отдельный мелкий event-судья.
+**`first_touch_event`** (`runners/first_touch_event.py` + `domain/first_touch_event/`) — фиксированное
+мероприятие VK JT Go, свой **EventJudge** (missing/hallucinated/forbidden_claims против эталона) + эвристики
+(greeting «Имя, здравствуйте!», финальный вопрос про регистрацию, extra_numbers с allow={4}). golden = имена
+кандидатов + offline_message; payload генерации = `{candidate_name}`. `passed = greeting & final_question &
+no_missing & no_hallucinated & no_forbidden & no_extra_numbers`.
