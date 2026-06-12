@@ -11,8 +11,12 @@ company_hidden нет названия компании. Выдуманные ф
 на общих фразах). quality ≠ infra: сбой генерации/судьи → errors.
 `--offline` реплеит offline_message и использует эвристику вместо LLM-судьи (галлюцинации офлайн не ловятся).
 
+Режимы: golden (дефолт, payload из golden.yaml) · `--generate` (LLM генерит входную вакансию, expected_facts
+выводятся из неё; домен/сениорити/контекст варьируются по seed; `--variants` шт.) · `--offline` (replay).
+
   python -m qa_harness.runners.first_touch --offline                 # replay + эвристика, без сети
-  python -m qa_harness.runners.first_touch                           # онлайн: генерация + LLM-судья
+  python -m qa_harness.runners.first_touch                           # онлайн golden: генерация + LLM-судья
+  python -m qa_harness.runners.first_touch --generate --variants 4 --temperature 0.8
 """
 
 from __future__ import annotations
@@ -25,8 +29,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
+import random
+
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
+from qa_harness.domain.generators import (
+    DOMAINS,
+    SENIORITIES,
+    GenerationPolicy,
+    VacancyGenerator,
+    VacancySpec,
+    generate_valid,
+)
 from qa_harness.domain.first_touch import (
     FactJudge,
     GoldenCase,
@@ -42,6 +56,11 @@ DEFAULT_GOLDEN = REPO_ROOT / "tests" / "fixtures" / "first_touch" / "golden.yaml
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "first_touch"
 DEFAULT_EVAL_MODEL = "gpt-4.1-mini"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
+_GEN_NAMES = ("Иван", "Мария", "Дмитрий", "Ольга", "Сергей", "Анна", "Павел", "Екатерина")
+_GEN_SOURCES = ("LinkedIn", "HeadHunter", "рекомендация коллеги", "GitHub", "профильное сообщество")
+_GEN_REASONS = ("заинтересовал ваш опыт и стек", "профиль хорошо подходит под вакансию",
+                "рекомендация по вашим проектам")
 PAYLOAD_KEYS = (
     "candidate_name", "recruiter_name", "candidate_source", "reason_of_communication",
     "hiring_company_name", "vacancy_name", "vacancy_responsibilities", "message_formality",
@@ -54,6 +73,14 @@ def build_parser(default_component: str = "first_touch", default_golden: Path = 
     p.add_argument("--component", default=default_component, help="prompt-компонент из model.yaml: first_touch | first_touch_hh.")
     p.add_argument("--golden", type=Path, default=default_golden, help="Курируемые golden-кейсы (input + expected_facts).")
     p.add_argument("--offline", action="store_true", help="Replay offline_message + эвристика вместо LLM-судьи (без сети).")
+    # --- режим вариативной генерации (LLM генерит входную вакансию) ---
+    p.add_argument("--generate", action="store_true",
+                   help="Вариативный режим: входную вакансию генерит LLM (а не из golden); expected_facts из неё.")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора вакансии (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed выборки домена/сениорити/контекста.")
+    p.add_argument("--variants", type=int, default=4, help="Сколько вакансий сгенерить (--generate).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора вакансии (--generate).")
+    p.add_argument("--gen-retries", type=int, default=2, help="Повторов генерации вакансии при провале валидации.")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель LLM-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
@@ -117,6 +144,49 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
     return res
 
 
+def _process_generate(variant: int, *, gen_client: Any, judge: Any, vacancy_client: Any,
+                      gen_policy: GenerationPolicy, gen_seed: int, component: str) -> Dict[str, Any]:
+    """Один вариант: LLM генерит вакансию → собираем payload + expected_facts → существующий _process."""
+    rng = random.Random(f"{gen_seed}:{variant}")
+    domain = rng.choice(DOMAINS)
+    seniority = rng.choice(SENIORITIES)
+    candidate_name = rng.choice(_GEN_NAMES)
+    source = rng.choice(_GEN_SOURCES)
+    reason = rng.choice(_GEN_REASONS)
+    formality = rng.choice(["formal", "informal"])
+    hidden = rng.random() < 0.4
+
+    vgen = VacancyGenerator(vacancy_client)
+    gr = generate_valid(lambda _a: (vgen.generate(VacancySpec(domain, seniority, noise_level=variant % 3)), None),
+                        policy=gen_policy)
+    base = {"mode": "generate", "variant": variant, "gen_source": gr.source, "gen_usage": dict(vgen.usage)}
+    if not gr.ok:
+        return {**base, "case": None, "message": None, "usage": None, "judge_usage": None,
+                "facts_present": {}, "hallucinated": [], "question_present": False,
+                "call_error": f"vacancy_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}", "judge_error": None}
+    vac = gr.item
+    payload = {
+        "candidate_name": candidate_name, "recruiter_name": "Анна", "candidate_source": source,
+        "reason_of_communication": reason, "hiring_company_name": vac["hiring_company_name"],
+        "vacancy_name": vac["vacancy_name"], "vacancy_responsibilities": vac["vacancy_responsibilities"],
+        "message_formality": formality, "company_description": vac["company_description"],
+        "vacancy_stack": vac["vacancy_stack"], "salary_range": vac["salary_range"],
+    }
+    expected = {"vacancy_name": vac["vacancy_name"], "candidate_name": candidate_name}
+    optional: List[str] = []
+    if vac["salary_range"]:
+        expected["salary"] = vac["salary_range"]
+        optional.append("salary")
+    # hh-промпт не должен упоминать источник кандидата → ловим утечку источника
+    forbid = [source] if "hh" in component else []
+    case = GoldenCase(name=f"v{variant}_{domain.split()[0]}_{seniority}", input=payload,
+                      expected_facts=expected, optional_facts=optional, forbid_in_message=forbid,
+                      company_hidden=hidden, require_question=True)
+    res = _process(case, gen_client, judge, offline=False)
+    res.update(base)
+    return res
+
+
 def run(args: argparse.Namespace) -> Dict[str, Path]:
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
@@ -125,8 +195,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, component, cli_id=args.prompt_id, cli_version=args.prompt_version)
 
+    if args.generate and args.offline:
+        raise ValueError("--generate несовместим с --offline (генерация требует сети).")
+
     gen_client = judge = None
     eval_model = None
+    gen_setup: Dict[str, Any] = {}
     if not args.offline:
         from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
 
@@ -138,24 +212,46 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         eval_model = args.eval_model
         judge = FactJudge(ModelClient(eval_model, timeout=args.step1_timeout))
 
-    cases = load_golden(args.golden)
+    if args.generate:
+        from qa_harness.core.llm_client import ModelClient
+
+        gen_seed = args.gen_seed if args.gen_seed is not None else (prompt.seed if prompt.seed is not None else 0)
+        gen_setup = dict(
+            vacancy_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            gen_seed=gen_seed,
+            component=component,
+        )
+        work_items: List[Any] = list(range(max(1, args.variants)))
+        models = {"vacancy_generator": args.gen_model, "assistant": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "generate", "component": component, "variants": args.variants,
+                    "gen_model": args.gen_model, "gen_seed": gen_seed, "temperature": args.temperature,
+                    "workers": args.workers, "eval_model": eval_model}
+    else:
+        work_items = list(load_golden(args.golden))
+        models = {"generator": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "golden", "offline": bool(args.offline), "golden": len(work_items),
+                    "workers": args.workers, "eval_model": eval_model}
 
     rb = ReportBuilder(
         runner=component,
         prompt_under_test={"component": component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models={"generator": prompt.prompt_id, "evaluator": eval_model},
+        models=models,
         seed=prompt.seed,
-        args={"offline": bool(args.offline), "golden": len(cases), "workers": args.workers, "eval_model": eval_model},
+        args=run_args,
     )
 
     usage_bucket = blank_usage()
-    m, reasons = Counter(), Counter()
+    gen_usage_bucket = blank_usage()
+    m, reasons, gen_sources = Counter(), Counter(), Counter()
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"first_touch": dict(m), "reasons": dict(reasons)}
+        if args.generate:
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -164,25 +260,35 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         return write_reports(args.out_dir, component, run_id, md, cd)
 
     def _fold(res: Dict[str, Any]) -> None:
-        case: GoldenCase = res["case"]
+        is_gen = res.get("mode") == "generate"
         accumulate_usage(usage_bucket, res["usage"])
         accumulate_usage(usage_bucket, res["judge_usage"])
-        cid = f"golden:{case.name}:v1"
+        accumulate_usage(usage_bucket, res.get("gen_usage"))
+        accumulate_usage(gen_usage_bucket, res.get("gen_usage"))
+        if res.get("gen_source"):
+            gen_sources[res["gen_source"]] += 1
+        if is_gen:
+            label = f"v{res['variant']}"
+            cid = f"vacancy:v{res['variant']}"
+        else:
+            label = res["case"].name
+            cid = f"golden:{res['case'].name}:v1"
 
         if res["call_error"]:
             rb.add_error(cid, res["call_error"])
             reasons[res["call_error"].split(":")[0]] += 1
             m["call_error"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {case.name}: {res['call_error']}")
+                print(f"  [ERR ] {label}: {res['call_error']}")
             return
         if res["judge_error"]:
             rb.add_error(cid, res["judge_error"])
             reasons["judge_error"] += 1
             m["judge_error"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {case.name}: {res['judge_error']}")
+                print(f"  [ERR ] {label}: {res['judge_error']}")
             return
+        case: GoldenCase = res["case"]
 
         m["total"] += 1
         facts_present = res["facts_present"]
@@ -237,30 +343,41 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             {"rule": "no_forbidden_phrases", "passed": not forbidden_in_msg, "detail": ",".join(forbidden_in_msg)},
             {"rule": "no_hallucination(info)", "passed": not hallucinated, "detail": "; ".join(hallucinated[:5])},
         ]
+        inputs: Dict[str, Any] = {"criterion": "facts present & no hallucination & no extra numbers & question & company_hidden",
+                                  "input": case.input, "expected_facts": case.expected_facts,
+                                  "company_hidden": case.company_hidden, "require_question": case.require_question}
+        if is_gen:
+            inputs["variant"] = res["variant"]
+            inputs["gen_source"] = res.get("gen_source")
         rb.add_case(CaseRecord(
-            case_id=cid, source="golden", passed=quality_passed,
-            inputs={"criterion": "facts present & no hallucination & no extra numbers & question & company_hidden",
-                    "input": case.input, "expected_facts": case.expected_facts,
-                    "company_hidden": case.company_hidden, "require_question": case.require_question},
+            case_id=cid, source="synthetic" if is_gen else "golden", passed=quality_passed,
+            inputs=inputs,
             output={"raw": res["message"]},
             verdict={"evaluator": "first_touch_llm_judge" if eval_model else "first_touch_heuristic",
                      "model": eval_model, "passed": quality_passed, "reason_codes": rc},
             checks=checks,
         ))
         if not args.quiet:
-            print(f"  [{'ok ' if quality_passed else 'MISS'}] {case.name} "
+            print(f"  [{'ok ' if quality_passed else 'MISS'}] {label} "
                   f"facts_missing={len(missing_required)} halluc={len(hallucinated)} "
                   f"extra_nums={len(extra_nums)} q={question_ok}")
 
-    total = len(cases)
+    total = len(work_items)
+
+    if args.generate:
+        def _work(it):
+            return _process_generate(it, gen_client=gen_client, judge=judge, **gen_setup)
+    else:
+        def _work(c):
+            return _process(c, gen_client, judge, args.offline)
 
     def _on_interrupt() -> None:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
     outcome = run_cases(
-        cases,
-        work=lambda c: _process(c, gen_client, judge, args.offline),
+        work_items,
+        work=_work,
         fold=_fold,
         max_workers=max(1, args.workers),
         checkpoint_every=args.checkpoint_every,
