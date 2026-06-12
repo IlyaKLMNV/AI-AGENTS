@@ -6,7 +6,7 @@
 """
 
 from .cases import Scenario, extract_candidate_examples, load_scenarios, parse_scenario_indices
-from .judge import EVAL_INSTRUCTION, ScenarioJudge, ScenarioVerdict
+from .judge import END_MARKER, EVAL_INSTRUCTION, ScenarioJudge, ScenarioVerdict
 
 __all__ = [
     "Scenario",
@@ -16,4 +16,5 @@ __all__ = [
     "ScenarioJudge",
     "ScenarioVerdict",
     "EVAL_INSTRUCTION",
+    "END_MARKER",
 ]

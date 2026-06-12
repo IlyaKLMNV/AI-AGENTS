@@ -30,6 +30,7 @@ from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_pro
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.screening import ScreeningConversation
 from qa_harness.domain.screening_scenarios import (
+    END_MARKER,
     Scenario,
     ScenarioJudge,
     extract_candidate_examples,
@@ -124,7 +125,13 @@ def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examp
                              "end": result.conversation_end, "usage": result.usage})
         if result.conversation_end:
             break
-    transcript_text = "\n".join(f"[Кандидат] {t['candidate']}\n[Ассистент] {t['reply']}" for t in res["turns"])
+    def _fmt_turn(t: Dict[str, Any]) -> str:
+        reply = str(t["reply"] or "")
+        if t["end"]:  # ассистент завершил диалог — служебный END в текст не попадает, метим маркером для судьи
+            reply = (reply + " " + END_MARKER).strip()
+        return f"[Кандидат] {t['candidate']}\n[Ассистент] {reply}"
+
+    transcript_text = "\n".join(_fmt_turn(t) for t in res["turns"])
     try:
         verdict, jusage = judge.evaluate(scenario, transcript_text)
         res["verdict"], res["judge_usage"] = verdict, jusage
@@ -231,7 +238,10 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         transcript: List[Dict[str, Any]] = []
         for i, t in enumerate(res["turns"], start=1):
             transcript.append({"turn": 2 * i - 1, "role": "candidate", "text": t["candidate"]})
-            transcript.append({"turn": 2 * i, "role": "assistant", "text": t["reply"]})
+            a_turn: Dict[str, Any] = {"turn": 2 * i, "role": "assistant", "text": t["reply"]}
+            if t["end"]:
+                a_turn["ended"] = True  # ассистент завершил диалог (токен END / фильтр)
+            transcript.append(a_turn)
         passed = bool(verdict.passed)
         if passed:
             m["passed"] += 1
