@@ -6,6 +6,7 @@ from .candidate_agent import CandidateAgent, CandidateConstraints, validate_cand
 from .autofill_gen import AutofillDialogueGenerator, AutofillSpec, WORK_FORMATS, validate_autofill_dialogue
 from .vacancy_gen import DOMAINS, SENIORITIES, VacancyGenerator, VacancySpec
 from .responsibilities_gen import SOFT_NOISE, TECH_VOCAB, ResponsibilitiesGenerator, ResponsibilitiesSpec
+from .profile_gen import CandidateProfileGenerator, CandidateProfileSpec
 from .variety import VariantSampler, VariantStyle
 from .dialogue_gen import DialogueGenerator, DialogueSpec, validate_generated_dialogue
 from .dialogue_specs import SCENARIO_HINTS_BY_VERDICT, pick_verdict_hint
@@ -33,6 +34,8 @@ __all__ = [
     "ResponsibilitiesSpec",
     "TECH_VOCAB",
     "SOFT_NOISE",
+    "CandidateProfileGenerator",
+    "CandidateProfileSpec",
     "VariantSampler",
     "VariantStyle",
     "CandidateMessageGenerator",

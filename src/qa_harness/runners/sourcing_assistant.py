@@ -12,6 +12,10 @@ JSON-массив 1:1 к требованиям, по объекту `{requireme
 
   python -m qa_harness.runners.sourcing_assistant --offline                         # replay, без сети
   python -m qa_harness.runners.sourcing_assistant --cases-count 1 --candidate-sample-size 2 --token-in-body  # дёшево, онлайн
+  python -m qa_harness.runners.sourcing_assistant --generate --variants 5           # вариативно: LLM-профиль + засеянные requirements, БЕЗ backend
+
+Режим `--generate`: профиль кандидата генерит LLM, requirements засеяны из словаря → промпт sourcing →
+проверка КОНТРАКТА (1:1 echo). Backend НЕ нужен (кандидаты не ищутся, а генерятся) — снимает backend-зависимость.
 """
 
 from __future__ import annotations
@@ -29,6 +33,13 @@ from typing import Any, Dict, List, Optional
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.cdm import load_cdm_files, load_json
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
+from qa_harness.domain.generators import (
+    TECH_VOCAB,
+    CandidateProfileGenerator,
+    CandidateProfileSpec,
+    GenerationPolicy,
+    generate_valid,
+)
 from qa_harness.domain.sourcing import (
     build_candidate_profile,
     check_contract,
@@ -43,12 +54,22 @@ DEFAULT_CDM_DIR = REPO_ROOT / "tests" / "fixtures" / "cdm" / "std"
 DEFAULT_OFFLINE = REPO_ROOT / "tests" / "fixtures" / "sourcing_assistant" / "offline.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "sourcing_assistant"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="sourcing_assistant QA runner (subjects[], contract, new architecture).")
     p.add_argument("--offline", action="store_true", help="Replay канонных кандидатов из фикстуры (без сети).")
     p.add_argument("--offline-fixture", type=Path, default=DEFAULT_OFFLINE)
+    # --- режим вариативной генерации (LLM-профиль + засеянные requirements; BACKEND НЕ нужен) ---
+    p.add_argument("--generate", action="store_true",
+                   help="Вариативный режим: профиль кандидата генерит LLM, requirements засеяны; без backend.")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора профиля (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed выборки домена/требований.")
+    p.add_argument("--variants", type=int, default=5, help="Сколько профилей сгенерить (--generate).")
+    p.add_argument("--req-count", type=int, default=3, help="Сколько requirements засевать (echo-контракт).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора профиля (--generate).")
+    p.add_argument("--gen-retries", type=int, default=2, help="Повторов генерации профиля при провале валидации.")
     p.add_argument("--cdm-dir", type=Path, default=DEFAULT_CDM_DIR, help="CDM-вакансии (нужны extractor_entities + key_requirements).")
     p.add_argument("--cdm-count", type=int, default=None, help="Взять первые N CDM (по сортировке).")
     p.add_argument("--cases-count", type=int, default=None, help="Сэмплировать N вакансий из набора.")
@@ -175,6 +196,41 @@ def _process_offline(idx_case) -> Dict[str, Any]:
     return res
 
 
+def _process_generate(variant: int, *, sourcing_client: Any, gen_client: Any,
+                      gen_policy: GenerationPolicy, gen_seed: int, req_count: int) -> Dict[str, Any]:
+    """Один вариант: засеваем requirements + LLM-профиль кандидата → промпт sourcing → контракт (без backend)."""
+    rng = random.Random(f"{gen_seed}:{variant}")
+    domain = rng.choice(list(TECH_VOCAB))
+    requirements = rng.sample(TECH_VOCAB[domain], min(req_count, len(TECH_VOCAB[domain])))
+    res: Dict[str, Any] = {"name": f"v{variant}", "title": f"{domain} вакансия", "requirements": requirements,
+                           "case_infra": None, "candidates": [], "mode": "generate", "variant": variant,
+                           "gen_source": None, "gen_usage": None}
+    gen = CandidateProfileGenerator(gen_client)
+    gr = generate_valid(lambda _a: (gen.generate(CandidateProfileSpec(domain, requirements, noise_level=variant % 3)), None),
+                        policy=gen_policy)
+    res["gen_source"] = gr.source
+    res["gen_usage"] = dict(gen.usage)
+    if not gr.ok:
+        res["case_infra"] = f"profile_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}"
+        return res
+    profile = gr.item
+    entry: Dict[str, Any] = {"id": f"cand_v{variant}", "predicted": None, "infra_error": None,
+                             "parse_error": None, "usage": None}
+    try:
+        raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "profile": profile}, ensure_ascii=False))
+        entry["usage"] = usage
+    except Exception as e:  # noqa: BLE001 — сетевой сбой промпта = инфра
+        entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
+        res["candidates"].append(entry)
+        return res
+    try:
+        entry["predicted"] = parse_sourcing_output(raw)
+    except ValueError as e:
+        entry["parse_error"] = f"invalid_json_output:{e}"
+    res["candidates"].append(entry)
+    return res
+
+
 def _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo) -> Dict[str, Path]:
     """Диагностика: число кандидатов на вакансию (limit=0, быстро). Профили не тянем, промпт не зовём."""
     count_payload = make_base_payload(only_with_contacts=True, current_position_title=True, limit=0, offset=0)
@@ -271,7 +327,25 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     sourcing_client = None
     backend: Optional[BackendCfg] = None
     token = ""
-    if args.offline:
+    gen_setup: Dict[str, Any] = {}
+    if args.generate:
+        if args.offline or args.count_only:
+            raise ValueError("--generate несовместим с --offline/--count-only")
+        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
+        sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+        gen_seed = args.gen_seed if args.gen_seed is not None else (seed if seed is not None else 0)
+        gen_setup = dict(
+            sourcing_client=sourcing_client,
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            gen_seed=gen_seed, req_count=args.req_count,
+        )
+        items = list(range(max(1, args.variants)))  # int-варианты; _process_generate берёт variant
+        case_source = "synthetic"
+    elif args.offline:
         items = list(enumerate(load_offline_cases(args.offline_fixture)))
         case_source = "suite"
     else:
@@ -302,26 +376,39 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     if args.count_only:
         return _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo)
 
+    if args.generate:
+        models = {"profile_generator": args.gen_model, "evaluator": None}
+        run_args = {"mode": "generate", "variants": args.variants, "req_count": args.req_count,
+                    "gen_model": args.gen_model, "gen_seed": gen_setup["gen_seed"],
+                    "temperature": args.temperature, "workers": args.workers}
+    else:
+        models = {"generator": None, "evaluator": None}
+        run_args = {"mode": "golden", "offline": bool(args.offline), "cases": len(items),
+                    "requirements_source": args.requirements_source,
+                    "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
+                    "sample_mode": args.sample_mode, "workers": args.workers}
+
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models={"generator": None, "evaluator": None},
+        models=models,
         seed=seed,
-        args={"offline": bool(args.offline), "cases": len(items), "requirements_source": args.requirements_source,
-              "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
-              "sample_mode": args.sample_mode, "workers": args.workers},
+        args=run_args,
     )
 
     usage_bucket = blank_usage()
-    mc, reasons, issues = Counter(), Counter(), Counter()
+    gen_usage_bucket = blank_usage()
+    mc, reasons, issues, gen_sources = Counter(), Counter(), Counter(), Counter()
     backend_down = threading.Event()
     state = {"infra_backend": 0}
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"candidates": dict(mc), "contract_issues": dict(issues), "reasons": dict(reasons)}
+        if args.generate:
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -333,6 +420,11 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         name = res["name"]
         cid = f"{case_source}:{name}:v1"
         requirements = res["requirements"]
+        if res.get("gen_usage"):                          # учёт генерации профиля (--generate)
+            accumulate_usage(usage_bucket, res["gen_usage"])
+            accumulate_usage(gen_usage_bucket, res["gen_usage"])
+        if res.get("gen_source"):
+            gen_sources[res["gen_source"]] += 1
 
         # инфра/данные на уровне всей вакансии -> errors, без кейса качества
         if res["case_infra"]:
@@ -410,7 +502,10 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
-    if args.offline:
+    if args.generate:
+        def work(item):
+            return _process_generate(item, **gen_setup)
+    elif args.offline:
         work = _process_offline
     else:
         def work(item):
