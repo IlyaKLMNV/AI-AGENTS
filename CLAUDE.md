@@ -45,9 +45,10 @@
 - **Три режима входа:** `--golden` (курируемый, детерминизм/CI) · `--generate` (вариативный) · `--offline`
   (replay). 3 модели разведены: генератор (`gpt-4.1-mini`) ≠ судья ≠ промпт-под-тестом. `--generate` при
   `temperature>0` НЕдетерминирован → в CI-гейт не годится (для гейта — golden).
-- Раннеры с `--generate`: **screening_scenarios, screening_guardrails, screening_autofill, message_classifier,
-  verdict_classifier, first_touch (+`--component first_touch_hh`), responsibilities_parser,
-  one_line_search_query_builder**. `sourcing_assistant` — НЕ покрыт (backend-coupled, низкая отдача).
+- Раннеры с `--generate` (**весь флот**): screening_scenarios, screening_guardrails, screening_autofill,
+  message_classifier, verdict_classifier, first_touch (+`--component first_touch_hh`), responsibilities_parser,
+  one_line_search_query_builder, **sourcing_assistant** (LLM-профиль + засеянные requirements → контракт;
+  backend НЕ нужен — кандидаты генерятся, а не ищутся).
 - Констрейнты/персоны/словари — ДАННЫЕ: `tests/fixtures/generation/<runner>/*.yaml`,
   `TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` в `domain/generators`.
 

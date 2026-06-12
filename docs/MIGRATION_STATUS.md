@@ -362,7 +362,7 @@ screening_assistant` | `screening_assistant_hh`). Сценарии берём и
 | first_touch (+hh) | `VacancyGenerator` | ✅ 4/4 |
 | responsibilities_parser | seeded-текст (core-термины → expect) | ✅ 5/5 |
 | one_line_search_query_builder | seeded-вакансия (только step1) | ✅ 5/5 |
-| sourcing_assistant | — | ⏸ НЕ покрыт (backend-coupled, низкая отдача) |
+| sourcing_assistant | LLM-профиль + засеянные requirements (контракт, БЕЗ backend) | ✅ смоук |
 
 **Констрейнты/персоны/словари — ДАННЫЕ:** `tests/fixtures/generation/<runner>/*.yaml`;
 `TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` — в `domain/generators`.
