@@ -17,9 +17,8 @@
 - `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
   `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
-Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails**.
-Остальные (screening_scenarios(+hh))
-— пока в `app/`.
+Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**.
+Миграция раннеров завершена — все на `qa_harness`; легаси `app/` остаётся до cutover.
 
 ## Новые раннеры
 Запуск `python -m qa_harness.runners.<name>`; отчёт — два файла в `tests/reports_v2/<runner>/`
@@ -53,7 +52,9 @@ lint-imports                                            # контракт qa_ha
 - `sourcing_assistant` (новый): профили (`limit>0`) — медленный путь, таймаутят ШИРОКИЕ вакансии (высокий
   count), не настройка. Триаж — `--count-only` (limit=0, ~сек) → потом полный прогон по узким. `SSLEOFError`/
   `Max retries` — транзиентный обрыв соединения (не таймаут), лечится повтором.
-- chain-группы сценариев зашиты в коде `app/screening_scenarios_runner.py`.
+- chain-группы сценариев зашиты в коде ЛЕГАСИ `app/screening_scenarios_runner.py`. В новом
+  `qa_harness.runners.screening_scenarios` их нет — LLM-судья (`ScenarioJudge`) против `expected_behavior`
+  из CSV; онлайн гоняются только сценарии с примерами диалога кандидата (base CSV: 7/62, hh CSV: 0/50).
 
 ## Частые команды (новые раннеры)
 ```bash

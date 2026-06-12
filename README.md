@@ -20,8 +20,8 @@
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
   `reports_v2/` (новые two-file отчёты).
 
-Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails**
-(остальные компоненты пока только в `app/`).
+Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**
+— миграция раннеров завершена; легаси `app/` остаётся до cutover.
 
 ## Подготовка окружения
 ```bash

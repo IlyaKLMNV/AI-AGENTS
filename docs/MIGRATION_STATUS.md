@@ -21,8 +21,8 @@
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ✅ фичи | 👁 глазами | `app/screening_autofill_runner.py` |
 | screening_guardrails | ✅ фичи | 👁 глазами | `app/screening_guardrails_runner.py` |
-| screening_scenarios (std) | ⬜ | ⬜ | `app/screening_scenarios_runner.py` |
-| screening_scenarios_hh | ⬜ | ⬜ | `app/screening_scenarios_hh_runner.py` |
+| screening_scenarios (std) | ✅ фичи (CSV+LLM-судья) | ⬜ глазами | `app/screening_scenarios_runner.py` |
+| screening_scenarios_hh | ✅ фичи (`--component`) | ⬜ глазами | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
 | first_touch_hh | ✅ фичи | 👁 глазами | `app/first_touch_hh_runner.py` |
 | first_touch_event | ✅ фичи | 👁 глазами | `app/first_touch_event_runner.py` |
@@ -296,3 +296,32 @@ no_missing & no_hallucinated & no_forbidden & no_extra_numbers`.
 - судья при сбое/непарсе graceful-фолбэк на эвристики (как легаси), видно по `verdict.meta.used_heuristics`;
 - `--offline` гоняет эвристики на canned `offline_turns` (без живого ассистента/судьи);
 - quality ≠ infra: сбой разговора (Conversations API) → `errors`, не `failed`.
+
+## screening_scenarios (+hh) — детальный чек-лист
+
+Старый: `python -m app.screening_scenarios_runner` / `..._hh_runner` (~4000 строк hardcoded-эвристик и
+chain-групп на сценарий). Новый: `python -m qa_harness.runners.screening_scenarios` (`--component
+screening_assistant` | `screening_assistant_hh`). Сценарии берём из того же CSV-golden
+(`tests/fixtures/screening_scenarios.csv`, hh — `screening_scenarios_hh.csv`): из примеров диалогов
+вытаскиваем реплики кандидата, гоняем живой screening_assistant (общая `domain/screening/conversation.py`),
+а `ScenarioJudge` (LLM) судит транскрипт против `expected_behavior` сценария.
+
+| Фича старого раннера | Статус | Где в новом |
+|---|---|---|
+| Сценарии из CSV (название/описание/ожидание/примеры) | ✅ | `domain/screening_scenarios/cases.py` (`load_scenarios`) |
+| Извлечение реплик кандидата из примеров (инлайн `[candidate]`) | ✅ | `cases.py` (`extract_candidate_examples`, raw_decode JSON-объектов) |
+| Мультитёрн со screening_assistant | ✅ | `domain/screening/conversation.py` (общая с guardrails) |
+| Оценка соответствия ожидаемому поведению | ✅ (LLM-судья) | `domain/screening_scenarios/judge.py` (`ScenarioJudge`) |
+| hh-вариант (промпт `screening_assistant_hh`) | ✅ | `--component screening_assistant_hh` (+свой CSV) |
+| `--scenario-indices` / выборка | ✅ | `--scenario-indices` / `--sample N` (0 = все с примерами) |
+| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Офлайн-плумбинг (load+extract без сети) | ➕ | `--offline` |
+| ~4000 строк hardcoded-эвристик и chain-групп | ⬜ | заменены LLM-судьёй против `expected_behavior` |
+| Парити-сверка | ⬜ глазами | (вручную) |
+
+**Осознанные отличия от легаси:**
+- hardcoded-эвристики/chain-группы → один LLM-судья (`ScenarioJudge`) против `expected_behavior` из CSV;
+- онлайн гоняются ТОЛЬКО сценарии с примерами диалога кандидата (base CSV: **7/62**, hh CSV: **0/50** —
+  у остальных в CSV пусто поле примеров); сценарий без примеров → **skip** (`metrics.scenarios.skipped_no_examples`), не `failed`/`errors`;
+- `passed` (кейс = сценарий) = поведение ассистента соответствует `expected_behavior` по сути (тон/формулировки не важны);
+- quality ≠ infra: сбой разговора/судьи → `errors`, не `failed`.
