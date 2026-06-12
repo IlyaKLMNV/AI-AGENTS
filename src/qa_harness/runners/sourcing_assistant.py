@@ -1,21 +1,24 @@
-"""Раннер sourcing_assistant: кандидат ↔ требования вакансии, оценка по КОНТРАКТУ вывода.
+"""Раннер sourcing_assistant: КОНСЕРВАТИВНАЯ 0/1-оценка резюме по требованиям.
 
-Что тестируем — промпт `sourcing_assistant`: на вход `{requirements:[...], profile:{...}}`, на выход
-JSON-массив 1:1 к требованиям, по объекту `{requirement, comment, passed:0|1}` на каждое. Конвейер кейса:
-- кейс = ВАКАНСИЯ; требования (1..5) берём из CDM (`key_requirements`/stack+skills);
-- backend-поиск РЕАЛЬНЫХ кандидатов по `vacancy.extractor_entities` (limit=pool) → сэмпл N профилей;
-- на каждого кандидата зовём промпт → проверяем КОНТРАКТ вывода (форма/длина/echo), это `subjects[]`.
+Что тестируем — промпт `sourcing_assistant`: на вход `{requirements:[...предложения...], resume_text:"..."}`,
+на выход JSON-массив 1:1 к требованиям, объект `{requirement(echo), comment, passed:0|1}` на каждое.
+Правило: 1 ТОЛЬКО при ЯВНОМ подтверждении в резюме; 0 — если подтверждения нет/косвенное/противоречивое.
 
-Итог кейса (passed) = ВСЕ оценённые кандидаты прошли контракт. Семантики «реально ли подходит» нет
-(кандидаты живые, без разметки). quality ≠ infra: backend-сбои / нет entities / нет кандидатов / сетевые
-ошибки промпта → errors (кейс не в passed/failed). Бэкенд-профили (limit>0) — медленный путь, не раздуваем.
+Режимы (см. матрицу в docs/MIGRATION_STATUS):
+- `--golden`  — реальный промпт на golden resume_text-кейсах: contract + semantic(passed == expect_passed);
+- `--offline` — replay offline_output из golden: contract + semantic (без сети);
+- `--generate`— LLM-резюме с известными positive/negative навыками: contract + semantic; BACKEND НЕ нужен;
+- (без флага) — backend: поиск ЖИВЫХ кандидатов по CDM → contract-ONLY (эталона passed нет; НЕ проверка
+  качества scoring, а смоук формы). `--count-only` — только число кандидатов (диагностика).
 
-  python -m qa_harness.runners.sourcing_assistant --offline                         # replay, без сети
-  python -m qa_harness.runners.sourcing_assistant --cases-count 1 --candidate-sample-size 2 --token-in-body  # дёшево, онлайн
-  python -m qa_harness.runners.sourcing_assistant --generate --variants 5           # вариативно: LLM-профиль + засеянные requirements, БЕЗ backend
+contract: массив 1:1, точный echo, элемент {requirement,comment,passed}; passed — integer 0/1 (НЕ bool/строка);
+comment без переносов, ≤2 предложений. semantic: passed совпадает с эталоном expect_passed (gate);
+согласованность комментария с меткой — сигнал. quality ≠ infra: backend/сеть/генерация → errors.
 
-Режим `--generate`: профиль кандидата генерит LLM, requirements засеяны из словаря → промпт sourcing →
-проверка КОНТРАКТА (1:1 echo). Backend НЕ нужен (кандидаты не ищутся, а генерятся) — снимает backend-зависимость.
+  python -m qa_harness.runners.sourcing_assistant --offline                # replay golden, без сети
+  python -m qa_harness.runners.sourcing_assistant --golden                 # online scoring на golden (OPENAI_API_KEY)
+  python -m qa_harness.runners.sourcing_assistant --generate --variants 5  # вариативно: LLM-резюме, БЕЗ backend
+  python -m qa_harness.runners.sourcing_assistant --cases-count 1 --candidate-sample-size 2 --token-in-body  # backend smoke (contract-only)
 """
 
 from __future__ import annotations
@@ -35,15 +38,18 @@ from qa_harness.core.cdm import load_cdm_files, load_json
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
     TECH_VOCAB,
-    CandidateProfileGenerator,
-    CandidateProfileSpec,
     GenerationPolicy,
+    ResumeGenerator,
+    ResumeSpec,
     generate_valid,
 )
 from qa_harness.domain.sourcing import (
+    GoldenScoreCase,
     build_candidate_profile,
     check_contract,
-    load_offline_cases,
+    check_passed_labels,
+    comment_inconsistencies,
+    load_golden_score,
     parse_sourcing_output,
     requirements_from_cdm,
 )
@@ -51,25 +57,45 @@ from qa_harness.pipeline import BackendCfg, build_step3_payload, call_backend_se
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CDM_DIR = REPO_ROOT / "tests" / "fixtures" / "cdm" / "std"
-DEFAULT_OFFLINE = REPO_ROOT / "tests" / "fixtures" / "sourcing_assistant" / "offline.yaml"
+DEFAULT_GOLDEN = REPO_ROOT / "tests" / "fixtures" / "sourcing_assistant" / "golden.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "sourcing_assistant"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 
 
+def resume_text_from_profile(profile: Dict[str, Any]) -> str:
+    """Сплющить backend-профиль {about, skills[], positions[]} в текст резюме (вход новой задачи)."""
+    parts: List[str] = []
+    about = str(profile.get("about") or "").strip()
+    if about:
+        parts.append(about)
+    skills = [str(s.get("skill")).strip() for s in (profile.get("skills") or []) if isinstance(s, dict) and s.get("skill")]
+    if skills:
+        parts.append("Навыки: " + ", ".join(skills) + ".")
+    for pos in (profile.get("positions") or [])[:4]:
+        if isinstance(pos, dict):
+            seg = " ".join(str(pos.get(k) or "").strip() for k in ("pos", "name", "description") if pos.get(k))
+            if seg.strip():
+                parts.append(seg.strip())
+    return "\n".join(parts).strip()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="sourcing_assistant QA runner (subjects[], contract, new architecture).")
-    p.add_argument("--offline", action="store_true", help="Replay канонных кандидатов из фикстуры (без сети).")
-    p.add_argument("--offline-fixture", type=Path, default=DEFAULT_OFFLINE)
-    # --- режим вариативной генерации (LLM-профиль + засеянные requirements; BACKEND НЕ нужен) ---
+    # --- scoring-режимы (contract + semantic по expect_passed); BACKEND НЕ нужен ---
+    p.add_argument("--golden", action="store_true",
+                   help="Scoring online: реальный промпт на golden resume_text-кейсах (contract + semantic).")
+    p.add_argument("--offline", action="store_true", help="Replay offline_output из golden (без сети; contract + semantic).")
     p.add_argument("--generate", action="store_true",
-                   help="Вариативный режим: профиль кандидата генерит LLM, requirements засеяны; без backend.")
-    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора профиля (по умолч. {DEFAULT_GEN_MODEL}).")
-    p.add_argument("--gen-seed", type=int, default=None, help="Seed выборки домена/требований.")
-    p.add_argument("--variants", type=int, default=5, help="Сколько профилей сгенерить (--generate).")
-    p.add_argument("--req-count", type=int, default=3, help="Сколько requirements засевать (echo-контракт).")
-    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора профиля (--generate).")
-    p.add_argument("--gen-retries", type=int, default=2, help="Повторов генерации профиля при провале валидации.")
+                   help="Вариативный scoring: LLM-резюме с известными positive/negative навыками; без backend.")
+    p.add_argument("--golden-file", type=Path, default=DEFAULT_GOLDEN, help="Golden-кейсы scoring (resume_text + expect_passed).")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора резюме (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed выборки домена/навыков.")
+    p.add_argument("--variants", type=int, default=5, help="Сколько резюме сгенерить (--generate).")
+    p.add_argument("--positive-skills", type=int, default=2, help="Сколько positive-навыков засевать (expect_passed=1).")
+    p.add_argument("--negative-skills", type=int, default=1, help="Сколько negative-навыков засевать (expect_passed=0).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора резюме (--generate).")
+    p.add_argument("--gen-retries", type=int, default=2, help="Повторов генерации резюме при провале валидации.")
     p.add_argument("--cdm-dir", type=Path, default=DEFAULT_CDM_DIR, help="CDM-вакансии (нужны extractor_entities + key_requirements).")
     p.add_argument("--cdm-count", type=int, default=None, help="Взять первые N CDM (по сортировке).")
     p.add_argument("--cases-count", type=int, default=None, help="Сэмплировать N вакансий из набора.")
@@ -171,8 +197,9 @@ def _process_online(
         cand_id = str(cand.get("id") or cand.get("name") or "candidate")
         entry: Dict[str, Any] = {"id": cand_id, "predicted": None, "infra_error": None, "parse_error": None, "usage": None}
         profile = build_candidate_profile(cand)
+        resume_text = resume_text_from_profile(profile)  # новый вход промпта — резюме текстом
         try:
-            raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "profile": profile}, ensure_ascii=False))
+            raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "resume_text": resume_text}, ensure_ascii=False))
             entry["usage"] = usage
         except Exception as e:  # noqa: BLE001 — сетевой/HTTP сбой = инфра
             entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
@@ -186,49 +213,197 @@ def _process_online(
     return res
 
 
-def _process_offline(idx_case) -> Dict[str, Any]:
-    _idx, case = idx_case
-    res: Dict[str, Any] = {"name": case.name, "title": "", "requirements": list(case.requirements),
-                           "case_infra": None, "candidates": []}
-    for cand in case.candidates:
-        res["candidates"].append({"id": cand.id, "predicted": list(cand.output),
-                                  "infra_error": None, "parse_error": None, "usage": None})
-    return res
+# ---------------- scoring-режимы (golden / offline / generate): contract + semantic ----------------
 
-
-def _process_generate(variant: int, *, sourcing_client: Any, gen_client: Any,
-                      gen_policy: GenerationPolicy, gen_seed: int, req_count: int) -> Dict[str, Any]:
-    """Один вариант: засеваем requirements + LLM-профиль кандидата → промпт sourcing → контракт (без backend)."""
+def _build_generate_case(variant: int, *, gen_client: Any, gen_policy: GenerationPolicy,
+                         gen_seed: int, pos_n: int, neg_n: int):
+    """Контролируемый кейс: positive-навыки (expect=1) + negative (expect=0) + decoy; LLM пишет резюме."""
     rng = random.Random(f"{gen_seed}:{variant}")
     domain = rng.choice(list(TECH_VOCAB))
-    requirements = rng.sample(TECH_VOCAB[domain], min(req_count, len(TECH_VOCAB[domain])))
-    res: Dict[str, Any] = {"name": f"v{variant}", "title": f"{domain} вакансия", "requirements": requirements,
-                           "case_infra": None, "candidates": [], "mode": "generate", "variant": variant,
-                           "gen_source": None, "gen_usage": None}
-    gen = CandidateProfileGenerator(gen_client)
-    gr = generate_valid(lambda _a: (gen.generate(CandidateProfileSpec(domain, requirements, noise_level=variant % 3)), None),
-                        policy=gen_policy)
-    res["gen_source"] = gr.source
-    res["gen_usage"] = dict(gen.usage)
-    if not gr.ok:
-        res["case_infra"] = f"profile_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}"
+    pool = rng.sample(TECH_VOCAB[domain], min(pos_n + neg_n + 1, len(TECH_VOCAB[domain])))
+    positive = pool[:pos_n]
+    negative = pool[pos_n:pos_n + neg_n]
+    decoys = pool[pos_n + neg_n:pos_n + neg_n + 1]
+    requirements = [f"У кандидата есть опыт работы с {t}." for t in positive + negative]
+    expect = [1] * len(positive) + [0] * len(negative)
+    gen = ResumeGenerator(gen_client)
+    gr = generate_valid(
+        lambda _a: (gen.generate(ResumeSpec(domain, positive + decoys, negative, noise_level=variant % 3)), None),
+        policy=gen_policy)
+    resume_text = str(gr.item) if gr.ok else ""
+    case = GoldenScoreCase(name=f"v{variant}_{domain}", requirements=requirements,
+                           resume_text=resume_text, expect_passed=expect)
+    return case, gr, dict(gen.usage)
+
+
+def _process_score(case: GoldenScoreCase, sourcing_client: Any, replay: bool) -> Dict[str, Any]:
+    """Один scoring-кейс: реплей offline_output ИЛИ вызов промпта на {requirements, resume_text}."""
+    res: Dict[str, Any] = {"case": case, "predicted": None, "parse_error": None,
+                           "infra_error": None, "usage": None}
+    if replay:
+        res["predicted"] = list(case.offline_output)
         return res
-    profile = gr.item
-    entry: Dict[str, Any] = {"id": f"cand_v{variant}", "predicted": None, "infra_error": None,
-                             "parse_error": None, "usage": None}
     try:
-        raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "profile": profile}, ensure_ascii=False))
-        entry["usage"] = usage
+        raw, usage = sourcing_client.run(
+            json.dumps({"requirements": case.requirements, "resume_text": case.resume_text}, ensure_ascii=False))
+        res["usage"] = usage
     except Exception as e:  # noqa: BLE001 — сетевой сбой промпта = инфра
-        entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
-        res["candidates"].append(entry)
+        res["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
         return res
     try:
-        entry["predicted"] = parse_sourcing_output(raw)
+        res["predicted"] = parse_sourcing_output(raw)
     except ValueError as e:
-        entry["parse_error"] = f"invalid_json_output:{e}"
-    res["candidates"].append(entry)
+        res["parse_error"] = f"invalid_json_output:{e}"
     return res
+
+
+def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
+    """Scoring-режимы (golden / offline / generate): contract + semantic(expect_passed). БЕЗ backend."""
+    mode = "offline" if args.offline else ("generate" if args.generate else "golden")
+    online = mode != "offline"
+    sourcing_client = None
+    gen_setup: Dict[str, Any] = {}
+    if online:
+        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
+        sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+
+    if mode == "generate":
+        gen_seed = args.gen_seed if args.gen_seed is not None else (prompt.seed if prompt.seed is not None else 0)
+        gen_setup = dict(
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            gen_seed=gen_seed, pos_n=args.positive_skills, neg_n=args.negative_skills)
+        items: List[Any] = list(range(max(1, args.variants)))
+        models = {"resume_generator": args.gen_model, "evaluator": None}
+        run_args = {"mode": "generate", "variants": args.variants, "positive": args.positive_skills,
+                    "negative": args.negative_skills, "gen_model": args.gen_model, "gen_seed": gen_seed,
+                    "temperature": args.temperature, "workers": args.workers}
+        case_source = "synthetic"
+    else:
+        items = load_golden_score(args.golden_file)
+        models = {"generator": None, "evaluator": None}
+        run_args = {"mode": mode, "golden": len(items), "workers": args.workers}
+        case_source = "suite" if mode == "offline" else "golden"
+
+    rb = ReportBuilder(
+        runner=RUNNER,
+        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        run_id=run_id, started_at=started.isoformat(timespec="seconds"),
+        models=models, seed=prompt.seed, args=run_args,
+    )
+    usage_bucket = blank_usage()
+    gen_usage_bucket = blank_usage()
+    mc, reasons, gen_sources = Counter(), Counter(), Counter()
+    signals: Counter = Counter()
+
+    def _flush(interrupted: bool = False):
+        rb.set_token_usage(usage_total(usage_bucket))
+        extra: Dict[str, Any] = {"scoring": dict(mc), "reasons": dict(reasons), "comment_signals": dict(signals)}
+        if mode == "generate":
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
+        if interrupted:
+            extra["interrupted"] = True
+        finished = datetime.datetime.now()
+        md, cd = rb.finalize(extra, finished_at=finished.isoformat(timespec="seconds"),
+                             duration_s=round((finished - started).total_seconds(), 3))
+        return write_reports(args.out_dir, RUNNER, run_id, md, cd)
+
+    def _work(item):
+        if mode == "generate":
+            case, gr, gen_usage = _build_generate_case(item, **gen_setup)
+            if not gr.ok:
+                return {"case": case, "predicted": None, "parse_error": None,
+                        "infra_error": f"resume_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}",
+                        "usage": None, "gen_source": gr.source, "gen_usage": gen_usage}
+            res = _process_score(case, sourcing_client, replay=False)
+            res["gen_source"] = gr.source
+            res["gen_usage"] = gen_usage
+            return res
+        return _process_score(item, sourcing_client, replay=(mode == "offline"))
+
+    def _fold(res: Dict[str, Any]) -> None:
+        case: GoldenScoreCase = res["case"]
+        requirements, expect = case.requirements, case.expect_passed
+        accumulate_usage(usage_bucket, res.get("usage"))
+        if res.get("gen_usage"):
+            accumulate_usage(usage_bucket, res["gen_usage"])
+            accumulate_usage(gen_usage_bucket, res["gen_usage"])
+        if res.get("gen_source"):
+            gen_sources[res["gen_source"]] += 1
+        cid = f"{case_source}:{case.name}:v1"
+
+        if res.get("infra_error"):                        # сбой генерации/сети → errors (не качество)
+            rb.add_error(cid, res["infra_error"])
+            reasons[res["infra_error"].split(":")[0]] += 1
+            mc["errors"] += 1
+            if not args.quiet:
+                print(f"  [ERR ] {case.name}: {res['infra_error']}")
+            return
+
+        mc["total"] += 1
+        rc: List[str] = []
+        if res["parse_error"]:
+            predicted = []
+            contract_ok, c_issues = False, ["invalid_json_output"]
+            semantic_ok, sem_diffs, comment_sig = False, ["no_output"], []
+            reasons["invalid_json_output"] += 1
+        else:
+            predicted = res["predicted"]
+            contract_ok, c_issues, _det = check_contract(requirements, predicted)
+            semantic_ok, sem_diffs = check_passed_labels(predicted, expect)
+            comment_sig = comment_inconsistencies(predicted)
+        if contract_ok:
+            mc["contract_pass"] += 1
+        else:
+            reasons["contract_fail"] += 1
+            rc += [f"contract:{i}" for i in c_issues]
+        if semantic_ok:
+            mc["semantic_pass"] += 1
+        else:
+            reasons["semantic_fail"] += 1
+            rc += [f"semantic:{d}" for d in sem_diffs[:8]]
+        for s in comment_sig:                              # СИГНАЛ (не gate)
+            signals[s.split(":")[-1]] += 1
+
+        passed = bool(contract_ok) and bool(semantic_ok)
+        if passed:
+            mc["passed"] += 1
+        subjects: List[Dict[str, Any]] = []
+        for i, req in enumerate(requirements):
+            item = predicted[i] if i < len(predicted) and isinstance(predicted[i], dict) else {}
+            subjects.append({"requirement": req, "expected_passed": expect[i] if i < len(expect) else None,
+                             "actual_passed": item.get("passed"), "comment": item.get("comment")})
+        rb.add_case(CaseRecord(
+            case_id=cid, source=case_source, passed=passed,
+            inputs={"criterion": "contract(1:1 echo) + semantic(passed == expect_passed)",
+                    "requirements": requirements, "resume_text": case.resume_text, "expect_passed": expect},
+            output={"raw": None, "parsed": predicted},
+            verdict={"evaluator": "sourcing_scoring", "passed": passed, "reason_codes": rc},
+            subjects=subjects,
+            checks=[{"rule": "contract", "passed": bool(contract_ok), "detail": ",".join(c_issues)},
+                    {"rule": "semantic_passed", "passed": bool(semantic_ok), "detail": ",".join(sem_diffs[:8])},
+                    {"rule": "comment_consistency(info)", "passed": not comment_sig, "detail": ",".join(comment_sig[:5])}],
+        ))
+        if not args.quiet:
+            print(f"  [{'ok ' if passed else 'MISS'}] {case.name} reqs={len(requirements)} "
+                  f"contract={int(bool(contract_ok))} semantic={semantic_ok} signals={len(comment_sig)}")
+
+    total = len(items)
+    outcome = run_cases(items, work=_work, fold=_fold, max_workers=max(1, args.workers),
+                        checkpoint_every=args.checkpoint_every, on_checkpoint=_flush,
+                        on_interrupt=(lambda: None) if args.quiet else (lambda: print("\n[interrupted]")))
+    metrics_path, cases_path = _flush(interrupted=outcome.interrupted)
+    if not args.quiet:
+        s = json.loads(Path(metrics_path).read_text(encoding="utf-8"))["summary"]
+        tag = "partial" if outcome.interrupted else "summary"
+        print(f"[{tag}] {mode} cases={s['total']} passed={s['passed']} failed={s['failed']} "
+              f"errors(infra)={s['errors']} done={outcome.done}/{total}")
+        print(f"[done] metrics -> {metrics_path}")
+        print(f"[done] cases   -> {cases_path}")
+    return {"metrics": metrics_path, "cases": cases_path}
 
 
 def _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo) -> Dict[str, Path]:
@@ -321,53 +496,32 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
     seed = args.seed if args.seed is not None else prompt.seed
-    if args.count_only and args.offline:
-        raise ValueError("--count-only требует онлайн-бэкенд (несовместим с --offline)")
 
-    sourcing_client = None
-    backend: Optional[BackendCfg] = None
-    token = ""
-    gen_setup: Dict[str, Any] = {}
-    if args.generate:
-        if args.offline or args.count_only:
-            raise ValueError("--generate несовместим с --offline/--count-only")
-        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+    # scoring-режимы (golden / offline / generate): contract + semantic(expect_passed), БЕЗ backend
+    if args.offline or args.generate or args.golden:
+        return _run_scoring(args, prompt, run_id, started)
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
-        sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
-        gen_seed = args.gen_seed if args.gen_seed is not None else (seed if seed is not None else 0)
-        gen_setup = dict(
-            sourcing_client=sourcing_client,
-            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
-            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
-            gen_seed=gen_seed, req_count=args.req_count,
-        )
-        items = list(range(max(1, args.variants)))  # int-варианты; _process_generate берёт variant
-        case_source = "synthetic"
-    elif args.offline:
-        items = list(enumerate(load_offline_cases(args.offline_fixture)))
-        case_source = "suite"
-    else:
-        from qa_harness.core.llm_client import StoredPromptClient, get_client
+    # дефолт: backend (поиск ЖИВЫХ кандидатов) — contract-only (нет эталона passed для живых профилей)
+    from qa_harness.core.llm_client import StoredPromptClient, get_client
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
-        sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
+    sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
 
-        base_url = args.base_url or os.environ.get("AI_SEARCH_BASE_URL")
-        token = args.token or os.environ.get("AI_SEARCH_AUTH_TOKEN") or ""
-        if not base_url or not token:
-            raise EnvironmentError("онлайн-режим требует AI_SEARCH_BASE_URL/AI_SEARCH_AUTH_TOKEN (или --base-url/--token)")
-        backend = BackendCfg(base_url=base_url, step3_path=args.step3_path, token_in_body=bool(args.token_in_body),
-                             timeout_s=args.step3_timeout, retries=args.step3_retries)
+    base_url = args.base_url or os.environ.get("AI_SEARCH_BASE_URL")
+    token = args.token or os.environ.get("AI_SEARCH_AUTH_TOKEN") or ""
+    if not base_url or not token:
+        raise EnvironmentError("backend-режим требует AI_SEARCH_BASE_URL/AI_SEARCH_AUTH_TOKEN (или --base-url/--token)")
+    backend: Optional[BackendCfg] = BackendCfg(
+        base_url=base_url, step3_path=args.step3_path, token_in_body=bool(args.token_in_body),
+        timeout_s=args.step3_timeout, retries=args.step3_retries)
 
-        paths = load_cdm_files(args.cdm_dir, args.cdm_count)
-        if args.cases_count is not None and args.cases_count > 0:
-            rng = random.Random(seed)
-            paths = rng.sample(paths, k=min(args.cases_count, len(paths)))
-        items = list(enumerate(paths))
-        case_source = "cdm"
+    paths = load_cdm_files(args.cdm_dir, args.cdm_count)
+    if args.cases_count is not None and args.cases_count > 0:
+        rng = random.Random(seed)
+        paths = rng.sample(paths, k=min(args.cases_count, len(paths)))
+    items = list(enumerate(paths))
+    case_source = "cdm"
 
     base_payload = make_base_payload(only_with_contacts=True, current_position_title=True,
                                      limit=args.candidate_pool_size, offset=0)
@@ -376,39 +530,26 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     if args.count_only:
         return _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo)
 
-    if args.generate:
-        models = {"profile_generator": args.gen_model, "evaluator": None}
-        run_args = {"mode": "generate", "variants": args.variants, "req_count": args.req_count,
-                    "gen_model": args.gen_model, "gen_seed": gen_setup["gen_seed"],
-                    "temperature": args.temperature, "workers": args.workers}
-    else:
-        models = {"generator": None, "evaluator": None}
-        run_args = {"mode": "golden", "offline": bool(args.offline), "cases": len(items),
-                    "requirements_source": args.requirements_source,
-                    "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
-                    "sample_mode": args.sample_mode, "workers": args.workers}
-
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models=models,
+        models={"generator": None, "evaluator": None},
         seed=seed,
-        args=run_args,
+        args={"mode": "backend", "cases": len(items), "requirements_source": args.requirements_source,
+              "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
+              "sample_mode": args.sample_mode, "workers": args.workers, "scoring": "contract_only(no expect_passed)"},
     )
 
     usage_bucket = blank_usage()
-    gen_usage_bucket = blank_usage()
-    mc, reasons, issues, gen_sources = Counter(), Counter(), Counter(), Counter()
+    mc, reasons, issues = Counter(), Counter(), Counter()
     backend_down = threading.Event()
     state = {"infra_backend": 0}
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"candidates": dict(mc), "contract_issues": dict(issues), "reasons": dict(reasons)}
-        if args.generate:
-            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -420,11 +561,6 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         name = res["name"]
         cid = f"{case_source}:{name}:v1"
         requirements = res["requirements"]
-        if res.get("gen_usage"):                          # учёт генерации профиля (--generate)
-            accumulate_usage(usage_bucket, res["gen_usage"])
-            accumulate_usage(gen_usage_bucket, res["gen_usage"])
-        if res.get("gen_source"):
-            gen_sources[res["gen_source"]] += 1
 
         # инфра/данные на уровне всей вакансии -> errors, без кейса качества
         if res["case_infra"]:
@@ -502,15 +638,9 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
-    if args.generate:
-        def work(item):
-            return _process_generate(item, **gen_setup)
-    elif args.offline:
-        work = _process_offline
-    else:
-        def work(item):
-            return _process_online(item, sourcing_client, args.requirements_source, base_payload, sanitize_geo,
-                                   backend, token, backend_down, args.candidate_sample_size, args.sample_mode, seed)
+    def work(item):
+        return _process_online(item, sourcing_client, args.requirements_source, base_payload, sanitize_geo,
+                               backend, token, backend_down, args.candidate_sample_size, args.sample_mode, seed)
 
     outcome = run_cases(items, work=work, fold=_fold, max_workers=max(1, args.workers),
                         checkpoint_every=args.checkpoint_every, on_checkpoint=_flush, on_interrupt=_on_interrupt)

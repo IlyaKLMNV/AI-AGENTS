@@ -52,3 +52,44 @@ def load_offline_cases(path: Path) -> List[OfflineCase]:
             raise ValueError(f"offline case {name}: no candidates")
         out.append(OfflineCase(name=name, requirements=reqs, candidates=cands))
     return out
+
+
+@dataclass
+class GoldenScoreCase:
+    """Golden-кейс scoring (НОВАЯ задача): требования-предложения + резюме + эталонные passed.
+
+    requirements — список требований-предложений (может быть пустым); resume_text — текст резюме
+    кандидата (или комбинированный вход вакансия+резюме для compat-кейсов); expect_passed — эталон 0/1
+    той же длины, что requirements; offline_output — каннный ответ промпта для --offline (replay).
+    """
+    name: str
+    requirements: List[str]
+    resume_text: str
+    expect_passed: List[int] = field(default_factory=list)
+    offline_output: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def load_golden_score(path: Path) -> List[GoldenScoreCase]:
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(raw, list):
+        raise ValueError("golden file must be a YAML list")
+    out: List[GoldenScoreCase] = []
+    seen = set()
+    for i, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"golden case #{i} must be a mapping")
+        name = str(item.get("name") or f"case_{i:04d}").strip()
+        if name in seen:
+            raise ValueError(f"duplicate golden case name: {name}")
+        seen.add(name)
+        reqs = [str(r).strip() for r in (item.get("requirements") or []) if str(r).strip()]
+        resume_text = str(item.get("resume_text") if item.get("resume_text") is not None else item.get("input") or "")
+        expect = [int(x) for x in (item.get("expect_passed") or [])]
+        if len(expect) != len(reqs):
+            raise ValueError(f"golden case {name}: expect_passed ({len(expect)}) != requirements ({len(reqs)})")
+        oo = item.get("offline_output")
+        out.append(GoldenScoreCase(
+            name=name, requirements=reqs, resume_text=resume_text, expect_passed=expect,
+            offline_output=list(oo) if isinstance(oo, list) else [],
+        ))
+    return out

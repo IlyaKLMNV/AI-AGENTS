@@ -15,6 +15,9 @@ import re
 from typing import Any, Dict, List, Tuple
 
 ALLOWED_KEYS = {"requirement", "comment", "passed"}
+MAX_COMMENT_LEN = 300
+# Конец предложения: [.!?] в конце строки или перед пробелом+заглавной (не ловит Node.js / сокращения).
+_SENTENCE_END = re.compile(r"[.!?](?:\s+[А-ЯA-ZЁ]|\s*$)")
 
 
 def parse_sourcing_output(raw: str) -> List[Dict[str, Any]]:
@@ -39,7 +42,8 @@ def parse_sourcing_output(raw: str) -> List[Dict[str, Any]]:
 
 
 def _validate_item_shape(item: Dict[str, Any]) -> List[str]:
-    """Строго: ровно {requirement, comment, passed}; passed ∈ {0,1}; строки — строки."""
+    """Строго: ровно {requirement, comment, passed}; passed — integer 0/1 (НЕ bool/строка);
+    comment — строка без переносов, ≤2 предложений, ≤300 символов."""
     reasons: List[str] = []
     extra = sorted(set(item.keys()) - ALLOWED_KEYS)
     missing = sorted(ALLOWED_KEYS - set(item.keys()))
@@ -49,10 +53,22 @@ def _validate_item_shape(item: Dict[str, Any]) -> List[str]:
         reasons.append(f"missing_keys={missing}")
     if "requirement" in item and not isinstance(item["requirement"], str):
         reasons.append("requirement_not_string")
-    if "comment" in item and not isinstance(item["comment"], str):
-        reasons.append("comment_not_string")
-    if "passed" in item and (not isinstance(item["passed"], int) or item["passed"] not in (0, 1)):
-        reasons.append("passed_not_0_1")
+    if "comment" in item:
+        c = item["comment"]
+        if not isinstance(c, str):
+            reasons.append("comment_not_string")
+        else:
+            if "\n" in c or "\r" in c:
+                reasons.append("comment_has_newline")
+            if len(c) > MAX_COMMENT_LEN:
+                reasons.append("comment_too_long")
+            if len(_SENTENCE_END.findall(c)) > 2:
+                reasons.append("comment_too_many_sentences")
+    if "passed" in item:
+        p = item["passed"]
+        # bool — subclass of int, поэтому отклоняем явно (true/false недопустимы, нужен integer 0/1)
+        if isinstance(p, bool) or not isinstance(p, int) or p not in (0, 1):
+            reasons.append("passed_not_0_1")
     return reasons
 
 

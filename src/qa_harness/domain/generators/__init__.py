@@ -13,6 +13,7 @@ from .responsibilities_gen import (
     ResponsibilitiesSpec,
 )
 from .profile_gen import CandidateProfileGenerator, CandidateProfileSpec
+from .resume_gen import ResumeGenerator, ResumeSpec
 from .variety import VariantSampler, VariantStyle
 from .dialogue_gen import DialogueGenerator, DialogueSpec, validate_generated_dialogue
 from .dialogue_specs import SCENARIO_HINTS_BY_VERDICT, pick_verdict_hint
@@ -43,6 +44,8 @@ __all__ = [
     "CONDITIONS_NOISE",
     "CandidateProfileGenerator",
     "CandidateProfileSpec",
+    "ResumeGenerator",
+    "ResumeSpec",
     "VariantSampler",
     "VariantStyle",
     "CandidateMessageGenerator",

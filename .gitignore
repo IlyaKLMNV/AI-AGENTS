@@ -23,6 +23,7 @@ tests/fixtures/*
 !tests/fixtures/one_line_search_query_builder/golden.yaml
 !tests/fixtures/sourcing_assistant/
 !tests/fixtures/sourcing_assistant/offline.yaml
+!tests/fixtures/sourcing_assistant/golden.yaml
 !tests/fixtures/responsibilities_parser/
 !tests/fixtures/responsibilities_parser/golden.yaml
 !tests/fixtures/screening_autofill/

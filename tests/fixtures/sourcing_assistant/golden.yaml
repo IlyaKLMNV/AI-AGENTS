@@ -1,0 +1,92 @@
+# Golden-кейсы sourcing_assistant (НОВАЯ задача: консервативная 0/1-оценка резюме по требованиям).
+#
+# requirements — требования-предложения; resume_text (или input) — резюме кандидата; expect_passed —
+# эталон 0/1 той же длины; offline_output — каннный корректный ответ промпта для --offline (replay).
+# Правило: 1 только при ЯВНОМ подтверждении в резюме; 0 — если подтверждения нет/косвенное/противоречивое.
+
+- name: explicit_skill_positive
+  requirements: ["У кандидата есть опыт работы с PostgreSQL."]
+  resume_text: "Навыки: Python, PostgreSQL, Docker."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "PostgreSQL явно указан в навыках.", passed: 1}
+
+- name: missing_skill_negative
+  requirements: ["У кандидата есть опыт работы с Kubernetes."]
+  resume_text: "Навыки: Python, PostgreSQL, Docker."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с Kubernetes.", comment: "Подтверждение в резюме не найдено.", passed: 0}
+
+- name: role_does_not_imply_skill
+  requirements: ["У кандидата есть опыт разработки на Python."]
+  resume_text: "Работал Backend Developer над серверной логикой и API. Технологии в резюме не указаны."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт разработки на Python.", comment: "Должность не подтверждает конкретную технологию.", passed: 0}
+
+- name: similar_technology_negative
+  requirements: ["У кандидата есть опыт работы с PostgreSQL."]
+  resume_text: "Навыки: MySQL, MongoDB, Redis."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Смежные СУБД не подтверждают PostgreSQL.", passed: 0}
+
+- name: explicit_exceptions
+  requirements:
+    - "У кандидата есть опыт работы с GitLab CI."
+    - "У кандидата есть опыт работы с Excel."
+    - "У кандидата есть опыт работы с OpenCV."
+  resume_text: "Навыки: GitLab, Microsoft Office, computer vision."
+  expect_passed: [0, 0, 0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с GitLab CI.", comment: "GitLab не равно GitLab CI.", passed: 0}
+    - {requirement: "У кандидата есть опыт работы с Excel.", comment: "Office не подтверждает Excel явно.", passed: 0}
+    - {requirement: "У кандидата есть опыт работы с OpenCV.", comment: "Computer vision не равно OpenCV.", passed: 0}
+
+- name: allowed_equivalents
+  requirements:
+    - "У кандидата есть опыт разработки на Go."
+    - "У кандидата есть опыт разработки на JavaScript."
+    - "У кандидата есть опыт работы с PostgreSQL."
+  resume_text: "Навыки: Golang, JS, Postgres."
+  expect_passed: [1, 1, 1]
+  offline_output:
+    - {requirement: "У кандидата есть опыт разработки на Go.", comment: "Golang это Go.", passed: 1}
+    - {requirement: "У кандидата есть опыт разработки на JavaScript.", comment: "JS это JavaScript.", passed: 1}
+    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Postgres это PostgreSQL.", passed: 1}
+
+- name: partial_composite_requirement
+  requirements: ["У кандидата есть опыт работы с Python и PostgreSQL."]
+  resume_text: "Навыки: Python, Docker."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с Python и PostgreSQL.", comment: "Подтверждён только Python, PostgreSQL нет.", passed: 0}
+
+- name: empty_resume
+  requirements:
+    - "У кандидата есть опыт работы с PostgreSQL."
+    - "У кандидата есть опыт работы с Docker."
+  resume_text: ""
+  expect_passed: [0, 0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Резюме пустое, подтверждения нет.", passed: 0}
+    - {requirement: "У кандидата есть опыт работы с Docker.", comment: "Резюме пустое, подтверждения нет.", passed: 0}
+
+- name: empty_requirements
+  requirements: []
+  resume_text: "Навыки: Python, PostgreSQL, Docker."
+  expect_passed: []
+  offline_output: []
+
+- name: vacancy_text_is_not_candidate_evidence
+  input: |
+    Требования вакансии:
+    У кандидата есть опыт работы с Kubernetes.
+
+    Резюме кандидата:
+    Backend-разработчик. Навыки: Python, Docker.
+  requirements: ["У кандидата есть опыт работы с Kubernetes."]
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "У кандидата есть опыт работы с Kubernetes.", comment: "В резюме Kubernetes отсутствует, текст вакансии не доказательство.", passed: 0}
