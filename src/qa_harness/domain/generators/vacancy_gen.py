@@ -42,7 +42,9 @@ class VacancyGenerator(Generator):
             '"vacancy_responsibilities": str, "vacancy_stack": str, "salary_range": str}\n'
             "Требования: всё на русском; vacancy_name/company_description/vacancy_responsibilities — "
             "непустые и осмысленные; vacancy_stack — перечисление технологий; salary_range — вилка "
-            "(напр. '200000-280000 руб') или пустая строка, если не указывается."
+            "(напр. '200000-280000 руб') или пустая строка, если не указывается.\n"
+            "ВАЖНО: company_description НЕ должен содержать НАЗВАНИЕ компании (оно только в hiring_company_name) "
+            "— опиши сферу/продукт/команду без упоминания имени бренда."
         )
 
     def payload(self, spec: VacancySpec) -> str:

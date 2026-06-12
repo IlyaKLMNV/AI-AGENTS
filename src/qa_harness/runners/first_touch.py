@@ -127,9 +127,13 @@ def _process(case: GoldenCase, gen_client: Any, judge: Any, offline: bool) -> Di
     if not res["message"]:
         res["call_error"] = "generate:empty_output"
         return res
-    # legit-контекст из input (его дали генератору) — НЕ галлюцинации
+    # legit-контекст из input (его дали промпту) — упоминание этих фактов НЕ галлюцинация
     allowed = dict(case.allowed_context_facts)
-    for k in ("company_description", "vacancy_responsibilities", "vacancy_text", "reason_of_communication"):
+    allowed_keys = ["company_description", "vacancy_responsibilities", "vacancy_text",
+                    "reason_of_communication", "vacancy_stack", "salary_range"]
+    if not case.company_hidden:  # при hidden имя компании скрыто (его утечку ловит отдельный чек)
+        allowed_keys.append("hiring_company_name")
+    for k in allowed_keys:
         v = str(case.input.get(k) or "").strip()
         if v:
             allowed[k] = v
