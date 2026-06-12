@@ -7,8 +7,12 @@
 
 Итог кейса (passed) = НИ ОДИН ответ ассистента не нарушил гардрейлы. quality ≠ infra: сбой разговора → errors.
 
+Режимы входа: golden (дефолт, реплики из golden.yaml) · `--generate` (адаптивный LLM-кандидат по персонам
+из personas.yaml — диалоги разнятся от прогона к прогону, persona×`--variants`) · `--offline` (replay + эвристики).
+
   python -m qa_harness.runners.screening_guardrails --offline
   python -m qa_harness.runners.screening_guardrails
+  python -m qa_harness.runners.screening_guardrails --generate --variants 2 --gen-seed 42
 """
 
 from __future__ import annotations
@@ -22,7 +26,8 @@ from typing import Any, Dict, List
 
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
-from qa_harness.domain.screening import ScreeningConversation
+from qa_harness.domain.generators import CandidateAgent, GenerationPolicy, VariantSampler
+from qa_harness.domain.screening import ScreeningConversation, run_adaptive_conversation
 from qa_harness.domain.screening_guardrails import (
     GoldenCase,
     GuardrailJudge,
@@ -31,6 +36,8 @@ from qa_harness.domain.screening_guardrails import (
     heuristic_repeated_questions,
     heuristic_self_answer,
     load_golden,
+    load_personas,
+    persona_constraints,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -39,6 +46,8 @@ DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "screening_guardrails"
 PROMPT_COMPONENT = "screening_assistant"
 DEFAULT_EVAL_MODEL = "gpt-4.1"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
+DEFAULT_MAX_TURNS = 6
 DEFAULT_RECRUITER_NAME = "Анна"
 DEFAULT_VACANCY_INFO: Dict[str, Any] = {
     "title": "Python Backend Developer",
@@ -64,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="screening_guardrails QA runner (live screening_assistant multi-turn).")
     p.add_argument("--golden", type=Path, default=DEFAULT_GOLDEN)
     p.add_argument("--offline", action="store_true", help="Replay offline_turns + эвристики (без сети/судьи).")
+    # --- режим вариативной генерации (адаптивный LLM-кандидат по персонам) ---
+    p.add_argument("--generate", action="store_true",
+                   help="Вариативный режим: диалоги генерит адаптивный LLM-кандидат по персонам (а не из golden).")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора кандидата (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed разнообразия стилей.")
+    p.add_argument("--variants", type=int, default=1, help="Сколько вариативных диалогов на персону (--generate).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора кандидата (--generate).")
+    p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Макс. ходов кандидата в адаптивном диалоге.")
+    p.add_argument("--gen-retries", type=int, default=1, help="Повторов генерации реплики при провале валидации.")
+    p.add_argument("--personas", type=Path, default=None, help="YAML персон (по умолч. — fixtures).")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель LLM-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None, help="Override screening_assistant prompt_id.")
     p.add_argument("--prompt-version", default=None)
@@ -119,6 +138,34 @@ def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bo
     return res
 
 
+def _process_generate(item: Any, *, client: Any, prompt: Any, judge: Any, gen_client: Any, gen_model: str,
+                      sampler: VariantSampler, max_turns: int, gen_policy: GenerationPolicy) -> Dict[str, Any]:
+    """Одна (персона, вариант): адаптивный LLM-кандидат ↔ ассистент, затем guardrail-судья по каждому ходу."""
+    persona, persona_index, variant = item
+    res: Dict[str, Any] = {"case": None, "persona": str(persona["key"]), "variant": variant,
+                           "mode": "generate", "turns": [], "gen_sources": [], "call_error": None}
+    constraints = persona_constraints(persona)
+    style = sampler.at(persona_index * 1000 + variant)
+    agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
+    conv = ScreeningConversation(client, prompt.prompt_id, prompt.prompt_version,
+                                 DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
+    eff_turns = constraints.max_turns or max_turns
+    result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
+    if result.error:
+        res["call_error"] = result.error
+        return res
+    for t in result.turns:
+        verdict, jusage = judge.evaluate(t.candidate, t.reply, t.end)
+        res["gen_sources"].append(t.candidate_source)
+        res["turns"].append({"candidate": t.candidate, "reply": t.reply, "end": t.end,
+                             "self_answer": verdict.self_answer, "repeated": verdict.repeated_questions,
+                             "premature": verdict.premature_end, "topics": verdict.repeated_topics,
+                             "comment": verdict.comment, "used_heuristics": verdict.used_heuristics,
+                             "usage": t.assistant_usage, "judge_usage": jusage, "gen_usage": t.gen_usage,
+                             "source": t.candidate_source})
+    return res
+
+
 def run(args: argparse.Namespace) -> Dict[str, Path]:
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
@@ -126,8 +173,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, PROMPT_COMPONENT, cli_id=args.prompt_id, cli_version=args.prompt_version)
 
+    if args.generate and args.offline:
+        raise ValueError("--generate несовместим с --offline (вариативная генерация требует сети).")
+
     client = judge = None
     eval_model = None
+    gen_setup: Dict[str, Any] = {}
     if not args.offline:
         from qa_harness.core.llm_client import ModelClient, get_client
 
@@ -137,24 +188,49 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         eval_model = args.eval_model
         judge = GuardrailJudge(ModelClient(eval_model, timeout=args.step1_timeout))
 
-    cases = load_golden(args.golden)
+    if args.generate:
+        gen_seed = args.gen_seed if args.gen_seed is not None else (prompt.seed if prompt.seed is not None else 0)
+        from qa_harness.core.llm_client import ModelClient
+
+        personas = load_personas(args.personas)
+        gen_setup = dict(
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_model=args.gen_model,
+            sampler=VariantSampler(gen_seed),
+            max_turns=args.max_turns,
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+        )
+        work_items: List[Any] = [(p, pi, v) for pi, p in enumerate(personas)
+                                 for v in range(max(1, args.variants))]
+        models = {"candidate_generator": args.gen_model, "assistant": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "generate", "personas": len(personas), "variants": args.variants,
+                    "gen_model": args.gen_model, "gen_seed": gen_seed, "temperature": args.temperature,
+                    "max_turns": args.max_turns, "workers": args.workers, "eval_model": eval_model}
+    else:
+        work_items = list(load_golden(args.golden))
+        models = {"generator": None, "assistant": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "golden", "offline": bool(args.offline), "golden": len(work_items),
+                    "workers": args.workers, "eval_model": eval_model}
 
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": PROMPT_COMPONENT, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models={"generator": prompt.prompt_id, "evaluator": eval_model},
+        models=models,
         seed=prompt.seed,
-        args={"offline": bool(args.offline), "golden": len(cases), "workers": args.workers, "eval_model": eval_model},
+        args=run_args,
     )
 
     usage_bucket = blank_usage()
-    m, reasons = Counter(), Counter()
+    gen_usage_bucket = blank_usage()
+    m, reasons, gen_sources = Counter(), Counter(), Counter()
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"guardrails": dict(m), "reasons": dict(reasons)}
+        if args.generate:
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -163,18 +239,28 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         return write_reports(args.out_dir, RUNNER, run_id, md, cd)
 
     def _fold(res: Dict[str, Any]) -> None:
-        case: GoldenCase = res["case"]
+        is_gen = res.get("mode") == "generate"
         for t in res["turns"]:
             accumulate_usage(usage_bucket, t.get("usage"))
             accumulate_usage(usage_bucket, t.get("judge_usage"))
-        cid = f"golden:{case.name}:v1"
+            accumulate_usage(usage_bucket, t.get("gen_usage"))
+            accumulate_usage(gen_usage_bucket, t.get("gen_usage"))
+        for src in res.get("gen_sources", []):
+            gen_sources[src] += 1
+        if is_gen:
+            label = f"{res['persona']}/v{res['variant']}"
+            cid = f"persona:{res['persona']}:v{res['variant']}"
+        else:
+            case: GoldenCase = res["case"]
+            label = case.name
+            cid = f"golden:{case.name}:v1"
 
         if res["call_error"]:
             rb.add_error(cid, res["call_error"])
             reasons[res["call_error"].split(":")[0]] += 1
             m["call_error"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {case.name}: {res['call_error']}")
+                print(f"  [ERR ] {label}: {res['call_error']}")
             return
         if not res["turns"]:
             rb.add_error(cid, "no_turns")
@@ -213,28 +299,38 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         passed = not violating
         if passed:
             m["passed_conversations"] += 1
+        scenario_meta: Dict[str, Any] = ({"persona": res["persona"], "variant": res["variant"],
+                                          "gen_sources": res.get("gen_sources", [])}
+                                         if is_gen else {"candidate_name": res["case"].candidate_name})
         rb.add_case(CaseRecord(
-            case_id=cid, source="suite", passed=passed,
+            case_id=cid, source="synthetic" if is_gen else "suite", passed=passed,
             inputs={"criterion": "no self_answer/repeated_questions/premature_end in assistant turns",
-                    "scenario": {"candidate_name": case.candidate_name}},
+                    "scenario": scenario_meta},
             transcript=transcript,
             verdict={"evaluator": "screening_guardrails_heuristic" if args.offline else "screening_guardrails_llm_judge",
                      "model": eval_model, "passed": passed, "reason_codes": rc,
                      "meta": {"used_heuristics": used_heur_any}},
         ))
         if not args.quiet:
-            print(f"  [{'ok ' if passed else 'MISS'}] {case.name} turns={len(res['turns'])} "
+            print(f"  [{'ok ' if passed else 'MISS'}] {label} turns={len(res['turns'])} "
                   f"violations={len(rc)}{' (heur)' if used_heur_any else ''}")
 
-    total = len(cases)
+    total = len(work_items)
+
+    if args.generate:
+        def _work(it):
+            return _process_generate(it, client=client, prompt=prompt, judge=judge, **gen_setup)
+    else:
+        def _work(c):
+            return _process(c, client, prompt, judge, args.offline)
 
     def _on_interrupt() -> None:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
     outcome = run_cases(
-        cases,
-        work=lambda c: _process(c, client, prompt, judge, args.offline),
+        work_items,
+        work=_work,
         fold=_fold,
         max_workers=max(1, args.workers),
         checkpoint_every=args.checkpoint_every,

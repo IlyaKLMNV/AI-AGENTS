@@ -12,8 +12,12 @@ from .detectors import (
     heuristic_self_answer,
 )
 from .cases import GoldenCase, OfflineTurn, load_golden
+from .personas import DEFAULT_PERSONAS, load_personas, persona_constraints
 
 __all__ = [
+    "load_personas",
+    "persona_constraints",
+    "DEFAULT_PERSONAS",
     "GuardrailJudge",
     "GuardrailVerdict",
     "EVAL_INSTRUCTION",

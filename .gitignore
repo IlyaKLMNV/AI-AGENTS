@@ -38,6 +38,8 @@ tests/fixtures/*
 !tests/fixtures/generation/
 !tests/fixtures/generation/screening_scenarios/
 !tests/fixtures/generation/screening_scenarios/constraints.yaml
+!tests/fixtures/generation/screening_guardrails/
+!tests/fixtures/generation/screening_guardrails/personas.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
