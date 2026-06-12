@@ -35,6 +35,9 @@ tests/fixtures/*
 !tests/fixtures/first_touch_event/golden.yaml
 !tests/fixtures/screening_guardrails/
 !tests/fixtures/screening_guardrails/golden.yaml
+!tests/fixtures/generation/
+!tests/fixtures/generation/screening_scenarios/
+!tests/fixtures/generation/screening_scenarios/constraints.yaml
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
