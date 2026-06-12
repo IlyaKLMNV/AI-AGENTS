@@ -5,7 +5,13 @@ from .engine import Attempt, GenResult, GenerationPolicy, generate_valid
 from .candidate_agent import CandidateAgent, CandidateConstraints, validate_candidate_turn
 from .autofill_gen import AutofillDialogueGenerator, AutofillSpec, WORK_FORMATS, validate_autofill_dialogue
 from .vacancy_gen import DOMAINS, SENIORITIES, VacancyGenerator, VacancySpec
-from .responsibilities_gen import SOFT_NOISE, TECH_VOCAB, ResponsibilitiesGenerator, ResponsibilitiesSpec
+from .responsibilities_gen import (
+    CONDITIONS_NOISE,
+    SOFT_NOISE,
+    TECH_VOCAB,
+    ResponsibilitiesGenerator,
+    ResponsibilitiesSpec,
+)
 from .profile_gen import CandidateProfileGenerator, CandidateProfileSpec
 from .variety import VariantSampler, VariantStyle
 from .dialogue_gen import DialogueGenerator, DialogueSpec, validate_generated_dialogue
@@ -34,6 +40,7 @@ __all__ = [
     "ResponsibilitiesSpec",
     "TECH_VOCAB",
     "SOFT_NOISE",
+    "CONDITIONS_NOISE",
     "CandidateProfileGenerator",
     "CandidateProfileSpec",
     "VariantSampler",

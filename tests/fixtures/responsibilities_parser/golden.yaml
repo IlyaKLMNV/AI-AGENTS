@@ -1,73 +1,86 @@
-# Курируемые golden-кейсы для теста промпта responsibilities_parser.
-# Вход — `vacancy` (текст). Ожидания на СПИСОК ключевых слов, который должен вернуть промпт:
-#   expect — ИЛИ-группы обязательных терминов (группа ок, если хоть одна форма совпала с ключевым словом);
-#   forbid — термины, которых в списке быть НЕ должно;
-#   offline_output — что мог бы выдать промпт; для `--offline` (replay). Должен проходить контракт формы
-#     (1..5 терминов, каждый 1..3 слова, без чисел-одиночек/запятых, ≤60), expect/forbid и заземление в тексте.
+# Golden-кейсы responsibilities_parser (НОВАЯ задача: 0..5 проверяемых требований-ПРЕДЛОЖЕНИЙ).
+#
+# expect — ИЛИ-группы обязательных КРИТЕРИЕВ, которые должны быть ПОКРЫТЫ внутри требований-предложений
+#   (концепт «Python» матчится внутри «У кандидата есть опыт разработки на Python»);
+# forbid — концепты, которых быть НЕ должно (nice-to-have / soft / условия);
+# expect_empty: true — правильный ответ это пустой массив [] (обязательных требований в вакансии нет);
+# offline_output — каннный вывод требований-предложений для --offline (должен проходить контракт формы:
+#   0..5 элементов, не keyword-подобны, без объединения критериев, ≤250, без дублей).
 
-- name: python_backend
-  vacancy: |
-    Python-разработчик (Backend). Обязанности: разработка на Django, проектирование REST API,
-    работа с PostgreSQL, контейнеризация в Docker, написание тестов.
-    Требования: Python, Django, PostgreSQL, Docker.
+- name: python_backend_requirements
+  vacancy: >
+    Python-разработчик Backend.
+    Требования: опыт разработки на Python, опыт работы с Django,
+    опыт работы с PostgreSQL, понимание REST API.
+    Будет плюсом опыт с React.
+    Мы предлагаем ДМС и гибкий график.
   expect:
-    - [Python]
-    - [Django]
-    - [PostgreSQL, Postgres]
-  forbid: [React]
-  offline_output: ["Python", "Django", "PostgreSQL", "REST API", "Docker"]
+    - ["Python"]
+    - ["Django"]
+    - ["PostgreSQL", "Postgres"]
+    - ["REST API"]
+  forbid:
+    - "React"
+    - "ДМС"
+    - "гибкий график"
+  offline_output:
+    - "У кандидата есть опыт разработки на Python."
+    - "У кандидата есть опыт работы с Django."
+    - "У кандидата есть опыт работы с PostgreSQL."
+    - "У кандидата есть опыт работы с REST API."
 
-- name: react_frontend
-  vacancy: |
-    Frontend-разработчик. Обязанности: разработка интерфейсов на React, типизация TypeScript,
-    управление состоянием Redux, адаптивная вёрстка.
+- name: mandatory_vs_nice_to_have
+  vacancy: >
+    Требования: опыт разработки на Python, опыт работы с PostgreSQL.
+    Будет плюсом: опыт с Kubernetes и GraphQL.
   expect:
-    - [React]
-    - [TypeScript]
-    - [Redux]
-  forbid: [Python]
-  offline_output: ["React", "TypeScript", "Redux", "вёрстка"]
+    - ["Python"]
+    - ["PostgreSQL", "Postgres"]
+  forbid:
+    - "Kubernetes"
+    - "GraphQL"
+  offline_output:
+    - "У кандидата есть опыт разработки на Python."
+    - "У кандидата есть опыт работы с PostgreSQL."
 
-- name: devops_sre
-  vacancy: |
-    SRE / DevOps инженер. Обязанности: эксплуатация Kubernetes, сборки в Docker, инфраструктура
-    как код через Terraform, настройка CI/CD, мониторинг сервисов.
+- name: devops_requirements
+  vacancy: >
+    SRE / DevOps инженер.
+    Требования: уверенный опыт эксплуатации Kubernetes, опыт работы с Terraform,
+    опыт настройки CI/CD.
+    Будет плюсом знакомство с Prometheus.
   expect:
-    - [Kubernetes, k8s]
-    - [Docker]
-    - [Terraform]
-  forbid: []
-  offline_output: ["Kubernetes", "Docker", "Terraform", "CI/CD", "мониторинг"]
+    - ["Kubernetes", "k8s"]
+    - ["Terraform"]
+    - ["CI/CD"]
+  forbid:
+    - "Prometheus"
+  offline_output:
+    - "У кандидата есть опыт эксплуатации Kubernetes."
+    - "У кандидата есть опыт работы с Terraform."
+    - "У кандидата есть опыт настройки CI/CD."
 
-- name: data_scientist
-  vacancy: |
-    Data Scientist. Обязанности: построение моделей машинного обучения на Python,
-    обучение сетей в PyTorch, задачи NLP, эксперименты и метрики.
-  expect:
-    - [Python]
-    - [PyTorch, TensorFlow]
-    - [NLP]
-  forbid: [Java]
-  offline_output: ["Python", "PyTorch", "NLP", "метрики"]
+- name: no_requirements
+  vacancy: >
+    Описание компании: мы молодая дружная команда, делаем полезный продукт.
+    Условия: удалённая работа, ДМС, гибкий график.
+    Требования к кандидату не указаны.
+  expect_empty: true
+  forbid:
+    - "удалённая работа"
+    - "ДМС"
+    - "гибкий график"
+    - "дружная команда"
+  offline_output: []
 
-- name: qa_automation
-  vacancy: |
-    QA Automation Engineer. Обязанности: автоматизация тестов на Selenium и Python,
-    написание pytest-сценариев, API-тестирование сервисов.
-  expect:
-    - [Selenium]
-    - [Python]
-    - [pytest]
-  forbid: [manual]
-  offline_output: ["Selenium", "Python", "pytest", "API-тестирование"]
-
-- name: golang_backend
-  vacancy: |
-    Backend-разработчик Go (Golang). Обязанности: разработка микросервисов, gRPC-интерфейсы,
-    работа с PostgreSQL и Kafka, высоконагруженные сервисы.
-  expect:
-    - [Golang, Go]
-    - [gRPC]
-    - [Kafka]
-  forbid: [Python, PHP]
-  offline_output: ["Golang", "gRPC", "Kafka", "PostgreSQL", "микросервисы"]
+- name: only_nice_to_have
+  vacancy: >
+    Backend-разработчик.
+    Будет плюсом опыт с Kubernetes, Kafka и GraphQL.
+    Обязательные требования не указаны.
+  expect_empty: true
+  forbid:
+    - "Kubernetes"
+    - "Kafka"
+    - "GraphQL"
+  offline_output: []

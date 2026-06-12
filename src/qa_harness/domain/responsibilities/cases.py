@@ -18,8 +18,9 @@ import yaml
 class GoldenCase:
     name: str
     vacancy: str
-    expect: List[Any] = field(default_factory=list)   # ИЛИ-группы обязательных терминов
-    forbid: List[Any] = field(default_factory=list)    # запрещённые термины
+    expect: List[Any] = field(default_factory=list)   # ИЛИ-группы обязательных критериев (внутри требований)
+    forbid: List[Any] = field(default_factory=list)    # запрещённые концепты (nice-to-have/soft/условия)
+    expect_empty: bool = False                         # правильный ответ — пустой массив (нет обязательных требований)
     offline_output: Optional[List[str]] = None         # replay для --offline
 
 
@@ -46,6 +47,7 @@ def load_golden(path: Path) -> List[GoldenCase]:
                 vacancy=vacancy,
                 expect=item.get("expect") or [],
                 forbid=item.get("forbid") or [],
+                expect_empty=bool(item.get("expect_empty")),
                 offline_output=[str(x) for x in oo] if isinstance(oo, list) else None,
             )
         )

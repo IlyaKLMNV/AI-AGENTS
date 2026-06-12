@@ -1,12 +1,13 @@
 """Семантика responsibilities_parser по golden + заземление.
 
 Контракт (contract.py) проверяет ФОРМУ списка; здесь — СМЫСЛ:
-- `check_semantics(predicted, expect, forbid)` (gate): ожидаемые термины извлечены, запрещённые — нет.
-  expect — список ИЛИ-групп: группа удовлетворена, если хоть одна форма совпала с каким-то ключевым
-  словом (нормализованная подстрока в обе стороны).
-- `grounding_misses(predicted, vacancy_text)` (СИГНАЛ, не gate): какие ключевые слова не найдены в тексте
-  вакансии. Матчинг с лёгким стеммером (англ./рус. окончания) + prefix, чтобы не ловить ложные miss на
-  склонениях («микросервисы» ≈ «микросервисов», «модели» ≈ «моделей»). Стеммер перенесён из легаси.
+- `check_semantics(predicted, expect, forbid)` (gate): ожидаемые КРИТЕРИИ покрыты ВНУТРИ требований-
+  предложений, запрещённые — нет. expect — список ИЛИ-групп: группа удовлетворена, если хоть одна форма
+  совпала с каким-то требованием (нормализованная подстрока в обе стороны — концепт «Python» матчится
+  внутри «У кандидата есть опыт разработки на Python»). forbid аналогично (nice-to-have/soft/условия).
+- `grounding_missing_anchors(predicted, vacancy_text)` (СИГНАЛ, не gate): какие ANCHOR-термы (латиница-
+  технологии + ключевые ru-якоря) из требований НЕ найдены в тексте вакансии. Не валит кейс: промпт
+  легально переформулирует предложение, поэтому заземляем только опорные термы, а не всю фразу.
 """
 
 from __future__ import annotations
@@ -89,14 +90,36 @@ def _token_match(a: str, b: str) -> bool:
     return len(shorter) >= 4 and longer.startswith(shorter)  # склонение/стем-вариация
 
 
-def grounding_misses(predicted: List[str], vacancy_text: str) -> List[str]:
-    """Ключевые слова, не заземлённые в тексте вакансии (по стем-токенам). Сигнал, не gate."""
+# Опорные термы: латиница-технологии (Node.js/CI-CD/gRPC) + ключевые ru-якоря (важны для проверяемости).
+_ANCHOR_LATIN = re.compile(r"[A-Za-z][A-Za-z0-9+.#/_-]{1,}")
+_RU_ANCHORS = ("английск", "сертификат", "высше", "образовани", "магистр", "бакалавр", "релокац")
+
+
+def _anchor_terms(requirement: str) -> List[str]:
+    """Опорные термы требования: латиница-технологии + ключевые ru-якоря (если есть)."""
+    out: List[str] = [t.rstrip(".,/;:-_") for t in _ANCHOR_LATIN.findall(requirement or "")]
+    out = [t for t in out if len(t) >= 2]
+    low = (requirement or "").lower()
+    out += [a for a in _RU_ANCHORS if a in low]
+    return out
+
+
+def grounding_missing_anchors(predicted: List[str], vacancy_text: str) -> List[str]:
+    """ANCHOR-термы требований, не заземлённые в тексте вакансии (стем-матч). СИГНАЛ, не gate.
+
+    Заземляем только опорные термы (технологии/ключевые якоря), а не всю фразу — промпт законно
+    переформулирует требование, поэтому полнотекстовый грундинг давал бы ложные miss.
+    """
     text_tokens = _stem_tokens(vacancy_text)
     misses: List[str] = []
-    for kw in predicted:
-        kw_tokens = _stem_tokens(kw)
-        if not kw_tokens:
-            continue
-        if not all(any(_token_match(kt, tt) for tt in text_tokens) for kt in kw_tokens):
-            misses.append(kw)
+    seen: set = set()
+    for req in predicted:
+        for anchor in _anchor_terms(req):
+            key = anchor.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            a_tokens = _stem_tokens(anchor)
+            if a_tokens and not all(any(_token_match(at, tt) for tt in text_tokens) for at in a_tokens):
+                misses.append(anchor)
     return misses

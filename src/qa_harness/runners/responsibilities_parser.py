@@ -32,6 +32,7 @@ import random
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
+    CONDITIONS_NOISE,
     SOFT_NOISE,
     TECH_VOCAB,
     GenerationPolicy,
@@ -43,7 +44,7 @@ from qa_harness.domain.responsibilities import (
     GoldenCase,
     check_contract,
     check_semantics,
-    grounding_misses,
+    grounding_missing_anchors,
     load_golden,
     parse_keywords,
 )
@@ -104,25 +105,29 @@ def _process(case: GoldenCase, client: Any, offline: bool) -> Dict[str, Any]:
 
 def _process_generate(variant: int, *, client: Any, gen_client: Any, gen_policy: GenerationPolicy,
                       gen_seed: int, core_n: int) -> Dict[str, Any]:
-    """Один вариант: засеваем core/soft → LLM пишет текст обязанностей → парсер → судья по expect(core)/forbid(soft)."""
+    """Один вариант: засеваем обязательные core + nice-to-have/soft/условия → LLM пишет вакансию с секциями
+    → парсер → судья: expect = core (обязательные требования покрыты), forbid = nice/soft/условия (НЕ требования)."""
     rng = random.Random(f"{gen_seed}:{variant}")
     domain = rng.choice(list(TECH_VOCAB))
     vocab = TECH_VOCAB[domain]
     core = rng.sample(vocab, min(core_n, len(vocab)))
+    nice = rng.sample([t for t in vocab if t not in core], min(2, max(0, len(vocab) - len(core))))
     soft = rng.sample(SOFT_NOISE, 2)
+    conditions = rng.sample(CONDITIONS_NOISE, 2)
     res: Dict[str, Any] = {"case": None, "predicted": None, "raw": None, "call_error": None,
                            "parse_error": None, "usage": None, "mode": "generate", "variant": variant,
                            "gen_source": None, "gen_usage": None}
     gen = ResponsibilitiesGenerator(gen_client)
-    gr = generate_valid(lambda _a: (gen.generate(ResponsibilitiesSpec(domain, core, soft, noise_level=variant % 3)), None),
-                        policy=gen_policy)
+    gr = generate_valid(
+        lambda _a: (gen.generate(ResponsibilitiesSpec(domain, core, soft, nice, conditions, noise_level=variant % 3)), None),
+        policy=gen_policy)
     res["gen_source"] = gr.source
     res["gen_usage"] = dict(gen.usage)
     if not gr.ok:
         res["call_error"] = f"text_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}"
         return res
     case = GoldenCase(name=f"v{variant}_{domain}", vacancy=str(gr.item),
-                      expect=[[t] for t in core], forbid=list(soft))
+                      expect=[[t] for t in core], forbid=list(nice) + list(soft) + list(conditions))
     res["case"] = case
     base = {"mode": "generate", "variant": variant, "gen_source": res["gen_source"], "gen_usage": res["gen_usage"]}
     res2 = _process(case, client, offline=False)
@@ -229,8 +234,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         else:
             predicted = res["predicted"]
             contract_ok, contract_issues, _details = check_contract(predicted)
-            semantic_ok, sem_diffs = check_semantics(predicted, case.expect, case.forbid)
-            grounding = grounding_misses(predicted, case.vacancy)
+            if case.expect_empty:                   # правильный ответ — пустой массив (нет обязательных требований)
+                semantic_ok = (len(predicted) == 0)
+                sem_diffs = [] if semantic_ok else [f"expected_empty:got={len(predicted)}"]
+            else:
+                semantic_ok, sem_diffs = check_semantics(predicted, case.expect, case.forbid)
+            grounding = grounding_missing_anchors(predicted, case.vacancy)
             m["keywords_total"] += len(predicted)
             if contract_ok:
                 m["contract_pass"] += 1
@@ -250,10 +259,11 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         checks = [
             {"rule": "format", "passed": bool(contract_ok), "detail": ",".join(contract_issues)},
             {"rule": "semantic", "passed": bool(semantic_ok), "detail": ",".join(sem_diffs[:8])},
-            {"rule": "grounding(info)", "passed": not grounding, "detail": ",".join(grounding[:5])},
+            {"rule": "grounding_anchors(info)", "passed": not grounding, "detail": ",".join(grounding[:5])},
         ]
-        inputs: Dict[str, Any] = {"criterion": "format(1..5 терминов, 1..3 слова) + semantic(golden expect/forbid)",
-                                  "vacancy": case.vacancy, "expect": case.expect, "forbid": case.forbid}
+        inputs: Dict[str, Any] = {"criterion": "format(0..5 требований-предложений) + semantic(golden expect/forbid; expect_empty)",
+                                  "vacancy": case.vacancy, "expect": case.expect, "forbid": case.forbid,
+                                  "expect_empty": case.expect_empty}
         if is_gen:
             inputs["variant"] = res["variant"]
             inputs["gen_source"] = res.get("gen_source")
