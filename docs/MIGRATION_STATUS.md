@@ -325,3 +325,49 @@ screening_assistant` | `screening_assistant_hh`). Сценарии берём и
   у остальных в CSV пусто поле примеров); сценарий без примеров → **skip** (`metrics.scenarios.skipped_no_examples`), не `failed`/`errors`;
 - `passed` (кейс = сценарий) = поведение ассистента соответствует `expected_behavior` по сути (тон/формулировки не важны);
 - quality ≠ infra: сбой разговора/судьи → `errors`, не `failed`.
+
+## Вариативная LLM-генерация (движок `domain/generators`) — режим `--generate`
+
+Поверх курируемых golden у раннеров есть режим `--generate`: входы генерит LLM, чтобы проверять робастность
+промпта на РАЗНЫХ входах (реальные диалоги/вакансии разнятся), а не на фиксированном эталоне. golden остаётся
+как режим (детерминизм для CI), `--offline` — replay. Это НЕ откат к старой синтетике: общий движок с
+валидацией-гейтом, ретраями и трассой; генерация при `temperature>0` недетерминирована → не для CI-гейта.
+
+**Ядро движка:**
+
+| Кусок | Что | Где |
+|---|---|---|
+| `generate_valid` | produce → validate → retry → fallback + трасса (`GenResult`) | `domain/generators/engine.py` |
+| `VariantSampler` | seeded поверхностный стиль (тон/объём) для разнообразия | `domain/generators/variety.py` |
+| адаптивный кандидат | `CandidateAgent.next_turn` — отвечает на реплики ассистента вживую | `domain/generators/candidate_agent.py` |
+| цикл ассистент↔кандидат | `run_adaptive_conversation` | `domain/screening/adaptive.py` |
+| генераторы входов | `CandidateMessage`/`Dialogue`/`Autofill`/`Vacancy`/`Responsibilities` | `domain/generators/*_gen.py` |
+
+**Три типа producer:** (1) адаптивный LLM-кандидат (scenarios/guardrails — реагирует на ассистента);
+(2) seeded-метка (классификаторы/autofill/responsibilities/one_line — засеваем класс/формат/термины → `expect`);
+(3) генератор контекста (`VacancyGenerator` — first_touch).
+
+**fallback — опция per-runner:** вкл. где запас безвреден (scenarios — канон-реплика); ВЫКЛ для размеченных
+данных (классификаторы/autofill/responsibilities/one_line) — недодать (`errors`) лучше, чем мислейбл в метрику.
+
+**Покрытие `--generate`:**
+
+| Раннер | Producer | Проверен живьём |
+|---|---|---|
+| screening_scenarios | адаптивный кандидат + `constraints.yaml` | ✅ |
+| screening_guardrails | адаптивный кандидат + `personas.yaml` (9) | ✅ 9/9 |
+| screening_autofill | батч-диалог с известным work_format | ✅ 6/6 |
+| message_classifier | seeded-сообщение (известный класс) | ✅ 95% |
+| verdict_classifier | seeded-диалог (известный вердикт) | ✅ 100% |
+| first_touch (+hh) | `VacancyGenerator` | ✅ 4/4 |
+| responsibilities_parser | seeded-текст (core-термины → expect) | ✅ 5/5 |
+| one_line_search_query_builder | seeded-вакансия (только step1) | ✅ 5/5 |
+| sourcing_assistant | — | ⏸ НЕ покрыт (backend-coupled, низкая отдача) |
+
+**Констрейнты/персоны/словари — ДАННЫЕ:** `tests/fixtures/generation/<runner>/*.yaml`;
+`TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` — в `domain/generators`.
+
+**Находки от вариативной генерации (что движок выявил как детектор):**
+- screening_assistant: преждевременный `END` на запрос паузы (сценарий 50) — кандидат на находку для промпта;
+- first_touch: пробел в allowed-context судьи (`vacancy_stack`/`hiring_company_name` не попадали → ложные
+  галлюцинации) — пофикшено; нереалистичность генератора (имя компании в `company_description`) — пофикшено.

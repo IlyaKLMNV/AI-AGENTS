@@ -28,6 +28,29 @@
 - extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
   (step1/step2/step3); конкурентность + fail-fast + чекпоинты. См. `docs/EXTRACTOR_REDESIGN.md`.
 
+## Вариативная генерация (движок `domain/generators`)
+Помимо курируемых golden у раннеров есть режим `--generate` — вариативная LLM-генерация входов, чтобы
+проверять робастность промпта на РАЗНЫХ входах (а не на фиксированном эталоне). Общий движок:
+- `core` — `generate_valid(produce, validate, policy, fallback)`: цикл **produce → validate → retry → fallback**
+  + трасса (`GenResult.source` = `llm|fallback|failed`, attempts, usage). Не знает домена — вызывающий
+  замыкает контекст/клиент в `produce`. Исчерпание → `source=failed` (не бросает) → раннер в `errors`.
+- `VariantSampler(seed)` — детерминированный поверхностный стиль (тон/объём) для разнообразия прогонов.
+- **Три типа producer:** (1) адаптивный LLM-кандидат `CandidateAgent` (отвечает на реплики ассистента вживую
+  — screening_scenarios/guardrails); (2) seeded-сообщение/диалог с известной меткой (классификаторы,
+  autofill work_format, responsibilities/one_line — засеваем термины → `expect`); (3) генератор контекста
+  (`VacancyGenerator` — first_touch).
+- **fallback — опция per-runner:** включён там, где запасной вариант безвреден (screening_scenarios —
+  канон-реплика); ВЫКЛючен для размеченных данных (классификаторы/autofill/responsibilities) — там лучше
+  недодать (`errors`), чем влить мислейбл в метрику.
+- **Три режима входа:** `--golden` (курируемый, детерминизм/CI) · `--generate` (вариативный) · `--offline`
+  (replay). 3 модели разведены: генератор (`gpt-4.1-mini`) ≠ судья ≠ промпт-под-тестом. `--generate` при
+  `temperature>0` НЕдетерминирован → в CI-гейт не годится (для гейта — golden).
+- Раннеры с `--generate`: **screening_scenarios, screening_guardrails, screening_autofill, message_classifier,
+  verdict_classifier, first_touch (+`--component first_touch_hh`), responsibilities_parser,
+  one_line_search_query_builder**. `sourcing_assistant` — НЕ покрыт (backend-coupled, низкая отдача).
+- Констрейнты/персоны/словари — ДАННЫЕ: `tests/fixtures/generation/<runner>/*.yaml`,
+  `TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` в `domain/generators`.
+
 ## Окружение
 ```bash
 python3 -m venv .venv && source .venv/bin/activate     # WSL/Linux
