@@ -21,8 +21,8 @@
 | responsibilities_parser | ✅ фичи | 👁 глазами | `app/responsibilities_parser_runner.py` |
 | screening_autofill | ✅ фичи | 👁 глазами | `app/screening_autofill_runner.py` |
 | screening_guardrails | ✅ фичи | 👁 глазами | `app/screening_guardrails_runner.py` |
-| screening_scenarios (std) | ✅ фичи (CSV+LLM-судья) | ⬜ глазами | `app/screening_scenarios_runner.py` |
-| screening_scenarios_hh | ✅ фичи (`--component`) | ⬜ глазами | `app/screening_scenarios_hh_runner.py` |
+| screening_scenarios (std) | ✅ фичи (CSV+LLM-судья) | 👁 глазами (7/7) | `app/screening_scenarios_runner.py` |
+| screening_scenarios_hh | ✅ фичи (`--component`) | — (нечего гонять: 0 примеров) | `app/screening_scenarios_hh_runner.py` |
 | first_touch (base) | ✅ фичи | 👁 глазами | `app/first_touch_runner.py` |
 | first_touch_hh | ✅ фичи | 👁 глазами | `app/first_touch_hh_runner.py` |
 | first_touch_event | ✅ фичи | 👁 глазами | `app/first_touch_event_runner.py` |
@@ -317,7 +317,7 @@ screening_assistant` | `screening_assistant_hh`). Сценарии берём и
 | Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн-плумбинг (load+extract без сети) | ➕ | `--offline` |
 | ~4000 строк hardcoded-эвристик и chain-групп | ⬜ | заменены LLM-судьёй против `expected_behavior` |
-| Парити-сверка | ⬜ глазами | (вручную) |
+| Парити-сверка | 👁 глазами | base 7/7 passed (2026-06-12), 0 infra-ошибок; hh — нечего гонять (0 примеров) |
 
 **Осознанные отличия от легаси:**
 - hardcoded-эвристики/chain-группы → один LLM-судья (`ScenarioJudge`) против `expected_behavior` из CSV;
