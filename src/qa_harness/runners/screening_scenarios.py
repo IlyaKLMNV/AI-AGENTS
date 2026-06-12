@@ -6,14 +6,19 @@
 Заменяет ~4000 строк hardcoded-эвристик легаси LLM-судьёй.
 
 Итог кейса (passed) = поведение ассистента соответствует ожидаемому. quality ≠ infra: сбой разговора/судьи
-→ errors; сценарий без примеров диалога → skip (пробел golden, не сбой). Онлайн гоняет только сценарии с
-примерами кандидата (в base CSV — 7 из 62; в hh CSV примеров пока нет). `--scenario-indices 1,7,12` —
-точечно; `--sample 0` — все с примерами. `--offline` — плумбинг: грузит CSV и извлекает реплики, без сети.
+→ errors; сценарий без примеров диалога → skip (пробел golden, не сбой).
+
+Три режима входа:
+- golden (дефолт): реплики кандидата из CSV-примеров; гоняет только сценарии с примерами (base 7/62);
+- `--generate`: вариативный — адаптивный LLM-кандидат (domain/generators) генерит реплики вживую, реагируя
+  на ответ ассистента; разблокирует ВСЕ сценарии (примеры не нужны). `--variants N` прогонов на сценарий,
+  `--gen-seed/--temperature` — разнообразие, `--max-turns`, `--freeze-to` — кассета для воспроизводимости;
+- `--offline`: плумбинг (грузит CSV + извлекает реплики, без сети).
 
   python -m qa_harness.runners.screening_scenarios --offline
-  python -m qa_harness.runners.screening_scenarios --sample 5
-  python -m qa_harness.runners.screening_scenarios --scenario-indices 1,7,12
-  python -m qa_harness.runners.screening_scenarios --component screening_assistant_hh --offline
+  python -m qa_harness.runners.screening_scenarios --sample 5                      # golden
+  python -m qa_harness.runners.screening_scenarios --generate --sample 5 --variants 2
+  python -m qa_harness.runners.screening_scenarios --generate --scenario-indices 1,4,12 --gen-seed 42
 """
 
 from __future__ import annotations
@@ -28,12 +33,15 @@ from typing import Any, Dict, List
 
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
-from qa_harness.domain.screening import ScreeningConversation
+from qa_harness.domain.generators import CandidateAgent, GenerationPolicy, VariantSampler
+from qa_harness.domain.screening import ScreeningConversation, run_adaptive_conversation
 from qa_harness.domain.screening_scenarios import (
     END_MARKER,
     Scenario,
     ScenarioJudge,
+    constraints_for,
     extract_candidate_examples,
+    load_constraints,
     load_scenarios,
     parse_scenario_indices,
 )
@@ -49,6 +57,8 @@ COMPONENT_CSV = {
     "screening_assistant_hh": FIXTURES / "screening_scenarios_hh.csv",
 }
 DEFAULT_EVAL_MODEL = "gpt-4.1"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
+DEFAULT_MAX_TURNS = 6
 DEFAULT_RECRUITER_NAME = "Анна"
 DEFAULT_VACANCY_INFO: Dict[str, Any] = {
     "title": "Python Backend Developer",
@@ -74,6 +84,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario-indices", default=None, help="Точечные номера строк CSV, напр. 1,7,12 (override --sample).")
     p.add_argument("--max-examples", type=int, default=4, help="Сколько реплик кандидата брать из примеров на сценарий.")
     p.add_argument("--offline", action="store_true", help="Плумбинг: грузим CSV + извлекаем реплики, без сети.")
+    # --- режим вариативной генерации (адаптивный LLM-кандидат) ---
+    p.add_argument("--generate", action="store_true",
+                   help="Вариативный режим: реплики кандидата генерит адаптивный LLM (а не из CSV-примеров).")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора кандидата (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed разнообразия стилей (по умолч. = --seed).")
+    p.add_argument("--variants", type=int, default=1, help="Сколько вариативных прогонов на сценарий (--generate).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора кандидата (--generate).")
+    p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Макс. ходов кандидата в адаптивном диалоге.")
+    p.add_argument("--gen-retries", type=int, default=1, help="Повторов генерации реплики при провале валидации.")
+    p.add_argument("--constraints", type=Path, default=None, help="YAML констрейнтов генерации (по умолч. — fixtures).")
+    p.add_argument("--freeze-to", type=Path, default=None, help="Сохранить сгенерённые реплики кассетой (JSON) для воспроизводимости.")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
@@ -125,18 +146,54 @@ def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examp
                              "end": result.conversation_end, "usage": result.usage})
         if result.conversation_end:
             break
-    def _fmt_turn(t: Dict[str, Any]) -> str:
+    _judge_into(res, judge, scenario)
+    return res
+
+
+def _transcript_text(turns: List[Dict[str, Any]]) -> str:
+    """Текст диалога для судьи; реплику, завершившую диалог, метим END_MARKER (служебный END вырезан)."""
+    def _fmt(t: Dict[str, Any]) -> str:
         reply = str(t["reply"] or "")
-        if t["end"]:  # ассистент завершил диалог — служебный END в текст не попадает, метим маркером для судьи
+        if t["end"]:
             reply = (reply + " " + END_MARKER).strip()
         return f"[Кандидат] {t['candidate']}\n[Ассистент] {reply}"
 
-    transcript_text = "\n".join(_fmt_turn(t) for t in res["turns"])
+    return "\n".join(_fmt(t) for t in turns)
+
+
+def _judge_into(res: Dict[str, Any], judge: Any, scenario: Scenario) -> None:
+    """Прогнать судью по res['turns'] и положить verdict/judge_usage (или call_error)."""
     try:
-        verdict, jusage = judge.evaluate(scenario, transcript_text)
+        verdict, jusage = judge.evaluate(scenario, _transcript_text(res["turns"]))
         res["verdict"], res["judge_usage"] = verdict, jusage
     except Exception as e:  # noqa: BLE001
         res["call_error"] = f"judge:{type(e).__name__}:{e}"
+
+
+def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: Any, gen_client: Any,
+                      gen_model: str, constraints_entries: list, sampler: VariantSampler,
+                      max_turns: int, gen_policy: GenerationPolicy) -> Dict[str, Any]:
+    """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ живой ассистент, затем судья."""
+    scenario, variant = item
+    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "turns": [],
+                           "verdict": None, "judge_usage": None, "call_error": None, "gen_sources": []}
+    constraints = constraints_for(scenario, constraints_entries)
+    style = sampler.at(scenario.index * 1000 + variant)  # детерминированный стиль на (сценарий, вариант)
+    agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
+    conv = ScreeningConversation(assistant_client, prompt.prompt_id, prompt.prompt_version,
+                                 DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
+    result = run_adaptive_conversation(conv, agent, max_turns=max_turns)
+    for t in result.turns:
+        res["turns"].append({"candidate": t.candidate, "reply": t.reply, "end": t.end,
+                             "usage": t.assistant_usage, "gen_usage": t.gen_usage, "source": t.candidate_source})
+        res["gen_sources"].append(t.candidate_source)
+    if result.error:
+        res["call_error"] = result.error
+        return res
+    if not res["turns"]:
+        res["call_error"] = "empty_dialogue"
+        return res
+    _judge_into(res, judge, scenario)
     return res
 
 
@@ -178,7 +235,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     seed = args.seed if args.seed is not None else prompt.seed
     csv_path = args.csv or COMPONENT_CSV[args.component]
     scenarios = _select(load_scenarios(csv_path), args.scenario_indices, args.sample, seed,
-                        args.max_examples, runnable_only=not args.offline)
+                        args.max_examples, runnable_only=not args.offline and not args.generate)
 
     if args.offline:
         return _run_offline(args, scenarios, prompt, run_id, started)
@@ -191,21 +248,47 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     eval_model = args.eval_model
     judge = ScenarioJudge(ModelClient(eval_model, timeout=args.step1_timeout))
 
+    # --- настройка режима генерации ---
+    gen_setup: Dict[str, Any] = {}
+    if args.generate:
+        gen_seed = args.gen_seed if args.gen_seed is not None else (seed if seed is not None else 0)
+        gen_setup = dict(
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_model=args.gen_model,
+            constraints_entries=load_constraints(args.constraints),
+            sampler=VariantSampler(gen_seed),
+            max_turns=args.max_turns,
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+        )
+        work_items: List[Any] = [(s, v) for s in scenarios for v in range(max(1, args.variants))]
+        models = {"candidate_generator": args.gen_model, "assistant": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "generate", "component": args.component, "scenarios": len(scenarios),
+                    "variants": args.variants, "gen_model": args.gen_model, "gen_seed": gen_seed,
+                    "temperature": args.temperature, "max_turns": args.max_turns, "eval_model": eval_model,
+                    "workers": args.workers}
+    else:
+        work_items = list(scenarios)
+        models = {"generator": None, "assistant": prompt.prompt_id, "evaluator": eval_model}
+        run_args = {"mode": "golden", "component": args.component, "scenarios": len(scenarios),
+                    "workers": args.workers, "max_examples": args.max_examples, "eval_model": eval_model}
+
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": args.component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
         run_id=run_id, started_at=started.isoformat(timespec="seconds"),
-        models={"generator": prompt.prompt_id, "evaluator": eval_model}, seed=seed,
-        args={"offline": False, "component": args.component, "scenarios": len(scenarios), "workers": args.workers,
-              "max_examples": args.max_examples, "eval_model": eval_model},
+        models=models, seed=seed, args=run_args,
     )
 
     usage_bucket = blank_usage()
-    m, reasons = Counter(), Counter()
+    gen_usage_bucket = blank_usage()
+    m, reasons, gen_sources = Counter(), Counter(), Counter()
+    frozen: List[Dict[str, Any]] = []
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"scenarios": dict(m), "reasons": dict(reasons)}
+        if args.generate:
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -215,22 +298,29 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     def _fold(res: Dict[str, Any]) -> None:
         s: Scenario = res["scenario"]
+        is_gen = res.get("mode") == "generate"
+        variant = res.get("variant")
         for t in res["turns"]:
-            accumulate_usage(usage_bucket, t.get("usage"))
+            accumulate_usage(usage_bucket, t.get("usage"))       # ответ ассистента
+            accumulate_usage(usage_bucket, t.get("gen_usage"))   # генерация → в общий total
+            accumulate_usage(gen_usage_bucket, t.get("gen_usage"))
         accumulate_usage(usage_bucket, res["judge_usage"])
-        cid = f"scenario:{s.index}:{s.name[:40]}"
+        for src in res.get("gen_sources", []):
+            gen_sources[src] += 1
+        tag = f"{s.index}" + (f"/v{variant}" if is_gen else "")
+        cid = f"scenario:{s.index}:" + (f"v{variant}:" if is_gen else "") + s.name[:40]
 
         if res["call_error"] == "no_candidate_examples":  # golden-пробел, не инфра-сбой
             m["skipped_no_examples"] += 1
             if not args.quiet:
-                print(f"  [skip] {s.index} {s.name[:45]}: нет реплик кандидата")
+                print(f"  [skip] {tag} {s.name[:45]}: нет реплик кандидата")
             return
         if res["call_error"]:
             rb.add_error(cid, res["call_error"])
             reasons[res["call_error"].split(":")[0]] += 1
             m["errors"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {s.index} {s.name[:45]}: {res['call_error']}")
+                print(f"  [ERR ] {tag} {s.name[:45]}: {res['call_error']}")
             return
 
         m["total"] += 1
@@ -249,27 +339,42 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             m["failed"] += 1
             for v in verdict.violations[:6]:
                 reasons[v[:60]] += 1
+
+        inputs: Dict[str, Any] = {"criterion": s.expected_behavior or "expected behavior per scenario",
+                                  "scenario": {"index": s.index, "name": s.name, "description": s.description}}
+        if is_gen:
+            inputs["variant"] = variant
+            inputs["gen_sources"] = res.get("gen_sources", [])
+            if args.freeze_to:
+                frozen.append({"index": s.index, "name": s.name, "variant": variant,
+                               "candidate_turns": [t["candidate"] for t in res["turns"]]})
         rb.add_case(CaseRecord(
-            case_id=cid, source="suite", passed=passed,
-            inputs={"criterion": s.expected_behavior or "expected behavior per scenario",
-                    "scenario": {"index": s.index, "name": s.name, "description": s.description}},
-            transcript=transcript,
+            case_id=cid, source="synthetic" if is_gen else "suite", passed=passed,
+            inputs=inputs, transcript=transcript,
             verdict={"evaluator": "screening_scenario_llm_judge", "model": eval_model, "passed": passed,
                      "reason_codes": verdict.violations[:8], "comment": verdict.comment},
         ))
         if not args.quiet:
-            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:45]} turns={len(res['turns'])} "
-                  f"viol={len(verdict.violations)}")
+            fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
+            print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:42]} turns={len(res['turns'])} "
+                  f"viol={len(verdict.violations)}" + (f" fb={fb}" if fb else ""))
 
-    total = len(scenarios)
+    total = len(work_items)
+
+    if args.generate:
+        def _work(it):
+            return _process_generate(it, assistant_client=client, prompt=prompt, judge=judge, **gen_setup)
+    else:
+        def _work(sc):
+            return _process(sc, client, prompt, judge, args.max_examples)
 
     def _on_interrupt() -> None:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
     outcome = run_cases(
-        scenarios,
-        work=lambda sc: _process(sc, client, prompt, judge, args.max_examples),
+        work_items,
+        work=_work,
         fold=_fold,
         max_workers=max(1, args.workers),
         checkpoint_every=args.checkpoint_every,
@@ -278,6 +383,14 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     )
 
     metrics_path, cases_path = _flush(interrupted=outcome.interrupted)
+    if args.generate and args.freeze_to and frozen:
+        import json as _json
+        Path(args.freeze_to).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.freeze_to).write_text(
+            _json.dumps({"runner": RUNNER, "component": args.component, "gen_seed": run_args.get("gen_seed"),
+                         "cassette": frozen}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not args.quiet:
+            print(f"[freeze] {len(frozen)} диалогов -> {args.freeze_to}")
     if not args.quiet:
         import json as _json
         sm = _json.loads(Path(metrics_path).read_text(encoding="utf-8"))["summary"]
