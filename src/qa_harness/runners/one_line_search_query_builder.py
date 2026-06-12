@@ -17,6 +17,7 @@
   python -m qa_harness.runners.one_line_search_query_builder --offline          # без сети (replay)
   python -m qa_harness.runners.one_line_search_query_builder                      # step1: промпт билдера (OPENAI_API_KEY)
   python -m qa_harness.runners.one_line_search_query_builder --steps 1,2,3 --token-in-body  # + extractor + backend count
+  python -m qa_harness.runners.one_line_search_query_builder --generate --variants 5   # вариативно: LLM-вакансия с засеянными core, только step1
 """
 
 from __future__ import annotations
@@ -29,8 +30,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import random
+
 from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
+from qa_harness.domain.generators import (
+    SOFT_NOISE,
+    TECH_VOCAB,
+    GenerationPolicy,
+    ResponsibilitiesGenerator,
+    ResponsibilitiesSpec,
+    generate_valid,
+)
 from qa_harness.domain.query_builder import (
     GoldenCase,
     build_query_checks,
@@ -54,6 +65,7 @@ DEFAULT_GOLDEN = REPO_ROOT / "tests" / "fixtures" / "one_line_search_query_build
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "one_line_search_query_builder"
 EXTRACTOR_COMPONENT = "extractor_agent"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "2 (extractor) и 3 (backend count) добавляют downstream-инфо.")
     p.add_argument("--golden", type=Path, default=DEFAULT_GOLDEN, help="Курируемые golden-вакансии с ожиданиями.")
     p.add_argument("--offline", action="store_true", help="Replay offline_query из golden (без сети; принудительно steps=1).")
+    # --- режим вариативной генерации (seeded-вакансия с известными терминами; принудительно steps=1) ---
+    p.add_argument("--generate", action="store_true",
+                   help="Вариативный режим: вакансию генерит LLM с засеянными core-терминами (expect из них), только step1.")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора вакансии (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed выборки домена/терминов.")
+    p.add_argument("--variants", type=int, default=5, help="Сколько вакансий сгенерить (--generate).")
+    p.add_argument("--core-terms", type=int, default=2, help="Сколько core-терминов засевать (ожидаем в запросе).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора (--generate).")
+    p.add_argument("--gen-retries", type=int, default=2, help="Повторов генерации при провале валидации.")
     p.add_argument("--prompt-id", default=None, help="Override prompt_id билдера.")
     p.add_argument("--prompt-version", default=None, help="Override prompt_version билдера.")
     p.add_argument("--extractor-prompt-id", default=None, help="Override prompt_id extractor (step2).")
@@ -170,8 +191,30 @@ def _process(
     return res
 
 
+def _process_generate(variant: int, *, builder_client: Any, base_payload: Dict[str, Any], sanitize_geo: bool,
+                      backend_down: Any, gen_client: Any, gen_policy: GenerationPolicy,
+                      gen_seed: int, core_n: int) -> Dict[str, Any]:
+    """Один вариант: засеваем core/soft → LLM пишет вакансию → step1 билдера → судья expect(core)/forbid(soft)."""
+    rng = random.Random(f"{gen_seed}:{variant}")
+    domain = rng.choice(list(TECH_VOCAB))
+    core = rng.sample(TECH_VOCAB[domain], min(core_n, len(TECH_VOCAB[domain])))
+    soft = rng.sample(SOFT_NOISE, 2)
+    gen = ResponsibilitiesGenerator(gen_client)
+    gr = generate_valid(lambda _a: (gen.generate(ResponsibilitiesSpec(domain, core, soft, noise_level=variant % 3)), None),
+                        policy=gen_policy)
+    base = {"mode": "generate", "variant": variant, "gen_source": gr.source, "gen_usage": dict(gen.usage)}
+    if not gr.ok:
+        return {**base, "case": None, "query": "", "usage": None, "extractor_usage": None,
+                "step1_status": "gen_failed", "infra_error": f"vacancy_gen_failed:{'; '.join(gr.errors[-2:]) or 'unknown'}"}
+    case = GoldenCase(name=f"v{variant}_{domain}", vacancy=str(gr.item),
+                      expect=[[t] for t in core], forbid=list(soft))
+    res = _process(case, builder_client, None, [1], base_payload, sanitize_geo, None, "", backend_down, offline=False)
+    res.update(base)
+    return res
+
+
 def run(args: argparse.Namespace) -> Dict[str, Path]:
-    steps = [1] if args.offline else parse_steps(args.steps)
+    steps = [1] if (args.offline or args.generate) else parse_steps(args.steps)
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
 
@@ -212,32 +255,58 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         current_position_title=args.current_position_title, limit=args.step3_limit, offset=args.offset,
     )
     sanitize_geo = not args.no_sanitize_office_geo
-    cases = load_golden(args.golden)
+    backend_down = threading.Event()
+
+    gen_setup: Dict[str, Any] = {}
+    if args.generate:
+        from qa_harness.core.llm_client import ModelClient
+
+        gen_seed = args.gen_seed if args.gen_seed is not None else (builder.seed if builder.seed is not None else 0)
+        gen_setup = dict(
+            builder_client=builder_client, base_payload=base_payload, sanitize_geo=sanitize_geo,
+            backend_down=backend_down,
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            gen_seed=gen_seed, core_n=args.core_terms,
+        )
+        work_items: List[Any] = list(range(max(1, args.variants)))
+        models = {"vacancy_generator": args.gen_model, "evaluator": None}
+        run_args = {"mode": "generate", "steps": [1], "variants": args.variants, "core_terms": args.core_terms,
+                    "gen_model": args.gen_model, "gen_seed": gen_seed, "temperature": args.temperature,
+                    "workers": args.workers}
+    else:
+        work_items = list(load_golden(args.golden))
+        models = {"generator": None, "evaluator": None}
+        run_args = {
+            "mode": "golden", "steps": steps, "golden": len(work_items), "workers": args.workers,
+            "offline": bool(args.offline),
+            "extractor_prompt": (
+                {"prompt_id": extractor.prompt_id, "prompt_version": extractor.prompt_version} if extractor else None
+            ),
+        }
 
     rb = ReportBuilder(
         runner=RUNNER,
         prompt_under_test={"component": RUNNER, "prompt_id": builder.prompt_id, "prompt_version": builder.prompt_version},
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models={"generator": None, "evaluator": None},
+        models=models,
         seed=builder.seed,
-        args={
-            "steps": steps, "golden": len(cases), "workers": args.workers, "offline": bool(args.offline),
-            "extractor_prompt": (
-                {"prompt_id": extractor.prompt_id, "prompt_version": extractor.prompt_version} if extractor else None
-            ),
-        },
+        args=run_args,
     )
 
     usage_bucket = blank_usage()
+    gen_usage_bucket = blank_usage()
     m1, m2, m3 = Counter(), Counter(), Counter()
     reasons: Counter = Counter()
-    backend_down = threading.Event()
+    gen_sources: Counter = Counter()
     state = {"infra_step3": 0}
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         metrics_extra: Dict[str, Any] = {"builder": dict(m1), "reasons": dict(reasons)}
+        if args.generate:
+            metrics_extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if 2 in steps:
             metrics_extra["step2_extractor"] = dict(m2)
         if 3 in steps:
@@ -250,19 +319,29 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         return write_reports(args.out_dir, RUNNER, run_id, md, cd)
 
     def _fold(res: Dict[str, Any]) -> None:
-        case: GoldenCase = res["case"]
+        is_gen = res.get("mode") == "generate"
         accumulate_usage(usage_bucket, res["usage"])
         accumulate_usage(usage_bucket, res["extractor_usage"])
-        cid = f"golden:{case.name}:v1"
+        accumulate_usage(usage_bucket, res.get("gen_usage"))
+        accumulate_usage(gen_usage_bucket, res.get("gen_usage"))
+        if res.get("gen_source"):
+            gen_sources[res["gen_source"]] += 1
+        if is_gen:
+            label = f"v{res['variant']}"
+            cid = f"vacancy:v{res['variant']}"
+        else:
+            label = res["case"].name
+            cid = f"golden:{res['case'].name}:v1"
 
-        # builder сетевой сбой / нет replay -> инфра, НЕ кейс качества
-        if res["step1_status"] in ("call_error", "no_offline_query"):
+        # builder сетевой сбой / нет replay / провал генерации -> инфра, НЕ кейс качества
+        if res["step1_status"] in ("call_error", "no_offline_query", "gen_failed"):
             rb.add_error(cid, res["infra_error"])
             reasons[res["step1_status"]] += 1
             m1["call_error"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {case.name}: {res['infra_error']}")
+                print(f"  [ERR ] {label}: {res['infra_error']}")
             return
+        case: GoldenCase = res["case"]
 
         m1["total"] += 1
         rc: List[str] = []
@@ -336,10 +415,14 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
                 if state["infra_step3"] >= args.backend_fail_fast:
                     backend_down.set()
 
+        inputs: Dict[str, Any] = {"criterion": "format + no_leakage + semantic(golden)",
+                                  "vacancy": case.vacancy, "expect": case.expect, "forbid": case.forbid}
+        if is_gen:
+            inputs["variant"] = res["variant"]
+            inputs["gen_source"] = res.get("gen_source")
         rb.add_case(CaseRecord(
-            case_id=cid, source="golden", passed=quality_passed,
-            inputs={"criterion": "format + no_leakage + semantic(golden)",
-                    "vacancy": case.vacancy, "expect": case.expect, "forbid": case.forbid},
+            case_id=cid, source="synthetic" if is_gen else "golden", passed=quality_passed,
+            inputs=inputs,
             output={"raw": res["query"]},
             verdict={"evaluator": "one_line_quality", "passed": quality_passed, "reason_codes": rc},
             checks=checks, stages=stages,
@@ -347,19 +430,26 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if not args.quiet:
             s2 = f" step2={res['extractor_status']}" if (2 in steps and res["extractor_status"]) else ""
             s3 = f" step3={res['step3']['kind']}/{res['step3']['count']}" if res.get("step3") else ""
-            print(f"  [{'ok ' if quality_passed else 'MISS'}] {case.name} "
+            print(f"  [{'ok ' if quality_passed else 'MISS'}] {label} "
                   f"format={int(bool(format_ok))} leak={len(leakage)} semantic={semantic_ok}{s2}{s3}")
 
-    total = len(cases)
+    total = len(work_items)
+
+    if args.generate:
+        def _work(it):
+            return _process_generate(it, **gen_setup)
+    else:
+        def _work(c):
+            return _process(c, builder_client, extractor_client, steps, base_payload,
+                            sanitize_geo, backend, token, backend_down, args.offline)
 
     def _on_interrupt() -> None:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
     outcome = run_cases(
-        cases,
-        work=lambda c: _process(c, builder_client, extractor_client, steps, base_payload,
-                                sanitize_geo, backend, token, backend_down, args.offline),
+        work_items,
+        work=_work,
         fold=_fold,
         max_workers=max(1, args.workers),
         checkpoint_every=args.checkpoint_every,
