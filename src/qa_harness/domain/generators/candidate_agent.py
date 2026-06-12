@@ -19,6 +19,7 @@ from .variety import VariantStyle
 
 _CYR_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 _LATIN_RUN_RE = re.compile(r"[A-Za-z]{3,}")
+_DIGITS_RE = re.compile(r"\d{2,}")
 _ROLE_PREFIX_RE = re.compile(r"^\s*(кандидат|candidate|рекрутер|recruiter|ассистент|assistant)\s*[:\-]\s*", re.IGNORECASE)
 
 
@@ -35,6 +36,8 @@ class CandidateConstraints:
     examples: List[str] = field(default_factory=list)
     fallback: List[str] = field(default_factory=list)     # детерминированные запасные реплики
     language: str = "ru"                   # "ru" | "foreign"
+    forbid_digits: bool = False            # запретить числа (напр. «странный» кандидат не называет зарплату)
+    max_turns: Optional[int] = None        # per-scenario лимит ходов адаптивного диалога (None → глобальный)
 
 
 def _normalize(text: str) -> str:
@@ -60,6 +63,8 @@ def validate_candidate_turn(text: str, c: CandidateConstraints) -> Optional[str]
         return f"присутствует запрещённый маркер: '{hit}'"
     if c.require_any and not any(m.lower() in low for m in c.require_any):
         return f"нет ни одного обязательного маркера из: {c.require_any}"
+    if c.forbid_digits and _DIGITS_RE.search(t):
+        return "реплика не должна содержать числа (кандидат остаётся неинформативным)"
     if c.language == "foreign":
         if not _LATIN_RUN_RE.search(t):
             return "реплика должна быть на иностранном языке (нет латиницы)"
@@ -109,6 +114,8 @@ class CandidateAgent:
             ctx["examples_style_only"] = self._c.examples
         if self._c.language == "foreign":
             ctx["language"] = "пиши ТОЛЬКО на иностранном языке (латиница), без кириллицы"
+        if self._c.forbid_digits:
+            ctx["no_numbers"] = "не называй конкретные числа (зарплату/суммы/годы) — оставайся уклончивым"
         if attempt.last_error:
             ctx["correction"] = (f"Прошлая реплика отклонена: {attempt.last_error}. "
                                  "Исправь и усиль соответствие сценарию.")

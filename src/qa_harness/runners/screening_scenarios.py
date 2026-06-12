@@ -182,7 +182,8 @@ def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: A
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = ScreeningConversation(assistant_client, prompt.prompt_id, prompt.prompt_version,
                                  DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
-    result = run_adaptive_conversation(conv, agent, max_turns=max_turns)
+    eff_turns = constraints.max_turns or max_turns  # per-scenario лимит (тесно-очерченным — меньше)
+    result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
     for t in result.turns:
         res["turns"].append({"candidate": t.candidate, "reply": t.reply, "end": t.end,
                              "usage": t.assistant_usage, "gen_usage": t.gen_usage, "source": t.candidate_source})

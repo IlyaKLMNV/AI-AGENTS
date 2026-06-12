@@ -70,4 +70,7 @@ def constraints_for(scenario: Any, entries: List[Dict[str, Any]]) -> CandidateCo
     c.fallback = _as_list(e.get("fallback"))
     if e.get("language"):
         c.language = str(e["language"])
+    c.forbid_digits = bool(e.get("forbid_digits", False))
+    if e.get("max_turns") is not None:
+        c.max_turns = int(e["max_turns"])
     return c
