@@ -30,17 +30,24 @@ _CANDIDATE_FACT_MARKERS = (
     "у кандидата", "кандидат имеет", "кандидат умеет", "кандидат работал", "кандидат знает",
     "кандидат владеет", "требование подтвержд", "в резюме", "найден опыт", "подтверждено",
 )
-# Конкретные технологии (продукты/языки/фреймворки) — для проверки atomicity. Области (RAG, agent, DevOps,
-# frontend) сюда НЕ входят: их объединение в один критерий допустимо.
-_KNOWN_TECH = {
-    "python", "sql", "fastapi", "django", "flask", "postgresql", "postgres", "mysql", "mongodb", "redis",
-    "kafka", "grpc", "sqlalchemy", "docker", "kubernetes", "k8s", "terraform", "ansible", "prometheus",
-    "helm", "gitlab", "jenkins", "spark", "airflow", "clickhouse", "dbt", "hadoop", "pytorch", "tensorflow",
-    "scikit-learn", "sklearn", "mlflow", "pandas", "numpy", "react", "typescript", "javascript", "redux",
-    "webpack", "graphql", "next.js", "nextjs", "go", "golang", "java", "c#", "c++", "groovy", "excel",
-    "opencv", "langgraph", "llamaindex", "haystack", "opensearch", "elasticsearch", "langfuse", "dify",
-    "n8n", "linux", "ci/cd",
+# Конкретные технологии → ОБЛАСТЬ. Объединение 3+ технологий из РАЗНЫХ областей в один критерий — плохо
+# (atomicity); 3 технологии ОДНОЙ области («Hadoop, Spark, dbt» — все data) — допустимо. Области (RAG, agent,
+# DevOps, frontend) сюда НЕ входят: их объединение допустимо.
+_TECH_AREA = {
+    "python": "lang", "go": "lang", "golang": "lang", "java": "lang", "javascript": "lang",
+    "typescript": "lang", "c#": "lang", "c++": "lang", "groovy": "lang",
+    "fastapi": "web", "django": "web", "flask": "web", "react": "web", "redux": "web", "webpack": "web",
+    "graphql": "web", "next.js": "web", "nextjs": "web", "grpc": "web", "sqlalchemy": "web",
+    "postgresql": "db", "postgres": "db", "mysql": "db", "mongodb": "db", "redis": "db",
+    "clickhouse": "db", "elasticsearch": "db", "opensearch": "db", "sql": "db",
+    "docker": "infra", "kubernetes": "infra", "k8s": "infra", "terraform": "infra", "ansible": "infra",
+    "prometheus": "infra", "helm": "infra", "gitlab": "infra", "jenkins": "infra", "linux": "infra", "ci/cd": "infra",
+    "spark": "data", "airflow": "data", "dbt": "data", "hadoop": "data", "kafka": "data", "pandas": "data", "numpy": "data",
+    "pytorch": "ml", "tensorflow": "ml", "scikit-learn": "ml", "sklearn": "ml", "mlflow": "ml",
+    "langgraph": "llm", "llamaindex": "llm", "haystack": "llm", "langfuse": "llm", "dify": "llm", "n8n": "llm", "opencv": "ml",
+    "excel": "office",
 }
+_KNOWN_TECH = set(_TECH_AREA)
 _TECH_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.#/_-]{1,}")
 
 
@@ -98,12 +105,13 @@ def known_tech_terms(item: str) -> List[str]:
 
 
 def is_multi_criteria(item: str) -> bool:
-    """True, если требование объединяет 3+ НЕЗАВИСИМЫХ конкретных технологии (длинный сборный список).
+    """True, если требование объединяет технологии из 3+ РАЗНЫХ областей (длинный разнородный список).
 
-    Считаем только конкретные технологии из _KNOWN_TECH. Объединение областей/понятий
-    («RAG и векторный поиск», «production RAG / agent / workflow») НЕ считается multi-criteria.
+    Считаем РАЗНЫЕ области конкретных технологий. 3 технологии ОДНОЙ области («Hadoop, Spark, dbt» — все
+    data) — допустимо. Объединение понятий/областей («RAG и векторный поиск») — тоже не multi-criteria.
     """
-    return len(known_tech_terms(item)) >= 3
+    areas = {_TECH_AREA[t] for t in known_tech_terms(item) if t in _TECH_AREA}
+    return len(areas) >= 3
 
 
 def validate_requirement(item: str) -> List[str]:

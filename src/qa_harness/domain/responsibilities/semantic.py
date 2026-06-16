@@ -27,17 +27,35 @@ def _as_forms(item: Any) -> List[str]:
     return [str(item)] if str(item).strip() else []
 
 
+def _common_prefix_len(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i] == b[i]:
+        i += 1
+    return i
+
+
+def _loose_token_match(a: str, b: str) -> bool:
+    """Терпимо к глагол↔существительное и склонениям: равенство, префикс одного в другом, или общий
+    префикс ≥6 («проектирован»≈«проектировать», «разработк»≈«разработчик»)."""
+    if a == b:
+        return True
+    if min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a)):
+        return True
+    return _common_prefix_len(a, b) >= 6
+
+
 def _match(form: str, key: str) -> bool:
-    """Совпадение формы с извлечённым требованием: нормализованная подстрока ИЛИ стем-токены формы
-    все присутствуют в требовании (терпимо к склонениям: «разработкой» ≈ «разработки»)."""
+    """Совпадение формы с извлечённым требованием: нормализованная подстрока ИЛИ все ЗНАЧИМЫЕ стем-токены
+    формы (≥4 символа — без предлогов/союзов «с»/«или») присутствуют в требовании (loose-матч по префиксу)."""
     f, k = _norm(form), _norm(key)
     if f and k and (f in k or k in f):
         return True
-    ftoks = _stem_tokens(form)
-    if not ftoks:
-        return False
-    ktoks = _stem_tokens(key)
-    return all(any(_token_match(a, b) for b in ktoks) for a in ftoks)
+    fs = [t for t in _stem_tokens(form) if len(t) >= 4]
+    if not fs:
+        fs = _stem_tokens(form)
+    ks = _stem_tokens(key)
+    return bool(fs) and all(any(_loose_token_match(a, b) for b in ks) for a in fs)
 
 
 def check_semantics(
