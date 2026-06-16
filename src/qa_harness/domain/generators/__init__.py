@@ -7,7 +7,9 @@ from .autofill_gen import AutofillDialogueGenerator, AutofillSpec, WORK_FORMATS,
 from .vacancy_gen import DOMAINS, SENIORITIES, VacancyGenerator, VacancySpec
 from .responsibilities_gen import (
     CONDITIONS_NOISE,
+    REQUIRED_CONSTRAINTS,
     SOFT_NOISE,
+    STRONG_FILTERS,
     TECH_VOCAB,
     ResponsibilitiesGenerator,
     ResponsibilitiesSpec,
@@ -42,6 +44,8 @@ __all__ = [
     "TECH_VOCAB",
     "SOFT_NOISE",
     "CONDITIONS_NOISE",
+    "STRONG_FILTERS",
+    "REQUIRED_CONSTRAINTS",
     "CandidateProfileGenerator",
     "CandidateProfileSpec",
     "ResumeGenerator",

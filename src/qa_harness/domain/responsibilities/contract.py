@@ -1,12 +1,15 @@
-"""Контракт вывода responsibilities_parser: JSON-массив 0..5 проверяемых ТРЕБОВАНИЙ-предложений.
+"""Контракт вывода responsibilities_parser: JSON-массив 0..5 ФИЛЬТРОВ-критериев отбора.
 
-Новая задача промпта: вернуть 0..5 проверяемых требований ОДНИМ ПРЕДЛОЖЕНИЕМ каждое (а не keywords).
-Пустой массив `[]` валиден (если обязательных требований в вакансии нет). Это «форма» (gate):
+Задача промпта (уточнённая): выбрать 0..5 САМЫХ СИЛЬНЫХ фильтров отбора кандидатов, каждый — одним
+критерием в НЕЙТРАЛЬНОМ стиле вакансии («Опыт работы с …», «Понимание …»), НЕ в стиле оценки резюме
+(«У кандидата есть …»). Пустой массив `[]` валиден. Форма (gate):
 - строгий JSON-массив строк, длина 0..5, без дублей;
-- каждый элемент непуст, без переносов, разумной длины (≤250);
-- НЕ keyword-подобен (ловит регресс: старый промпт возвращал ["Python","Django"]);
-- НЕ объединяет несколько независимых критериев в одно требование (atomicity).
-Смысл (покрыты ли expected-критерии, заземление) — semantic.py. Проверка «одно предложение» — мягкая, как сигнал.
+- каждый элемент непуст, без переносов, ≤250;
+- НЕ keyword-подобен (ловит старый формат ["Python","Django"]);
+- НЕ в стиле факта о кандидате/оценки резюме («У кандидата есть…», «В резюме указано…») → candidate_fact_style;
+- НЕ объединяет 3+ НЕЗАВИСИМЫХ технологии из разных областей (atomicity). Объединение 2-3 тесно связанных
+  понятий («RAG и векторный поиск», «Dify/n8n или аналоги») — допустимо.
+Смысл (сильные критерии покрыты, шум/nice-to-have отсутствуют) — semantic.py.
 """
 
 from __future__ import annotations
@@ -17,12 +20,27 @@ from typing import Any, Dict, List, Tuple
 
 MAX_LEN = 250
 
-# Слова-индикаторы требования: их наличие отличает требование-предложение от голого keyword.
+# Слова-индикаторы требования-критерия: отличают критерий от голого keyword.
 _REQ_INDICATORS = (
-    "опыт", "знани", "работ", "разработ", "владени", "владе", "умени", "умеет", "готовнос",
-    "образовани", "сертификат", "понимани", "навык", "есть", "знает", "кандидат", "лет ", "год",
+    "опыт", "знани", "работ", "разработ", "владени", "владе", "умени", "умеет", "умение", "готовнос",
+    "образовани", "сертификат", "понимани", "навык", "налич", "практическ", "знает", "лет ", "год",
 )
-# Технологические токены (Node.js, CI/CD, gRPC, PostgreSQL) — для проверки atomicity (multi-criteria).
+# Стиль «факт о кандидате / оценка резюме» — для НОВОЙ задачи это неверно (нужен нейтральный критерий вакансии).
+_CANDIDATE_FACT_MARKERS = (
+    "у кандидата", "кандидат имеет", "кандидат умеет", "кандидат работал", "кандидат знает",
+    "кандидат владеет", "требование подтвержд", "в резюме", "найден опыт", "подтверждено",
+)
+# Конкретные технологии (продукты/языки/фреймворки) — для проверки atomicity. Области (RAG, agent, DevOps,
+# frontend) сюда НЕ входят: их объединение в один критерий допустимо.
+_KNOWN_TECH = {
+    "python", "sql", "fastapi", "django", "flask", "postgresql", "postgres", "mysql", "mongodb", "redis",
+    "kafka", "grpc", "sqlalchemy", "docker", "kubernetes", "k8s", "terraform", "ansible", "prometheus",
+    "helm", "gitlab", "jenkins", "spark", "airflow", "clickhouse", "dbt", "hadoop", "pytorch", "tensorflow",
+    "scikit-learn", "sklearn", "mlflow", "pandas", "numpy", "react", "typescript", "javascript", "redux",
+    "webpack", "graphql", "next.js", "nextjs", "go", "golang", "java", "c#", "c++", "groovy", "excel",
+    "opencv", "langgraph", "llamaindex", "haystack", "opensearch", "elasticsearch", "langfuse", "dify",
+    "n8n", "linux", "ci/cd",
+}
 _TECH_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.#/_-]{1,}")
 
 
@@ -61,22 +79,31 @@ def is_keyword_like(item: str) -> bool:
     return not any(ind in low for ind in _REQ_INDICATORS)
 
 
-def tech_tokens(item: str) -> List[str]:
-    """Уникальные технологические токены (Node.js, CI/CD, gRPC…) — для проверки atomicity."""
+def is_candidate_fact_style(item: str) -> bool:
+    """True, если строка сформулирована как факт о кандидате / оценка резюме (вместо критерия вакансии)."""
+    low = (item or "").strip().lower()
+    return any(m in low for m in _CANDIDATE_FACT_MARKERS)
+
+
+def known_tech_terms(item: str) -> List[str]:
+    """Уникальные КОНКРЕТНЫЕ технологии из строки (только из _KNOWN_TECH) — для проверки atomicity."""
     seen: set = set()
     out: List[str] = []
     for raw in _TECH_TOKEN.findall(item or ""):
-        tok = raw.rstrip(".,/;:-_")
-        k = tok.lower()
-        if len(tok) >= 2 and k not in seen:
-            seen.add(k)
+        tok = raw.rstrip(".,/;:-_").lower()
+        if tok in _KNOWN_TECH and tok not in seen:
+            seen.add(tok)
             out.append(tok)
     return out
 
 
 def is_multi_criteria(item: str) -> bool:
-    """True, если одно требование объединяет 3+ независимых критерия (≥3 разных тех-токена)."""
-    return len(tech_tokens(item)) >= 3
+    """True, если требование объединяет 3+ НЕЗАВИСИМЫХ конкретных технологии (длинный сборный список).
+
+    Считаем только конкретные технологии из _KNOWN_TECH. Объединение областей/понятий
+    («RAG и векторный поиск», «production RAG / agent / workflow») НЕ считается multi-criteria.
+    """
+    return len(known_tech_terms(item)) >= 3
 
 
 def validate_requirement(item: str) -> List[str]:
@@ -91,6 +118,8 @@ def validate_requirement(item: str) -> List[str]:
         errors.append("requirement_too_long")
     if is_keyword_like(t):
         errors.append("keyword_like_requirement")
+    if is_candidate_fact_style(t):
+        errors.append("candidate_fact_style")
     if is_multi_criteria(t):
         errors.append("multi_criteria_requirement")
     return errors
@@ -125,7 +154,7 @@ def check_contract(predicted: List[str]) -> Tuple[bool, List[str], Dict[str, Any
     # агрегируем коды по типам, чтобы reason_codes были информативны
     flat_codes = {c for errs in item_errors.values() for c in errs}
     for code in ("empty_requirement", "requirement_has_newline", "requirement_too_long",
-                 "keyword_like_requirement", "multi_criteria_requirement"):
+                 "keyword_like_requirement", "candidate_fact_style", "multi_criteria_requirement"):
         if code in flat_codes:
             issues.append(code)
     if dups:

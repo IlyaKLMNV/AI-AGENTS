@@ -40,13 +40,13 @@ def check_semantics(
     """Вернуть (ok, diffs). expect — ИЛИ-группы обязательных терминов, forbid — запреты."""
     keys = [k for k in predicted if _norm(k)]
     diffs: List[str] = []
-    for item in expect or []:
+    for item in expect or []:                          # сильные обязательные критерии — должны быть покрыты
         forms = _as_forms(item)
         if forms and not any(_match(f, k) for f in forms for k in keys):
-            diffs.append(f"missing:{'|'.join(forms)}")
-    for term in forbid or []:
+            diffs.append(f"missing_core_requirement:{'|'.join(forms)}")
+    for term in forbid or []:                          # шум / nice-to-have / слабый стек — не должны попасть
         if str(term).strip() and any(_match(term, k) for k in keys):
-            diffs.append(f"forbidden:{term}")
+            diffs.append(f"forbidden_requirement:{term}")
     return (len(diffs) == 0), diffs
 
 

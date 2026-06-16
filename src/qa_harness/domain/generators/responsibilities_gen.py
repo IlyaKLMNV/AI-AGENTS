@@ -29,15 +29,32 @@ TECH_VOCAB = {
 SOFT_NOISE = ["коммуникабельность", "ответственность", "работа в команде", "стрессоустойчивость", "инициативность"]
 # Условия найма — НЕ требования к кандидату (forbid).
 CONDITIONS_NOISE = ["ДМС", "гибкий график", "удалённая работа", "корпоративный спорт", "обучение за счёт компании"]
+# СИЛЬНЫЕ фильтры отбора — это и есть «лучшие требования» (засев → expect). Не голый стек, а области/ядро роли.
+STRONG_FILTERS = [
+    "production RAG / agent / workflow-систем",
+    "интеграции AI-пайплайнов с корпоративными источниками данных",
+    "построения высоконагруженных сервисов",
+    "проектирования микросервисной архитектуры",
+    "production ML-пайплайнов",
+    "технического лидерства и код-ревью",
+]
+# Обязательные ПРОВЕРЯЕМЫЕ ограничения (засев → expect): не бенефиты, а условия для выполнения работы.
+REQUIRED_CONSTRAINTS = [
+    "редким командировкам",
+    "наличие смартфона с Android или iOS",
+    "стабильный интернет от 20 Мбит/с",
+    "готовность к релокации",
+]
 
 
 @dataclass
 class ResponsibilitiesSpec:
     domain: str
-    core_terms: List[str]                              # обязательные требования (засев → expect)
+    core_terms: List[str]                              # СИЛЬНЫЕ обязательные критерии/ограничения (засев → expect)
     soft_terms: List[str] = field(default_factory=list)        # личные качества (засев → forbid)
     nice_to_have: List[str] = field(default_factory=list)      # «будет плюсом» (засев → forbid)
-    conditions: List[str] = field(default_factory=list)        # условия найма (засев → forbid)
+    conditions: List[str] = field(default_factory=list)        # условия найма / бенефиты (засев → forbid)
+    weak_stack: List[str] = field(default_factory=list)        # слабый стек в «Стек:» — НЕ обязательное требование
     noise_level: int = 1
 
 
@@ -47,17 +64,18 @@ class ResponsibilitiesGenerator(Generator):
     def instruction(self, spec: ResponsibilitiesSpec) -> str:
         return (
             "Ты пишешь текст вакансии на русском (обычный текст, без markdown и пояснений вне текста).\n"
-            "ЯВНО раздели секции (используй заголовки внутри текста):\n"
-            "- «Требования:» — перечисли ОБЯЗАТЕЛЬНЫЕ технологии из списка core (именно как обязательные).\n"
-            "- «Будет плюсом:» — технологии из списка nice_to_have (если список непуст) как ЖЕЛАТЕЛЬНЫЕ, НЕ обязательные.\n"
-            "- «Условия:» — пункты из списка conditions (если непуст).\n"
+            "ЯВНО раздели секции (заголовками внутри текста):\n"
+            "- «Требования:» — ОБЯЗАТЕЛЬНЫЕ пункты из списка core (именно как обязательные требования).\n"
+            "- «Стек:» — технологии из списка weak_stack ПРОСТО перечисли как стек проекта (НЕ как обязательные требования).\n"
+            "- «Будет плюсом:» — пункты из nice_to_have как ЖЕЛАТЕЛЬНЫЕ, НЕ обязательные.\n"
+            "- «Условия:» — пункты из conditions (бенефиты/график).\n"
             "- Личные качества из soft упомяни вскользь.\n"
-            "Не добавляй технологий сверх перечисленных."
+            "Не добавляй пунктов сверх перечисленных."
         )
 
     def payload(self, spec: ResponsibilitiesSpec) -> str:
         noise = ["лаконично", "обычно", "подробно"][min(max(spec.noise_level, 0), 2)]
-        ctx = {"domain": spec.domain, "core_обязательные": spec.core_terms,
+        ctx = {"domain": spec.domain, "core_обязательные": spec.core_terms, "weak_stack_стек": spec.weak_stack,
                "nice_to_have_будет_плюсом": spec.nice_to_have, "conditions_условия": spec.conditions,
                "soft_личные_качества": spec.soft_terms, "style": noise}
         return "CONTEXT_JSON:\n" + json.dumps(ctx, ensure_ascii=False) + "\n\nВерни только текст вакансии:"

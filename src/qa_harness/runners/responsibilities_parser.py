@@ -33,7 +33,9 @@ from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_pro
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
     CONDITIONS_NOISE,
+    REQUIRED_CONSTRAINTS,
     SOFT_NOISE,
+    STRONG_FILTERS,
     TECH_VOCAB,
     GenerationPolicy,
     ResponsibilitiesGenerator,
@@ -105,21 +107,26 @@ def _process(case: GoldenCase, client: Any, offline: bool) -> Dict[str, Any]:
 
 def _process_generate(variant: int, *, client: Any, gen_client: Any, gen_policy: GenerationPolicy,
                       gen_seed: int, core_n: int) -> Dict[str, Any]:
-    """Один вариант: засеваем обязательные core + nice-to-have/soft/условия → LLM пишет вакансию с секциями
-    → парсер → судья: expect = core (обязательные требования покрыты), forbid = nice/soft/условия (НЕ требования)."""
+    """Один вариант: засеваем СИЛЬНЫЕ фильтры + обязательное ограничение (→ expect) и слабый стек (→ «Стек:»,
+    не требование), nice-to-have/условия/soft (→ forbid). Промпт должен выбрать сильные, а не слабый стек/шум."""
     rng = random.Random(f"{gen_seed}:{variant}")
     domain = rng.choice(list(TECH_VOCAB))
     vocab = TECH_VOCAB[domain]
-    core = rng.sample(vocab, min(core_n, len(vocab)))
-    nice = rng.sample([t for t in vocab if t not in core], min(2, max(0, len(vocab) - len(core))))
-    soft = rng.sample(SOFT_NOISE, 2)
+    strong = rng.sample(STRONG_FILTERS, min(2, len(STRONG_FILTERS)))
+    constraints = [rng.choice(REQUIRED_CONSTRAINTS)]
+    core = strong + constraints                                   # сильные критерии + обязательное ограничение → expect
+    weak = rng.sample(vocab, min(3, len(vocab)))                  # слабый стек — в «Стек:», НЕ обязателен
+    nice = rng.sample([t for t in vocab if t not in weak], min(1, max(0, len(vocab) - len(weak))))
+    soft = rng.sample(SOFT_NOISE, 1)
     conditions = rng.sample(CONDITIONS_NOISE, 2)
     res: Dict[str, Any] = {"case": None, "predicted": None, "raw": None, "call_error": None,
                            "parse_error": None, "usage": None, "mode": "generate", "variant": variant,
                            "gen_source": None, "gen_usage": None}
     gen = ResponsibilitiesGenerator(gen_client)
     gr = generate_valid(
-        lambda _a: (gen.generate(ResponsibilitiesSpec(domain, core, soft, nice, conditions, noise_level=variant % 3)), None),
+        lambda _a: (gen.generate(ResponsibilitiesSpec(
+            domain, core, soft_terms=soft, nice_to_have=nice, conditions=conditions,
+            weak_stack=weak, noise_level=variant % 3)), None),
         policy=gen_policy)
     res["gen_source"] = gr.source
     res["gen_usage"] = dict(gen.usage)
