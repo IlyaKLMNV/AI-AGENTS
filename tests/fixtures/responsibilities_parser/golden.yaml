@@ -83,7 +83,8 @@
   expect:
     - ["production RAG", "RAG / agent / workflow", "RAG", "agent", "workflow"]
     - ["интеграции AI-пайплайнов", "корпоративными источниками данных", "внутренними системами"]
-    - ["DevOps", "frontend, backend, mobile, DevOps", "нескольких областей"]
+    # широкий технический кругозор / DevOps — допускаем выражение через инфра-инструменты (Docker/Kubernetes)
+    - ["DevOps", "frontend, backend, mobile, DevOps", "нескольких областей", "Docker", "Kubernetes"]
     - ["командировкам в Ереван", "командировки в Ереван"]
   forbid:
     - "зарплата"

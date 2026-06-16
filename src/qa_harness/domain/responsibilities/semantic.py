@@ -28,8 +28,16 @@ def _as_forms(item: Any) -> List[str]:
 
 
 def _match(form: str, key: str) -> bool:
+    """Совпадение формы с извлечённым требованием: нормализованная подстрока ИЛИ стем-токены формы
+    все присутствуют в требовании (терпимо к склонениям: «разработкой» ≈ «разработки»)."""
     f, k = _norm(form), _norm(key)
-    return bool(f and k and (f in k or k in f))
+    if f and k and (f in k or k in f):
+        return True
+    ftoks = _stem_tokens(form)
+    if not ftoks:
+        return False
+    ktoks = _stem_tokens(key)
+    return all(any(_token_match(a, b) for b in ktoks) for a in ftoks)
 
 
 def check_semantics(

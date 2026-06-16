@@ -12,10 +12,21 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, List
 
 from .base import Generator
+
+
+def _phrase_present(phrase: str, text_low: str) -> bool:
+    """Фраза «присутствует», если ≥половины её значимых слов найдены в тексте по 6-символьному стем-префиксу
+    (терпимо к перефразировке/склонению LLM-генератора). Для коротких слов — точная подстрока."""
+    words = [w for w in re.findall(r"[a-zа-я0-9]+", phrase.lower()) if len(w) >= 4]
+    if not words:
+        return phrase.lower() in text_low
+    hits = sum(1 for w in words if w[:6] in text_low)
+    return hits >= max(1, (len(words) + 1) // 2)
 
 # Технологический словарь по доменам — источник core/nice-to-have терминов (засев).
 TECH_VOCAB = {
@@ -85,7 +96,9 @@ class ResponsibilitiesGenerator(Generator):
         if not text:
             raise ValueError("пустой текст вакансии")
         low = text.lower()
-        missing = [t for t in spec.core_terms if t.lower() not in low]
+        # core может быть фразой; LLM перефразирует/склоняет → проверяем по стем-оверлапу значимых слов,
+        # а не дословно (иначе «production RAG, agent и workflow» ≠ «… / workflow-систем» ложно валит).
+        missing = [t for t in spec.core_terms if not _phrase_present(t, low)]
         if missing:
             raise ValueError(f"в тексте отсутствуют core-термины: {missing}")
         return text
