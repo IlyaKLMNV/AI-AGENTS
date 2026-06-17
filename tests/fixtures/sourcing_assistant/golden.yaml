@@ -162,3 +162,61 @@
   candidate_data: "Навыки: Python, PostgreSQL, Docker."
   expect_passed: []
   offline_output: []
+
+# ===== РЕАЛЬНЫЕ ВАКАНСИИ: требования из вакансии × резюме кандидата (смешанные метки) =====
+
+# По вакансии TechLead AI Engineer: кандидат закрывает RAG/интеграции/командировки, но не Kubernetes.
+- name: real_techlead_candidate_mixed
+  requirements:
+    - "Практический опыт построения production RAG / agent / workflow-систем."
+    - "Опыт интеграции AI-пайплайнов с корпоративными источниками данных."
+    - "Опыт работы с Kubernetes."
+    - "Готовность к редким командировкам в Ереван."
+  candidate_data: |
+    AI-инженер, 5 лет. Строил production RAG и агентные пайплайны, интегрировал их с корпоративными
+    API и внутренними базами знаний банка. Стек: Python, FastAPI, LangGraph, Docker.
+    Анкета: командировки в Ереван возможны, рассматриваю.
+  expect_passed: [1, 1, 0, 1]
+  offline_output:
+    - {requirement: "Практический опыт построения production RAG / agent / workflow-систем.", comment: "Указан опыт production RAG и агентных пайплайнов.", passed: 1}
+    - {requirement: "Опыт интеграции AI-пайплайнов с корпоративными источниками данных.", comment: "Описана интеграция с корпоративными API и базами знаний.", passed: 1}
+    - {requirement: "Опыт работы с Kubernetes.", comment: "Указан Docker, Kubernetes не упомянут.", passed: 0}
+    - {requirement: "Готовность к редким командировкам в Ереван.", comment: "В анкете командировки в Ереван возможны.", passed: 1}
+
+# По вакансии AI-агенты Middle+: LLM-тюнинг и векторные БД есть, Kubernetes нет.
+- name: real_ai_agent_candidate_mixed
+  requirements:
+    - "Опыт тонкой настройки LLM (LoRA/QLoRA)."
+    - "Опыт работы с векторными базами данных (Qdrant, Weaviate или аналоги)."
+    - "Опыт работы с Kubernetes."
+    - "Готовность работать по часовому поясу Израиля."
+  candidate_data: |
+    ML-инженер. Дообучал open-source LLM методом LoRA, деплоил Llama на своём сервере.
+    Использовал Qdrant как векторную БД в RAG. Инфраструктура: Docker, Linux.
+    Анкета: график по UTC+2 рассматриваю.
+  expect_passed: [1, 1, 0, 1]
+  offline_output:
+    - {requirement: "Опыт тонкой настройки LLM (LoRA/QLoRA).", comment: "Указано дообучение LLM методом LoRA.", passed: 1}
+    - {requirement: "Опыт работы с векторными базами данных (Qdrant, Weaviate или аналоги).", comment: "Указан Qdrant как векторная БД.", passed: 1}
+    - {requirement: "Опыт работы с Kubernetes.", comment: "Указаны Docker и Linux, Kubernetes не упомянут.", passed: 0}
+    - {requirement: "Готовность работать по часовому поясу Израиля.", comment: "В анкете график по UTC+2 рассматривается.", passed: 1}
+
+# По вакансии «Специалист по автоматизации»: SQL/Python/устройство/интернет есть, C++ (плюс) нет.
+- name: real_automation_candidate_mixed
+  requirements:
+    - "Умение составлять SQL-запросы."
+    - "Хорошее знание Python."
+    - "Наличие смартфона с Android 10 или iOS 15.0 и выше."
+    - "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с."
+    - "Опыт работы с C++."
+  candidate_data: |
+    Разработчик автоматизации, 2 года коммерческой разработки. Навыки: Python, SQL, Groovy.
+    Писал скрипты и SQL-запросы, строил дашборды.
+    Анкета: смартфон Android 12, домашний интернет 200 Мбит/с.
+  expect_passed: [1, 1, 1, 1, 0]
+  offline_output:
+    - {requirement: "Умение составлять SQL-запросы.", comment: "Указан опыт написания SQL-запросов.", passed: 1}
+    - {requirement: "Хорошее знание Python.", comment: "Python указан в навыках.", passed: 1}
+    - {requirement: "Наличие смартфона с Android 10 или iOS 15.0 и выше.", comment: "Указан смартфон на Android 12.", passed: 1}
+    - {requirement: "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", comment: "Указан интернет 200 Мбит/с.", passed: 1}
+    - {requirement: "Опыт работы с C++.", comment: "C++ в данных кандидата не найден.", passed: 0}
