@@ -85,8 +85,11 @@ class ReportBuilder:
     def add_case(self, rec: CaseRecord) -> None:
         self._cases.append(rec)
 
-    def add_error(self, case_id: str, message: str) -> None:
-        self._errors.append({"case_id": case_id, "message": message})
+    def add_error(self, case_id: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+        entry: Dict[str, Any] = {"case_id": case_id, "message": message}
+        if data:
+            entry["data"] = data
+        self._errors.append(entry)
 
     def set_token_usage(self, usage: Dict[str, int]) -> None:
         self._usage = {

@@ -71,11 +71,13 @@ class GoldenScoreCase:
 
 @dataclass
 class SearchVacancy:
-    """Вакансия для ЖИВОГО поиска кандидатов (--search): полный текст + требования для оценки.
+    """Вакансия для ЖИВОГО поиска кандидатов (--search): название (поисковый запрос) + требования.
 
-    vacancy — текст вакансии (идёт в extractor → entities → backend-поиск кандидатов); title — заголовок
-    (для payload); requirements — требования-предложения, по которым промпт sourcing оценивает найденных
-    живых кандидатов (эталона passed нет — это реальные люди, поэтому только contract-качество).
+    title — НАЗВАНИЕ вакансии (столбец «Вакансия (HH)»): идёт в extractor → entities → backend-поиск
+    кандидатов (по полному тексту extractor ANDит десятки навыков → пусто, поэтому ищем по роли);
+    vacancy — полный текст (справочно, источник requirements, в поиск НЕ идёт); requirements —
+    требования-предложения, по которым промпт sourcing оценивает найденных живых кандидатов (эталона
+    passed нет — реальные люди, поэтому только contract-качество).
     """
     name: str
     title: str
@@ -99,9 +101,12 @@ def load_search_vacancies(path: Path) -> List[SearchVacancy]:
         vacancy = str(item.get("vacancy") or "").strip()
         if not vacancy:
             raise ValueError(f"vacancy {name}: empty vacancy text")
+        title = str(item.get("title") or "").strip()
+        if not title:
+            # title — поисковый запрос (идёт в extractor); без него поиск свалился бы на полный текст
+            raise ValueError(f"vacancy {name}: empty title (нужен как поисковый запрос для --search)")
         reqs = [str(r).strip() for r in (item.get("requirements") or []) if str(r).strip()]
-        out.append(SearchVacancy(name=name, title=str(item.get("title") or "").strip(),
-                                 vacancy=vacancy, requirements=reqs))
+        out.append(SearchVacancy(name=name, title=title, vacancy=vacancy, requirements=reqs))
     return out
 
 

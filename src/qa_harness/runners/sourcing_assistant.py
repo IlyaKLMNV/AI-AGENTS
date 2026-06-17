@@ -54,6 +54,7 @@ from qa_harness.domain.sourcing import (
     check_contract,
     check_passed_labels,
     comment_inconsistencies,
+    is_bare_array,
     load_golden_score,
     load_search_vacancies,
     parse_sourcing_output,
@@ -159,6 +160,24 @@ def _sample(profiles: List[Dict[str, Any]], n: int, mode: str, rng: random.Rando
     return [clean[i] for i in sorted(rng.sample(range(len(clean)), take))]
 
 
+def _payload_search_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Что РЕАЛЬНО ушло на backend для поиска: группы термов (positions/skills/keys/...) + фильтры.
+
+    Это и есть «по каким данным искали» — отражает работу extractor (раскладку на позиции/скиллы/ключи)
+    после маппинга в payload. AND-термы лежат в группе 'all' (backend требует их ВСЕ → пересечение).
+    """
+    out: Dict[str, Any] = {}
+    for k in ("positions", "skills", "firms", "keys", "geos"):
+        if payload.get(k):
+            out[k] = payload[k]
+    for k in ("seniorityLevels", "experience", "managementExperience", "ages",
+              "onlyRussian", "onlyEnglish", "onlyWithHigherEducation"):
+        if payload.get(k) not in (None, False):
+            out[k] = payload[k]
+    out["limit"] = payload.get("limit")
+    return out
+
+
 def _process_online(
     idx_vacancy,
     sourcing_client: Any,
@@ -195,6 +214,7 @@ def _process_online(
         return res
 
     payload = build_step3_payload(entities, title, base_payload, sanitize_office_geo=sanitize_geo)
+    res["search_input"] = {"extractor_entities": entities, "payload": _payload_search_summary(payload), "count": None}
     if not any(k in payload for k in ("positions", "skills", "keys")):
         res["case_infra"] = "no_search_entities_in_cdm"
         return res
@@ -207,11 +227,13 @@ def _process_online(
     if kind not in ("success", "insufficient_search_terms"):
         res["case_infra"] = f"backend:{kind}:{berr or status_code}"
         return res
+    res["search_input"]["count"] = int(count) if isinstance(count, int) else None
     profiles = []
     if isinstance(response, dict) and isinstance(response.get("profiles"), list):
         profiles = [p for p in response["profiles"] if isinstance(p, dict)]
     if not profiles:
-        res["case_infra"] = "no_candidates_found"
+        res["case_infra"] = (f"profiles_missing(count={count})" if isinstance(count, int) and count > 0
+                             else f"no_candidates_found(count={count if isinstance(count, int) else '?'})")
         return res
 
     rng = random.Random((seed or 0) * 100003 + idx)
@@ -220,6 +242,7 @@ def _process_online(
         entry: Dict[str, Any] = {"id": cand_id, "predicted": None, "infra_error": None, "parse_error": None, "usage": None}
         profile = build_candidate_profile(cand)
         candidate_data = resume_text_from_profile(profile)  # новый вход промпта — данные кандидата текстом
+        entry["candidate_data"] = candidate_data       # что РЕАЛЬНО увидел промпт о кандидате (в отчёт)
         try:
             raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "candidate_data": candidate_data}, ensure_ascii=False))
             entry["usage"] = usage
@@ -227,6 +250,7 @@ def _process_online(
             entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
             res["candidates"].append(entry)
             continue
+        entry["not_bare"] = not is_bare_array(raw)   # правила 2–3: ответ должен быть голым [..], без обрамления
         try:
             entry["predicted"] = parse_sourcing_output(raw)
         except ValueError as e:
@@ -238,8 +262,9 @@ def _process_online(
 def _process_search(vac: SearchVacancy, extractor_client: Any, sourcing_client: Any,
                     base_payload: Dict[str, Any], sanitize_geo: bool, backend: BackendCfg, token: str,
                     backend_down: threading.Event, n_candidates: int) -> Dict[str, Any]:
-    """Реальная вакансия → extractor (сущности) → backend-поиск ЖИВЫХ кандидатов → scoring каждого.
+    """Название вакансии → extractor (сущности) → backend-поиск ЖИВЫХ кандидатов → scoring каждого.
 
+    В extractor идёт ТОЛЬКО title (роль), не полный текст: иначе extractor ANDит десятки навыков → пусто.
     На шаг дальше, чем --count-only: тянем профили (limit=N), а не только count, и каждого оцениваем
     промптом sourcing против requirements вакансии. Эталона passed нет (люди живые) → contract-качество.
     """
@@ -248,8 +273,11 @@ def _process_search(vac: SearchVacancy, extractor_client: Any, sourcing_client: 
     if not vac.requirements:
         res["case_infra"] = "no_requirements"
         return res
-    try:                                                  # extractor: вакансия → сущности для поиска
-        etext, _eu = extractor_client.run(vac.vacancy)
+    try:                                                  # extractor: НАЗВАНИЕ вакансии → сущности для поиска
+        # В поиск кандидатов идёт только заголовок (столбец «Вакансия (HH)»), а НЕ весь текст:
+        # по полному тексту extractor вытаскивает 20–33 навыка и ANDит их → пустой результат.
+        # Требования (детальный текст) нужны лишь для scoring уже НАЙДЕННЫХ кандидатов.
+        etext, _eu = extractor_client.run(vac.title or vac.vacancy)
     except Exception as e:  # noqa: BLE001
         res["case_infra"] = f"extractor:{type(e).__name__}:{e}"
         return res
@@ -258,24 +286,31 @@ def _process_search(vac: SearchVacancy, extractor_client: Any, sourcing_client: 
         res["case_infra"] = f"extractor_invalid_json:{status}"
         return res
     payload = build_step3_payload(entities, vac.title or vac.vacancy[:80], base_payload, sanitize_office_geo=sanitize_geo)
+    res["search_input"] = {"extractor_entities": entities, "payload": _payload_search_summary(payload), "count": None}
     if not any(k in payload for k in ("positions", "skills", "keys")):
         res["case_infra"] = "no_search_entities"
         return res
     if backend_down.is_set():
         res["case_infra"] = "backend_down(skipped)"
         return res
-    kind, status_code, _att, _count, berr, response = call_backend_search_bool(backend, token, payload)
+    kind, status_code, _att, count, berr, response = call_backend_search_bool(backend, token, payload)
     if kind not in ("success", "insufficient_search_terms"):
         res["case_infra"] = f"backend:{kind}:{berr or status_code}"
         return res
+    res["search_input"]["count"] = int(count) if isinstance(count, int) else None
     profiles = [p for p in (response.get("profiles") or []) if isinstance(p, dict)] if isinstance(response, dict) else []
     if not profiles:
-        res["case_infra"] = "no_candidates_found"
+        # развести «реально пусто» (count=0) и «count>0, но backend не вернул profiles при limit>0»
+        if isinstance(count, int) and count > 0:
+            res["case_infra"] = f"profiles_missing(count={count})"
+        else:
+            res["case_infra"] = f"no_candidates_found(count={count if isinstance(count, int) else '?'})"
         return res
     for cand in profiles[:max(1, n_candidates)]:          # каждого найденного кандидата → scoring
         cid = str(cand.get("id") or cand.get("name") or "candidate")
         entry: Dict[str, Any] = {"id": cid, "predicted": None, "infra_error": None, "parse_error": None, "usage": None}
         candidate_data = resume_text_from_profile(build_candidate_profile(cand))
+        entry["candidate_data"] = candidate_data       # что РЕАЛЬНО увидел промпт о кандидате (в отчёт)
         try:
             raw, usage = sourcing_client.run(
                 json.dumps({"requirements": vac.requirements, "candidate_data": candidate_data}, ensure_ascii=False))
@@ -284,6 +319,7 @@ def _process_search(vac: SearchVacancy, extractor_client: Any, sourcing_client: 
             entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
             res["candidates"].append(entry)
             continue
+        entry["not_bare"] = not is_bare_array(raw)   # правила 2–3: ответ должен быть голым [..], без обрамления
         try:
             entry["predicted"] = parse_sourcing_output(raw)
         except ValueError as e:
@@ -355,6 +391,7 @@ def _process_score(case: GoldenScoreCase, sourcing_client: Any, replay: bool) ->
     except Exception as e:  # noqa: BLE001 — сетевой сбой промпта = инфра
         res["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
         return res
+    res["not_bare"] = not is_bare_array(raw)   # правила 2–3: ответ должен быть голым [..], без обрамления
     try:
         res["predicted"] = parse_sourcing_output(raw)
     except ValueError as e:
@@ -455,6 +492,11 @@ def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
             contract_ok, c_issues = False, ["invalid_json_output"]
             semantic_ok, sem_diffs, comment_sig = False, ["no_output"], []
             reasons["invalid_json_output"] += 1
+        elif res.get("not_bare"):                          # ответ не голый [..] -> громкий фейл, semantic не считаем
+            predicted = []
+            contract_ok, c_issues = False, ["output_not_bare_array"]
+            semantic_ok, sem_diffs, comment_sig = False, ["not_bare_array"], []
+            reasons["output_not_bare_array"] += 1
         else:
             predicted = res["predicted"]
             contract_ok, c_issues, _det = check_contract(requirements, predicted)
@@ -683,9 +725,13 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         cid = f"{case_source}:{name}:v1"
         requirements = res["requirements"]
 
-        # инфра/данные на уровне всей вакансии -> errors, без кейса качества
+        # инфра/данные на уровне всей вакансии -> errors, без кейса качества.
+        # Прикладываем «по чему искали» (entities + payload + count) — чтобы при count=0 было видно вход поиска.
         if res["case_infra"]:
-            rb.add_error(cid, res["case_infra"])
+            err_data: Dict[str, Any] = {"requirements": requirements}
+            if res.get("search_input"):
+                err_data["search_input"] = res["search_input"]
+            rb.add_error(cid, res["case_infra"], data=err_data)
             reasons[res["case_infra"].split(":")[0]] += 1
             if res["case_infra"].startswith("backend:"):
                 state["infra_backend"] += 1
@@ -710,14 +756,18 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             if cand["parse_error"]:                       # не JSON-массив -> контракт-фейл
                 passed, codes = False, ["invalid_json_output"]
                 req_results = None
+            elif cand.get("not_bare"):                    # ответ не голый [..] (текст/markdown вокруг) -> громкий фейл, дальше не идём
+                passed, codes = False, ["output_not_bare_array"]
+                req_results = None
             else:
                 passed, case_issues, _details = check_contract(requirements, cand["predicted"])
                 codes = list(case_issues)
                 req_results = []
                 for it in cand["predicted"]:
                     if isinstance(it, dict):
+                        # passed отдаём СЫРЫМ (промпт возвращает 0/1) — не приводим к true/false
                         req_results.append({"requirement": str(it.get("requirement") or ""),
-                                            "passed": bool(it.get("passed") in (1, True)),
+                                            "passed": it.get("passed"),
                                             "comment": str(it.get("comment") or "")})
             if passed:
                 mc["passed"] += 1
@@ -726,10 +776,13 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
                 for c in codes:
                     issues[c] += 1
                     case_issue_codes.add(c)
-            subj: Dict[str, Any] = {"id": cand["id"], "passed": bool(passed),
-                                    "verdict": {"evaluator": "sourcing_contract", "passed": bool(passed), "reason_codes": codes}}
+            # Порядок ключей = порядок чтения: кто кандидат → что он указал → как промпт оценил.
+            subj: Dict[str, Any] = {"id": cand["id"], "passed": bool(passed)}
+            if cand.get("candidate_data") is not None:
+                subj["candidate_data"] = cand["candidate_data"]   # ВХОД промпта: данные кандидата текстом
             if req_results is not None:
-                subj["requirement_results"] = req_results
+                subj["requirement_results"] = req_results          # ВЫХОД промпта: оценка по каждому требованию
+            subj["verdict"] = {"evaluator": "sourcing_contract", "passed": bool(passed), "reason_codes": codes}
             subjects.append(subj)
 
         if quality_count == 0:                            # все кандидаты инфра -> не кейс качества
@@ -741,10 +794,19 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
         mc["cases"] += 1
         case_passed = all(s["passed"] for s in subjects)
+        # inputs читаются сверху вниз: что за вакансия → по чему искали → какие требования оценивали.
+        si = res.get("search_input") or {}
+        inputs: Dict[str, Any] = {
+            "criterion": "оценка кандидата против требований: массив 1:1, элемент {requirement, passed, comment}",
+            "vacancy": res["title"],
+            "requirements": requirements,
+        }
+        if si:
+            inputs["backend"] = {"searched_by": res["title"], "found": si.get("count"),
+                                 "shown": len(subjects)}
         rb.add_case(CaseRecord(
             case_id=cid, source=case_source, passed=case_passed,
-            inputs={"criterion": "sourcing output contract: array 1:1 to requirements, item shape {requirement,comment,passed}",
-                    "requirements": requirements, "vacancy_title": res["title"]},
+            inputs=inputs,
             verdict={"evaluator": "sourcing_contract", "passed": case_passed, "reason_codes": sorted(case_issue_codes)},
             subjects=subjects,
         ))

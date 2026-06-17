@@ -4,7 +4,7 @@
 (кандидаты живые, без разметки). Backend-поиск и сборку payload оркестрирует раннер.
 """
 
-from .contract import ALLOWED_KEYS, check_contract, parse_sourcing_output
+from .contract import ALLOWED_KEYS, check_contract, is_bare_array, parse_sourcing_output
 from .build import REQUIREMENTS_SOURCES, build_candidate_profile, requirements_from_cdm
 from .cases import (
     GoldenScoreCase,
@@ -19,6 +19,7 @@ from .semantic import check_passed_labels, comment_inconsistencies
 
 __all__ = [
     "parse_sourcing_output",
+    "is_bare_array",
     "check_contract",
     "ALLOWED_KEYS",
     "check_passed_labels",

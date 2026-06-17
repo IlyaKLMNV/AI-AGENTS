@@ -1,11 +1,12 @@
 """Контракт вывода sourcing_assistant: массив объектов {requirement, comment, passed} 1:1 к требованиям.
 
-Промпт получает {requirements:[...], profile:{...}} и обязан вернуть JSON-массив той же длины,
+Промпт получает {requirements:[...], candidate_data:"..."} и обязан вернуть JSON-массив той же длины,
 по одному объекту на требование, В ТОМ ЖЕ ПОРЯДКЕ; каждый объект — РОВНО {requirement, comment, passed},
 где requirement — точный echo требования, passed ∈ {0,1}.
 
-Семантической оценки («реально ли кандидат подходит») здесь НЕТ: кандидаты — живые профили из
-backend без разметки, поэтому проверяется только ФОРМА ответа (как и в легаси-раннере).
+Семантической оценки («реально ли кандидат подходит») здесь НЕТ: для live-кандидатов из backend разметки
+нет, поэтому проверяется только ФОРМА ответа (как и в легаси-раннере). Смысловой слой (passed по golden +
+согласованность comment) — в semantic.py, он применяется только к размеченным golden/offline.
 """
 
 from __future__ import annotations
@@ -18,6 +19,18 @@ ALLOWED_KEYS = {"requirement", "comment", "passed"}
 MAX_COMMENT_LEN = 300
 # Конец предложения: [.!?] в конце строки или перед пробелом+заглавной (не ловит Node.js / сокращения).
 _SENTENCE_END = re.compile(r"[.!?](?:\s+[А-ЯA-ZЁ]|\s*$)")
+# Утечка метки в comment: "passed = 0" / "passed=1" (правило 12 промпта).
+_PASSED_LITERAL = re.compile(r"passed\s*=\s*[01]", re.IGNORECASE)
+
+
+def is_bare_array(raw: str) -> bool:
+    """True, если сырой ответ — ГОЛЫЙ JSON-массив: начинается с [ и кончается ] без обрамления.
+
+    Промпт (правила 2–3) запрещает любой текст/markdown вокруг массива. Парсер всё равно умеет
+    выдёргивать [...] из мусора (салвадж), но факт нарушения «не голый массив» фиксируем отдельно.
+    """
+    s = (raw or "").strip()
+    return s.startswith("[") and s.endswith("]")
 
 
 def parse_sourcing_output(raw: str) -> List[Dict[str, Any]]:
@@ -64,6 +77,14 @@ def _validate_item_shape(item: Dict[str, Any]) -> List[str]:
                 reasons.append("invalid_comment:too_long")
             if len(_SENTENCE_END.findall(c)) > 2:
                 reasons.append("invalid_comment:too_many_sentences")
+            # Явные запреты из промпта (§comment.3, правила 12/§comment.11): кавычки, скобки [] {},
+            # и литералы passed=0/passed=1 внутри комментария.
+            if '"' in c:
+                reasons.append("invalid_comment:quotes")
+            if any(ch in c for ch in "[]{}"):
+                reasons.append("invalid_comment:brackets")
+            if _PASSED_LITERAL.search(c):
+                reasons.append("invalid_comment:passed_literal")
     if "passed" in item:
         p = item["passed"]
         # bool — subclass of int, поэтому отклоняем явно (true/false недопустимы, нужен integer 0/1)

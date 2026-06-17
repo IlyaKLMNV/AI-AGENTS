@@ -220,3 +220,41 @@
     - {requirement: "Наличие смартфона с Android 10 или iOS 15.0 и выше.", comment: "Указан смартфон на Android 12.", passed: 1}
     - {requirement: "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", comment: "Указан интернет 200 Мбит/с.", passed: 1}
     - {requirement: "Опыт работы с C++.", comment: "C++ в данных кандидата не найден.", passed: 0}
+
+# ===== ЭКВИВАЛЕНТЫ И ГРАНИЧНЫЕ СЛУЧАИ (явные правила промпта) =====
+
+# --- очевидные эквиваленты из промпта: JS/JavaScript, TS/TypeScript, Go/Golang, Postgres/PostgreSQL, 1C/1С → 1 ---
+- name: obvious_equivalents_positive
+  requirements:
+    - "Опыт работы с JavaScript."
+    - "Опыт работы с TypeScript."
+    - "Опыт работы с Golang."
+    - "Опыт работы с PostgreSQL."
+    - "Опыт работы с 1С."
+  candidate_data: "Навыки: JS, TS, Go, Postgres, 1C. Бэкенд-разработчик, 4 года."
+  expect_passed: [1, 1, 1, 1, 1]
+  offline_output:
+    - {requirement: "Опыт работы с JavaScript.", comment: "JS эквивалентен JavaScript и указан в навыках.", passed: 1}
+    - {requirement: "Опыт работы с TypeScript.", comment: "TS эквивалентен TypeScript и указан в навыках.", passed: 1}
+    - {requirement: "Опыт работы с Golang.", comment: "Go эквивалентен Golang и указан в навыках.", passed: 1}
+    - {requirement: "Опыт работы с PostgreSQL.", comment: "Postgres эквивалентен PostgreSQL и указан в навыках.", passed: 1}
+    - {requirement: "Опыт работы с 1С.", comment: "1C эквивалентно 1С и указано в навыках.", passed: 1}
+
+# --- контраст: похожие, но НЕ равные технологии не эквивалентны (промпт: не засчитывать) ---
+- name: similar_not_equal_negative
+  requirements: ["Опыт работы с Java."]
+  candidate_data: "Навыки: JavaScript, Node.js. Фронтенд-разработчик."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Опыт работы с Java.", comment: "Указан JavaScript, это не Java.", passed: 0}
+
+# --- данные кандидата пустые → все требования 0 (явное правило промпта) ---
+- name: empty_candidate_data_all_zero
+  requirements:
+    - "Хорошее знание Python."
+    - "Опыт работы с PostgreSQL."
+  candidate_data: ""
+  expect_passed: [0, 0]
+  offline_output:
+    - {requirement: "Хорошее знание Python.", comment: "Данные кандидата отсутствуют, подтверждение не найдено.", passed: 0}
+    - {requirement: "Опыт работы с PostgreSQL.", comment: "Данные кандидата отсутствуют, подтверждение не найдено.", passed: 0}
