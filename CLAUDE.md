@@ -47,8 +47,8 @@
   `temperature>0` НЕдетерминирован → в CI-гейт не годится (для гейта — golden).
 - Раннеры с `--generate` (**весь флот**): screening_scenarios, screening_guardrails, screening_autofill,
   message_classifier, verdict_classifier, first_touch (+`--component first_touch_hh`), responsibilities_parser,
-  one_line_search_query_builder, **sourcing_assistant** (LLM-профиль + засеянные requirements → контракт;
-  backend НЕ нужен — кандидаты генерятся, а не ищутся).
+  one_line_search_query_builder, **sourcing_assistant** (LLM-кандидат + засеянные requirements с известными
+  `expect_passed` → контракт + СЕМАНТИКА 0/1; backend НЕ нужен — кандидаты генерятся, а не ищутся).
 - Констрейнты/персоны/словари — ДАННЫЕ: `tests/fixtures/generation/<runner>/*.yaml`,
   `TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` в `domain/generators`.
 

@@ -101,8 +101,10 @@
 ```
 
 ### Опциональные под-уровни (поправка критика: схема течёт на 2 из 4 семейств)
-- **`subjects[]`** — для `sourcing` (кейс = вакансия, внутри N кандидатов, `passed` = «прошёл хоть
-  один»). Каждый subject: `{id, passed, verdict, requirement_results[]}`.
+- **`subjects[]`** — для `sourcing` (кейс = вакансия, внутри N кандидатов; `case.passed` = «**все**
+  оценённые кандидаты прошли контракт», строже легаси «≥1»). Каждый subject:
+  `{id, passed, candidate_data, requirement_results[], verdict}`, где `candidate_data` — вход промпта
+  (что увидел о кандидате), `requirement_results[].passed` — СЫРОЙ вывод промпта `0/1`.
 - **`stages[]`** — для `extractor`/`one_line` (конвейер step1→step2→step3 с тремя артефактами и
   тремя точками отказа). Каждый stage: `{name, artifact, passed, reason_codes[]}`.
 

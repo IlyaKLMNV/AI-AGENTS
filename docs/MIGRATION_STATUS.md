@@ -161,38 +161,53 @@ shared state — цикл о нём не знает. Будущие раннер
 Тестируем промпт sourcing_assistant (кандидат ↔ требования вакансии). Кейс = **ВАКАНСИЯ**, `subjects[]` = N
 кандидатов. Переиспользует `core/run_loop` + `pipeline/` (backend-поиск). **Первый раннер с `subjects[]`.**
 
+**Уточнённая задача промпта:** КОНСЕРВАТИВНАЯ (но НЕ заниженная) 0/1-оценка кандидата по требованиям.
+Вход — `{requirements:[...], candidate_data:"..."}` (резюме/профиль/анкета, НЕ только резюме); выход —
+массив `{requirement, comment, passed}` 1:1, `passed ∈ {0,1}`. Режимы входа: `--golden`/`--offline`/
+`--generate` (есть эталон `expect_passed` → контракт + СЕМАНТИКА); backend по CDM (`--count-only` / полный) и
+`--search` (живые кандидаты по НАЗВАНИЮ вакансии) — там разметки нет → только контракт.
+
 | Фича старого раннера | Статус | Где в новом |
 |---|---|---|
 | Требования 1..5 из CDM (key_requirements / stack+skills) | ✅ | `domain/sourcing/build.py` (`requirements_from_cdm`) |
 | backend-поиск реальных кандидатов по `extractor_entities` (limit=pool) | ✅ | runner + `pipeline` (`build_step3_payload`/`call_backend_search_bool`) |
 | Сэмпл N профилей (first/random) | ✅ | runner (`--candidate-sample-size`/`--sample-mode`) |
 | Профиль кандидата из backend-выдачи (about/skills/positions) | ✅ | `domain/sourcing/build.py` (`build_candidate_profile`) |
-| Промпт на каждого кандидата `{requirements, profile}` → массив | ✅ | runner + `core.StoredPromptClient` |
-| Контракт вывода (длина 1:1, форма {requirement,comment,passed}, точный echo) | ✅ | `domain/sourcing/contract.py` (`check_contract`/`parse_sourcing_output`) |
-| Two-file отчёт + `subjects[]` + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` (subjects[]) + `core/run_loop` |
+| Промпт на каждого кандидата `{requirements, candidate_data}` → массив 0/1 | ✅ | runner + `core.StoredPromptClient` |
+| Контракт: 1:1, форма {requirement,comment,passed}, echo, **голый массив**, comment без кавычек/скобок/`passed=N` | ✅ | `domain/sourcing/contract.py`: `output_not_bare_array`, `invalid_passed_value`, `invalid_comment:*`, `requirement_not_exact`, `length_mismatch` |
+| **Семантика по golden** (`passed` == `expect_passed`) + сигнал противоречия comment↔passed | ✅ (golden/offline/generate) | `domain/sourcing/semantic.py` (`check_passed_labels`, `comment_inconsistencies`) |
+| Живой поиск кандидатов по НАЗВАНИЮ вакансии (extractor→backend→scoring) | ✅ | `--search` + `vacancies.yaml` (`_process_search`) |
+| Триаж count'ов (limit=0, без профилей) | ✅ | `--count-only` |
+| Отчёт: `subjects[]` с `candidate_data` (вход) + `requirement_results` (выход 0/1); при count=0 `search_input` в `errors_index` | ✅ | runner `_fold` |
+| Two-file отчёт + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
 | Источник требований `responsibilities_parser` (LLM) | ⬜ | пропущен (есть `cdm_key_requirements`/`stack_skills`; это отдельный раннер) |
 | Офлайн без сети | ➕ | `--offline` replay канонных кандидатов (`tests/fixtures/sourcing_assistant/offline.yaml`) |
 | Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
 
 **Осознанные отличия от легаси:**
 - `case.passed` = ВСЕ оценённые кандидаты прошли контракт (легаси: «≥1 прошёл» — мягче; новое строже и честнее для теста надёжности формата);
-- **quality ≠ infra**: backend-сбои / нет entities / нет кандидатов / сетевые ошибки промпта → `errors`, не `failed`; в `cases[]` попадают только «оценённые» вакансии;
-- семантической оценки нет (как и в легаси): кандидаты живые, без разметки — только контракт формы;
-- дефолты мелкие (`--candidate-pool-size 10`, `--candidate-sample-size 5`): backend-профили (`limit>0`) — медленный путь.
+- **quality ≠ infra**: backend-сбои / нет entities / нет кандидатов (`count=0`) / сетевые ошибки промпта → `errors`, не `failed`; в `cases[]` попадают только «оценённые» вакансии;
+- **семантика — только для размеченных входов** (`--golden`/`--offline`/`--generate`, есть `expect_passed`): сверяем `passed` по эталону + сигналим противоречие comment↔passed; для live backend/`--search` разметки нет → только контракт формы (как в легаси);
+- **в поиск идёт НАЗВАНИЕ вакансии, не полный текст**: по полному тексту extractor ANDит 20–33 навыка → `count=0` (см. `vacancies.yaml`);
+- дефолты мелкие (`--candidate-pool-size 10`, `--candidate-sample-size 5`, `--candidates 5`): backend-профили (`limit>0`) — медленный путь.
 
 ---
 
 ## responsibilities_parser — детальный чек-лист
 
 Старый: `python -m app.responsibilities_parser_runner`. Новый: `python -m qa_harness.runners.responsibilities_parser`.
-**Без бэкенда** (только LLM): текст вакансии → JSON-массив ключевых терминов. Структурно как one_line (golden).
+**Без бэкенда** (только LLM): текст вакансии → JSON-массив требований-критериев. Структурно как one_line (golden).
+
+**Уточнённая задача промпта:** выбрать **0..5 САМЫХ СИЛЬНЫХ фильтров** отбора кандидатов, каждый — одно
+предложение в НЕЙТРАЛЬНОМ стиле критерия вакансии («Опыт работы с…»), НЕ в стиле факта о кандидате
+(«У кандидата есть…»). Не keyword-извлечение: это требования-предложения.
 
 | Фича старого раннера | Статус | Где в новом |
 |---|---|---|
-| Промпт vacancy → JSON-массив строк (ключевые слова) | ✅ | `core.StoredPromptClient` |
-| Контракт: 1..5 терминов, 1..3 слова, без чисел-одиночек/запятых, ≤60 | ✅ | `domain/responsibilities/contract.py` |
+| Промпт vacancy → JSON-массив строк (требования-критерии) | ✅ | `core.StoredPromptClient` |
+| Контракт: длина **0..5**, ≤250, без переносов; стиль критерия (не keyword-like, не «факт о кандидате», не multi-criteria) | ✅ | `domain/responsibilities/contract.py`: `list_len_not_0_5`, `keyword_like_requirement`, `candidate_fact_style`, `multi_criteria_requirement` |
 | Без дублей (нормализованных) | ✅ | `contract.find_duplicates` |
-| Заземление: термины найдены в тексте вакансии | ✅ сигнал | `domain/responsibilities/semantic.py` (`grounding_misses`) |
+| Заземление: anchor-термы требования найдены в тексте вакансии | ✅ сигнал | `domain/responsibilities/semantic.py` (`grounding_missing_anchors`) |
 | Совпадение с ожидаемым (`vacancy_stack∪skills`) | заменено | golden `expect`/`forbid` (`check_semantics`) |
 | Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн без сети | ➕ | `--offline` replay `offline_output` из golden |
@@ -202,7 +217,7 @@ shared state — цикл о нём не знает. Будущие раннер
 - источник кейсов: CDM-вакансии → курируемые **golden-вакансии** (`tests/fixtures/responsibilities_parser/golden.yaml`);
 - `passed = contract & semantic(golden)`; заземление в тексте — **сигнал-предупреждение** (не gate), как warning в легаси;
 - семантика по golden `expect`/`forbid` вместо нечёткого матчинга против `vacancy_stack∪skills`;
-- grounding — строгая подстрока (lower+ё→е, без стемминга) → может ложно метить склонённые формы (напр. «микросервисы» vs «микросервисов»); это лишь сигнал, качество не валит;
+- grounding и semantic-матчинг — **со стеммером** (loose-матч основ): «разработкИ» ≈ «разработкОЙ», чинит ложные расхождения на склонённых формах; grounding остаётся сигналом, качество не валит;
 - quality ≠ infra: сетевой сбой промпта → `errors`; невалидный JSON-вывод → contract-фейл (качество).
 
 ---
@@ -360,9 +375,9 @@ screening_assistant` | `screening_assistant_hh`). Сценарии берём и
 | message_classifier | seeded-сообщение (известный класс) | ✅ 95% |
 | verdict_classifier | seeded-диалог (известный вердикт) | ✅ 100% |
 | first_touch (+hh) | `VacancyGenerator` | ✅ 4/4 |
-| responsibilities_parser | seeded-текст (core-термины → expect) | ✅ 5/5 |
+| responsibilities_parser | seeded-текст (сильные фильтры → expect) | ✅ 6/6 |
 | one_line_search_query_builder | seeded-вакансия (только step1) | ✅ 5/5 |
-| sourcing_assistant | LLM-профиль + засеянные requirements (контракт, БЕЗ backend) | ✅ смоук |
+| sourcing_assistant | LLM-профиль + засеянные requirements → контракт + **семантика** (`expect_passed`), БЕЗ backend | ✅ 6/6 |
 
 **Констрейнты/персоны/словари — ДАННЫЕ:** `tests/fixtures/generation/<runner>/*.yaml`;
 `TECH_VOCAB`/`SOFT_NOISE`/`DOMAINS` — в `domain/generators`.
