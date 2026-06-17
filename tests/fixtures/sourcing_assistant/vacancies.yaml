@@ -1,0 +1,67 @@
+# Реальные вакансии для ЖИВОГО поиска кандидатов (--search).
+#
+# vacancy — текст вакансии (идёт в extractor → сущности → backend-поиск живых кандидатов);
+# title — заголовок (для payload); requirements — требования-предложения, по которым промпт sourcing
+# оценивает каждого НАЙДЕННОГО кандидата. Эталона passed нет (люди живые) → только contract-качество,
+# а сами оценки passed — реальные суждения промпта (информация для просмотра в отчёте).
+
+- name: techlead_ai_engineer
+  title: "TechLead AI Engineer"
+  vacancy: |
+    TechLead AI Engineer (Python), более 6 лет. Формат: удалённо.
+    Проект — внутреннее AI-ядро банка: RAG, агенты, skills, оркестрация, интеграция с внутренними системами.
+    Задачи: проектировать и развивать AI-ядро (агенты, skills, tool use, routing, orchestration),
+    строить RAG-сценарии (retrieval, chunking, embeddings, reranking), интегрировать платформу с
+    внутренними системами и API, настраивать observability и evaluation, закрывать смежные задачи по
+    стеку frontend/backend/mobile/DevOps.
+    Стек: Python, SQL, FastAPI, LangGraph, LlamaIndex, Haystack, OpenSearch, Elasticsearch, Airflow,
+    Langfuse, Docker, Linux, Kubernetes, CI/CD. Локация: Ереван/Кипр/РФ, командировки в Ереван.
+  requirements:
+    - "Практический опыт построения production RAG / agent / workflow-систем."
+    - "Опыт интеграции AI-пайплайнов с корпоративными источниками данных."
+    - "Опыт работы с Python и FastAPI."
+    - "Опыт работы с Docker и Kubernetes."
+
+- name: ai_agent_integration_middle
+  title: "Инженер по внедрению AI-агентов"
+  vacancy: |
+    Инженер по внедрению AI-агентов (Middle+). Опыт 3–6 лет, удалённо.
+    Задачи: вести AI-агента от прототипа до продакшена, улучшать промпты и RAG-пайплайны, тонкая
+    настройка (LoRA/QLoRA) open-source LLM, интеграция агентов с CRM/ERP, деплой и мониторинг на серверах.
+    Технический стек: Python Middle+, опыт с LLM (промптинг, RAG, SFT, LoRA/QLoRA), open-source модели
+    (Llama, Mistral) и их деплой, векторные БД (Chroma, Qdrant, Weaviate), Docker, Linux,
+    агентные фреймворки (LangChain, LlamaIndex).
+  requirements:
+    - "Опыт работы с Python."
+    - "Опыт тонкой настройки LLM (LoRA/QLoRA)."
+    - "Опыт работы с векторными базами данных."
+    - "Опыт с агентными фреймворками (LangChain, LlamaIndex)."
+
+- name: ml_engineer_medtech
+  title: "ML Engineer"
+  vacancy: |
+    Специалист по машинному обучению / ML Engineer. Опыт 3–6 лет.
+    Задачи: разрабатывать и внедрять ML/LLM-решения для medtech, проектировать AI-агентов для
+    автоматизации медицинских процессов, улучшать качество моделей по метрикам, готовить production-ready
+    решения (интеграции, мониторинг).
+    Важно: опыт ML/LLM в production, уверенный Python, NLP (метрики, трансформеры), агентные подходы
+    (ReAct, Tool use, Human-in-the-loop), RAG (векторные БД, ретриверы, реранкеры), ETL (Airflow, Dagster),
+    FastAPI, SQL к DWH.
+  requirements:
+    - "Опыт разработки ML / LLM-решений в production."
+    - "Уверенное владение Python."
+    - "Понимание NLP и работы с трансформерами."
+    - "Опыт работы с RAG (векторные базы, ретриверы)."
+
+- name: automation_specialist
+  title: "Специалист по автоматизации технических процессов"
+  vacancy: |
+    Специалист по автоматизации технических процессов. Опыт 1–3 года, удалённо.
+    Задачи: создавать и дорабатывать технические процессы (Groovy, Python, внутренние инструменты),
+    писать скрипты и SQL-подобные запросы, строить метрики и дашборды, автоматизировать краудсорс-задачи,
+    встраивать ML/GPT-технологии в бизнес-процессы.
+    Ждём: коммерческая разработка от полугода, умение писать SQL-запросы, хорошее знание Python.
+  requirements:
+    - "Хорошее знание Python."
+    - "Умение составлять SQL-запросы."
+    - "Опыт коммерческой разработки."

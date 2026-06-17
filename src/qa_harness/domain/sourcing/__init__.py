@@ -10,8 +10,10 @@ from .cases import (
     GoldenScoreCase,
     OfflineCandidate,
     OfflineCase,
+    SearchVacancy,
     load_golden_score,
     load_offline_cases,
+    load_search_vacancies,
 )
 from .semantic import check_passed_labels, comment_inconsistencies
 
@@ -29,4 +31,6 @@ __all__ = [
     "load_offline_cases",
     "GoldenScoreCase",
     "load_golden_score",
+    "SearchVacancy",
+    "load_search_vacancies",
 ]

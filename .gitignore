@@ -24,6 +24,7 @@ tests/fixtures/*
 !tests/fixtures/sourcing_assistant/
 !tests/fixtures/sourcing_assistant/offline.yaml
 !tests/fixtures/sourcing_assistant/golden.yaml
+!tests/fixtures/sourcing_assistant/vacancies.yaml
 !tests/fixtures/responsibilities_parser/
 !tests/fixtures/responsibilities_parser/golden.yaml
 !tests/fixtures/screening_autofill/

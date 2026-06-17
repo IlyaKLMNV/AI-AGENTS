@@ -10,7 +10,10 @@ passed:0|1}` на каждое. Правило: 1 при ЯВНОМ ИЛИ бл�
 - `--offline` — replay offline_output из golden: contract + semantic (без сети);
 - `--generate`— LLM-резюме с известными positive/negative навыками: contract + semantic; BACKEND НЕ нужен;
 - (без флага) — backend: поиск ЖИВЫХ кандидатов по CDM → contract-ONLY (эталона passed нет; НЕ проверка
-  качества scoring, а смоук формы). `--count-only` — только число кандидатов (диагностика).
+  качества scoring, а смоук формы). `--count-only` — только число кандидатов (диагностика);
+- `--search`  — поиск ЖИВЫХ кандидатов по РЕАЛЬНЫМ вакансиям (vacancies.yaml): extractor(вакансия)→сущности
+  →backend (limit=`--candidates`, дефолт 5)→профили→scoring каждого против requirements вакансии. На шаг
+  дальше count-only (тянем профили, а не число); contract-only (люди живые, эталона passed нет).
 
 contract: массив 1:1, точный echo, элемент {requirement,comment,passed}; passed — integer 0/1 (НЕ bool/строка);
 comment без переносов, ≤2 предложений. semantic: passed совпадает с эталоном expect_passed (gate);
@@ -46,21 +49,31 @@ from qa_harness.domain.generators import (
 )
 from qa_harness.domain.sourcing import (
     GoldenScoreCase,
+    SearchVacancy,
     build_candidate_profile,
     check_contract,
     check_passed_labels,
     comment_inconsistencies,
     load_golden_score,
+    load_search_vacancies,
     parse_sourcing_output,
     requirements_from_cdm,
 )
-from qa_harness.pipeline import BackendCfg, build_step3_payload, call_backend_search_bool, make_base_payload
+from qa_harness.pipeline import (
+    BackendCfg,
+    build_step3_payload,
+    call_backend_search_bool,
+    make_base_payload,
+    parse_extractor_json,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CDM_DIR = REPO_ROOT / "tests" / "fixtures" / "cdm" / "std"
 DEFAULT_GOLDEN = REPO_ROOT / "tests" / "fixtures" / "sourcing_assistant" / "golden.yaml"
+DEFAULT_VACANCIES = REPO_ROOT / "tests" / "fixtures" / "sourcing_assistant" / "vacancies.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "sourcing_assistant"
+EXTRACTOR_COMPONENT = "extractor_agent"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 
 
@@ -107,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--count-only", action="store_true",
                    help="Только ЧИСЛО кандидатов на вакансию (limit=0, быстро, без таймаутов): профили НЕ тянем "
                         "и промпт НЕ зовём. Диагностика доступности, не тест качества.")
+    # --- ЖИВОЙ поиск кандидатов по реальным вакансиям (extractor → backend → scoring) ---
+    p.add_argument("--search", action="store_true",
+                   help="Искать ЖИВЫХ кандидатов по реальным вакансиям (vacancies.yaml): extractor→backend→scoring.")
+    p.add_argument("--vacancies-file", type=Path, default=DEFAULT_VACANCIES,
+                   help="Файл вакансий для --search (текст вакансии + требования).")
+    p.add_argument("--candidates", type=int, default=5, help="Сколько кандидатов искать и оценивать на вакансию (--search).")
+    p.add_argument("--extractor-prompt-id", default=None, help="Override prompt_id extractor (--search).")
+    p.add_argument("--extractor-prompt-version", default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--workers", type=int, default=4, help="Параллельных вакансий (бэкенд-профили тяжёлые — не задирай).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызова промпта sourcing, сек.")
@@ -203,6 +224,63 @@ def _process_online(
             raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "candidate_data": candidate_data}, ensure_ascii=False))
             entry["usage"] = usage
         except Exception as e:  # noqa: BLE001 — сетевой/HTTP сбой = инфра
+            entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
+            res["candidates"].append(entry)
+            continue
+        try:
+            entry["predicted"] = parse_sourcing_output(raw)
+        except ValueError as e:
+            entry["parse_error"] = f"invalid_json_output:{e}"
+        res["candidates"].append(entry)
+    return res
+
+
+def _process_search(vac: SearchVacancy, extractor_client: Any, sourcing_client: Any,
+                    base_payload: Dict[str, Any], sanitize_geo: bool, backend: BackendCfg, token: str,
+                    backend_down: threading.Event, n_candidates: int) -> Dict[str, Any]:
+    """Реальная вакансия → extractor (сущности) → backend-поиск ЖИВЫХ кандидатов → scoring каждого.
+
+    На шаг дальше, чем --count-only: тянем профили (limit=N), а не только count, и каждого оцениваем
+    промптом sourcing против requirements вакансии. Эталона passed нет (люди живые) → contract-качество.
+    """
+    res: Dict[str, Any] = {"name": vac.name, "title": vac.title, "requirements": list(vac.requirements),
+                           "case_infra": None, "candidates": []}
+    if not vac.requirements:
+        res["case_infra"] = "no_requirements"
+        return res
+    try:                                                  # extractor: вакансия → сущности для поиска
+        etext, _eu = extractor_client.run(vac.vacancy)
+    except Exception as e:  # noqa: BLE001
+        res["case_infra"] = f"extractor:{type(e).__name__}:{e}"
+        return res
+    entities, status = parse_extractor_json(etext)
+    if entities is None:
+        res["case_infra"] = f"extractor_invalid_json:{status}"
+        return res
+    payload = build_step3_payload(entities, vac.title or vac.vacancy[:80], base_payload, sanitize_office_geo=sanitize_geo)
+    if not any(k in payload for k in ("positions", "skills", "keys")):
+        res["case_infra"] = "no_search_entities"
+        return res
+    if backend_down.is_set():
+        res["case_infra"] = "backend_down(skipped)"
+        return res
+    kind, status_code, _att, _count, berr, response = call_backend_search_bool(backend, token, payload)
+    if kind not in ("success", "insufficient_search_terms"):
+        res["case_infra"] = f"backend:{kind}:{berr or status_code}"
+        return res
+    profiles = [p for p in (response.get("profiles") or []) if isinstance(p, dict)] if isinstance(response, dict) else []
+    if not profiles:
+        res["case_infra"] = "no_candidates_found"
+        return res
+    for cand in profiles[:max(1, n_candidates)]:          # каждого найденного кандидата → scoring
+        cid = str(cand.get("id") or cand.get("name") or "candidate")
+        entry: Dict[str, Any] = {"id": cid, "predicted": None, "infra_error": None, "parse_error": None, "usage": None}
+        candidate_data = resume_text_from_profile(build_candidate_profile(cand))
+        try:
+            raw, usage = sourcing_client.run(
+                json.dumps({"requirements": vac.requirements, "candidate_data": candidate_data}, ensure_ascii=False))
+            entry["usage"] = usage
+        except Exception as e:  # noqa: BLE001
             entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
             res["candidates"].append(entry)
             continue
@@ -543,15 +621,27 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         base_url=base_url, step3_path=args.step3_path, token_in_body=bool(args.token_in_body),
         timeout_s=args.step3_timeout, retries=args.step3_retries)
 
-    paths = load_cdm_files(args.cdm_dir, args.cdm_count)
-    if args.cases_count is not None and args.cases_count > 0:
-        rng = random.Random(seed)
-        paths = rng.sample(paths, k=min(args.cases_count, len(paths)))
-    items = list(enumerate(paths))
-    case_source = "cdm"
-
-    base_payload = make_base_payload(only_with_contacts=True, current_position_title=True,
-                                     limit=args.candidate_pool_size, offset=0)
+    extractor_client = None
+    if args.search:
+        if args.count_only:
+            raise ValueError("--search несовместим с --count-only")
+        extractor = resolve_prompt(cfg, EXTRACTOR_COMPONENT, cli_id=args.extractor_prompt_id,
+                                   cli_version=args.extractor_prompt_version)
+        extractor_client = StoredPromptClient(extractor.prompt_id, extractor.prompt_version,
+                                              client=get_client(timeout=args.step1_timeout))
+        items = list(load_search_vacancies(args.vacancies_file))
+        case_source = "vacancy"
+        base_payload = make_base_payload(only_with_contacts=True, current_position_title=True,
+                                         limit=max(1, args.candidates), offset=0)
+    else:
+        paths = load_cdm_files(args.cdm_dir, args.cdm_count)
+        if args.cases_count is not None and args.cases_count > 0:
+            rng = random.Random(seed)
+            paths = rng.sample(paths, k=min(args.cases_count, len(paths)))
+        items = list(enumerate(paths))
+        case_source = "cdm"
+        base_payload = make_base_payload(only_with_contacts=True, current_position_title=True,
+                                         limit=args.candidate_pool_size, offset=0)
     sanitize_geo = not args.no_sanitize_office_geo
 
     if args.count_only:
@@ -564,9 +654,13 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": None, "evaluator": None},
         seed=seed,
-        args={"mode": "backend", "cases": len(items), "requirements_source": args.requirements_source,
-              "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
-              "sample_mode": args.sample_mode, "workers": args.workers, "scoring": "contract_only(no expect_passed)"},
+        args=({"mode": "search", "vacancies": len(items), "candidates": args.candidates,
+               "extractor": {"prompt_id": extractor.prompt_id, "prompt_version": extractor.prompt_version},
+               "workers": args.workers, "scoring": "contract_only(live candidates, no expect_passed)"}
+              if args.search else
+              {"mode": "backend", "cases": len(items), "requirements_source": args.requirements_source,
+               "candidate_pool_size": args.candidate_pool_size, "candidate_sample_size": args.candidate_sample_size,
+               "sample_mode": args.sample_mode, "workers": args.workers, "scoring": "contract_only(no expect_passed)"}),
     )
 
     usage_bucket = blank_usage()
@@ -665,9 +759,14 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
 
-    def work(item):
-        return _process_online(item, sourcing_client, args.requirements_source, base_payload, sanitize_geo,
-                               backend, token, backend_down, args.candidate_sample_size, args.sample_mode, seed)
+    if args.search:
+        def work(item):
+            return _process_search(item, extractor_client, sourcing_client, base_payload, sanitize_geo,
+                                   backend, token, backend_down, args.candidates)
+    else:
+        def work(item):
+            return _process_online(item, sourcing_client, args.requirements_source, base_payload, sanitize_geo,
+                                   backend, token, backend_down, args.candidate_sample_size, args.sample_mode, seed)
 
     outcome = run_cases(items, work=work, fold=_fold, max_workers=max(1, args.workers),
                         checkpoint_every=args.checkpoint_every, on_checkpoint=_flush, on_interrupt=_on_interrupt)

@@ -69,6 +69,42 @@ class GoldenScoreCase:
     offline_output: List[Dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class SearchVacancy:
+    """Вакансия для ЖИВОГО поиска кандидатов (--search): полный текст + требования для оценки.
+
+    vacancy — текст вакансии (идёт в extractor → entities → backend-поиск кандидатов); title — заголовок
+    (для payload); requirements — требования-предложения, по которым промпт sourcing оценивает найденных
+    живых кандидатов (эталона passed нет — это реальные люди, поэтому только contract-качество).
+    """
+    name: str
+    title: str
+    vacancy: str
+    requirements: List[str] = field(default_factory=list)
+
+
+def load_search_vacancies(path: Path) -> List[SearchVacancy]:
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(raw, list):
+        raise ValueError("vacancies file must be a YAML list")
+    out: List[SearchVacancy] = []
+    seen = set()
+    for i, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"vacancy #{i} must be a mapping")
+        name = str(item.get("name") or f"vacancy_{i:04d}").strip()
+        if name in seen:
+            raise ValueError(f"duplicate vacancy name: {name}")
+        seen.add(name)
+        vacancy = str(item.get("vacancy") or "").strip()
+        if not vacancy:
+            raise ValueError(f"vacancy {name}: empty vacancy text")
+        reqs = [str(r).strip() for r in (item.get("requirements") or []) if str(r).strip()]
+        out.append(SearchVacancy(name=name, title=str(item.get("title") or "").strip(),
+                                 vacancy=vacancy, requirements=reqs))
+    return out
+
+
 def load_golden_score(path: Path) -> List[GoldenScoreCase]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(raw, list):
