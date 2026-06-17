@@ -56,19 +56,19 @@ def _validate_item_shape(item: Dict[str, Any]) -> List[str]:
     if "comment" in item:
         c = item["comment"]
         if not isinstance(c, str):
-            reasons.append("comment_not_string")
+            reasons.append("invalid_comment:not_string")
         else:
             if "\n" in c or "\r" in c:
-                reasons.append("comment_has_newline")
+                reasons.append("invalid_comment:newline")
             if len(c) > MAX_COMMENT_LEN:
-                reasons.append("comment_too_long")
+                reasons.append("invalid_comment:too_long")
             if len(_SENTENCE_END.findall(c)) > 2:
-                reasons.append("comment_too_many_sentences")
+                reasons.append("invalid_comment:too_many_sentences")
     if "passed" in item:
         p = item["passed"]
         # bool — subclass of int, поэтому отклоняем явно (true/false недопустимы, нужен integer 0/1)
         if isinstance(p, bool) or not isinstance(p, int) or p not in (0, 1):
-            reasons.append("passed_not_0_1")
+            reasons.append("invalid_passed_value")
     return reasons
 
 
@@ -118,8 +118,15 @@ def check_contract(
             })
 
     checks["failed_items_count"] = len(failed_items)
-    if checks["shape_fail_count"] > 0:
+    all_codes = {c for fi in failed_items for c in fi["issues"]}
+    # форма ключей/типов (extra/missing keys, не-объект, requirement не строка)
+    if any(c.startswith(("extra_keys", "missing_keys")) or c in ("item_not_object", "requirement_not_string")
+           for c in all_codes):
         issues.append("output_shape_failed")
+    if "invalid_passed_value" in all_codes:
+        issues.append("invalid_passed_value")
+    if any(c.startswith("invalid_comment") for c in all_codes):
+        issues.append("invalid_comment")
     if checks["requirement_not_exact_count"] > 0:
         issues.append("requirement_not_exact")
 

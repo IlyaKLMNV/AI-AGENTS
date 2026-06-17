@@ -1,92 +1,164 @@
-# Golden-кейсы sourcing_assistant (НОВАЯ задача: консервативная 0/1-оценка резюме по требованиям).
+# Golden-кейсы sourcing_assistant (задача: консервативная, но НЕ заниженная 0/1-оценка по требованиям).
 #
-# requirements — требования-предложения; resume_text (или input) — резюме кандидата; expect_passed —
-# эталон 0/1 той же длины; offline_output — каннный корректный ответ промпта для --offline (replay).
-# Правило: 1 только при ЯВНОМ подтверждении в резюме; 0 — если подтверждения нет/косвенное/противоречивое.
+# requirements — требования-предложения (нейтральный стиль); candidate_data — данные кандидата
+# (резюме / профиль / анкета — НЕ только резюме); expect_passed — эталон 0/1 той же длины;
+# offline_output — каннный корректный ответ для --offline (requirement = точный echo, comment согласован с passed).
+# Правило: 1 при ЯВНОМ ИЛИ близком по смыслу подтверждении в данных кандидата; 0 — если нет/косвенное
+# (роль ≠ технология)/из текста вакансии. НЕ занижать при близком подтверждении.
 
-- name: explicit_skill_positive
-  requirements: ["У кандидата есть опыт работы с PostgreSQL."]
-  resume_text: "Навыки: Python, PostgreSQL, Docker."
+# --- навыки: явное наличие / отсутствие (нейтральный стиль) ---
+- name: neutral_requirement_skill_positive
+  requirements: ["Опыт работы с PostgreSQL."]
+  candidate_data: "Навыки: Python, PostgreSQL, Docker."
   expect_passed: [1]
   offline_output:
-    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "PostgreSQL явно указан в навыках.", passed: 1}
+    - {requirement: "Опыт работы с PostgreSQL.", comment: "PostgreSQL указан в навыках кандидата.", passed: 1}
 
-- name: missing_skill_negative
-  requirements: ["У кандидата есть опыт работы с Kubernetes."]
-  resume_text: "Навыки: Python, PostgreSQL, Docker."
+- name: neutral_requirement_skill_negative
+  requirements: ["Опыт работы с Kubernetes."]
+  candidate_data: "Навыки: Python, PostgreSQL, Docker."
   expect_passed: [0]
   offline_output:
-    - {requirement: "У кандидата есть опыт работы с Kubernetes.", comment: "Подтверждение в резюме не найдено.", passed: 0}
+    - {requirement: "Опыт работы с Kubernetes.", comment: "В данных кандидата Kubernetes не найден.", passed: 0}
 
-- name: role_does_not_imply_skill
-  requirements: ["У кандидата есть опыт разработки на Python."]
-  resume_text: "Работал Backend Developer над серверной логикой и API. Технологии в резюме не указаны."
+# --- готовность: близкие формулировки (рассматриваю / возможны), не только слово «готов» ---
+- name: readiness_travel_positive_possible
+  requirements: ["Готовность к редким командировкам в Ереван."]
+  candidate_data: "Рассматриваю редкие командировки. Поездки в Ереван возможны."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Готовность к редким командировкам в Ереван.", comment: "Кандидат указал, что поездки в Ереван возможны.", passed: 1}
+
+- name: readiness_office_positive_considers
+  requirements: ["Готовность работать в офисе в Москве."]
+  candidate_data: "Проживаю в Москве, офисный формат рассматриваю."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Готовность работать в офисе в Москве.", comment: "Кандидат в Москве и рассматривает офис.", passed: 1}
+
+- name: readiness_travel_negative_absent
+  requirements: ["Готовность к редким командировкам в Ереван."]
+  candidate_data: "Проживаю в Москве. Рассматриваю удалённую работу."
   expect_passed: [0]
   offline_output:
-    - {requirement: "У кандидата есть опыт разработки на Python.", comment: "Должность не подтверждает конкретную технологию.", passed: 0}
+    - {requirement: "Готовность к редким командировкам в Ереван.", comment: "Готовность к командировкам в данных не найдена.", passed: 0}
 
-- name: similar_technology_negative
-  requirements: ["У кандидата есть опыт работы с PostgreSQL."]
-  resume_text: "Навыки: MySQL, MongoDB, Redis."
-  expect_passed: [0]
-  offline_output:
-    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Смежные СУБД не подтверждают PostgreSQL.", passed: 0}
-
-- name: explicit_exceptions
+# --- наличие устройства и интернета (новый тип требований) ---
+- name: device_and_internet_positive
   requirements:
-    - "У кандидата есть опыт работы с GitLab CI."
-    - "У кандидата есть опыт работы с Excel."
-    - "У кандидата есть опыт работы с OpenCV."
-  resume_text: "Навыки: GitLab, Microsoft Office, computer vision."
-  expect_passed: [0, 0, 0]
+    - "Наличие смартфона или планшета с Android 10 или iOS 15.0 и выше."
+    - "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с."
+  candidate_data: "Есть смартфон на Android 13. Домашний интернет 100 Мбит/с."
+  expect_passed: [1, 1]
   offline_output:
-    - {requirement: "У кандидата есть опыт работы с GitLab CI.", comment: "GitLab не равно GitLab CI.", passed: 0}
-    - {requirement: "У кандидата есть опыт работы с Excel.", comment: "Office не подтверждает Excel явно.", passed: 0}
-    - {requirement: "У кандидата есть опыт работы с OpenCV.", comment: "Computer vision не равно OpenCV.", passed: 0}
+    - {requirement: "Наличие смартфона или планшета с Android 10 или iOS 15.0 и выше.", comment: "Указан смартфон на Android 13.", passed: 1}
+    - {requirement: "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", comment: "Указан интернет 100 Мбит/с.", passed: 1}
 
-- name: allowed_equivalents
-  requirements:
-    - "У кандидата есть опыт разработки на Go."
-    - "У кандидата есть опыт разработки на JavaScript."
-    - "У кандидата есть опыт работы с PostgreSQL."
-  resume_text: "Навыки: Golang, JS, Postgres."
-  expect_passed: [1, 1, 1]
-  offline_output:
-    - {requirement: "У кандидата есть опыт разработки на Go.", comment: "Golang это Go.", passed: 1}
-    - {requirement: "У кандидата есть опыт разработки на JavaScript.", comment: "JS это JavaScript.", passed: 1}
-    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Postgres это PostgreSQL.", passed: 1}
-
-- name: partial_composite_requirement
-  requirements: ["У кандидата есть опыт работы с Python и PostgreSQL."]
-  resume_text: "Навыки: Python, Docker."
+- name: device_and_internet_negative_absent
+  requirements: ["Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с."]
+  candidate_data: "Опыт работы: оператор поддержки, удалённо."
   expect_passed: [0]
   offline_output:
-    - {requirement: "У кандидата есть опыт работы с Python и PostgreSQL.", comment: "Подтверждён только Python, PostgreSQL нет.", passed: 0}
+    - {requirement: "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", comment: "Скорость интернета в данных не указана.", passed: 0}
 
-- name: empty_resume
-  requirements:
-    - "У кандидата есть опыт работы с PostgreSQL."
-    - "У кандидата есть опыт работы с Docker."
-  resume_text: ""
-  expect_passed: [0, 0]
+# --- источник: профиль / анкета (не только резюме) ---
+- name: profile_data_city_positive
+  requirements: ["Готовность работать в офисе в Москве."]
+  candidate_data: |
+    Резюме: Backend-разработчик, Python, PostgreSQL.
+    Профиль кандидата: Город: Москва. Формат: рассматривает офис и гибрид.
+  expect_passed: [1]
   offline_output:
-    - {requirement: "У кандидата есть опыт работы с PostgreSQL.", comment: "Резюме пустое, подтверждения нет.", passed: 0}
-    - {requirement: "У кандидата есть опыт работы с Docker.", comment: "Резюме пустое, подтверждения нет.", passed: 0}
+    - {requirement: "Готовность работать в офисе в Москве.", comment: "В профиле указан город Москва и офис.", passed: 1}
 
+- name: profile_data_relocation_positive
+  requirements: ["Готовность к релокации в Ереван."]
+  candidate_data: "Анкета кандидата: Релокация: Ереван рассматриваю."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Готовность к релокации в Ереван.", comment: "В анкете указана готовность к релокации в Ереван.", passed: 1}
+
+# --- текст вакансии НЕ доказательство по кандидату ---
+- name: vacancy_text_not_evidence_for_candidate
+  requirements: ["Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с."]
+  candidate_data: |
+    Вакансия: Для работы требуется стабильный интернет 20 Мбит/с.
+    Резюме кандидата: Python-разработчик. Опыт backend-разработки 3 года.
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", comment: "Интернет упомянут в вакансии, а не в данных кандидата.", passed: 0}
+
+- name: vacancy_city_not_candidate_city
+  requirements: ["Готовность работать в офисе в Москве."]
+  candidate_data: |
+    Вакансия: Офис в Москве.
+    Резюме кандидата: Backend-разработчик. Город проживания не указан.
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Готовность работать в офисе в Москве.", comment: "Город кандидата не указан, Москва только в вакансии.", passed: 0}
+
+# --- альтернативы через / и «или», «или аналогичные платформы» ---
+- name: slash_alternative_positive_dify
+  requirements: ["Опыт работы с Dify/n8n или аналогичными платформами."]
+  candidate_data: "Опыт: настройка AI-ассистентов на Dify, интеграции через API."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Опыт работы с Dify/n8n или аналогичными платформами.", comment: "Указан опыт работы с Dify.", passed: 1}
+
+- name: slash_alternative_positive_n8n
+  requirements: ["Опыт работы с Dify/n8n или аналогичными платформами."]
+  candidate_data: "Автоматизировал процессы в n8n, подключал webhooks и API."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Опыт работы с Dify/n8n или аналогичными платформами.", comment: "Указан опыт работы с n8n.", passed: 1}
+
+- name: analogous_platform_positive_explicit_category
+  requirements: ["Опыт работы с Dify/n8n или аналогичными платформами."]
+  candidate_data: "Работал с low-code платформой для сборки AI-ассистентов и workflow-автоматизаций."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Опыт работы с Dify/n8n или аналогичными платформами.", comment: "Описана аналогичная low-code платформа для AI-ассистентов.", passed: 1}
+
+- name: alternative_negative_no_tool
+  requirements: ["Опыт работы с Dify/n8n или аналогичными платформами."]
+  candidate_data: "Опыт prompt engineering и написания Python-скриптов."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Опыт работы с Dify/n8n или аналогичными платформами.", comment: "Платформы такого типа в данных не найдены.", passed: 0}
+
+# --- НЕ занижать при близком по смыслу подтверждении (ключевое отличие) ---
+- name: close_meaning_confirmation_positive
+  requirements: ["Опыт интеграции AI-пайплайнов с корпоративными источниками данных."]
+  candidate_data: "Разрабатывал LLM-пайплайны и подключал их к внутренним базам знаний, API и корпоративным системам."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Опыт интеграции AI-пайплайнов с корпоративными источниками данных.", comment: "Описана интеграция LLM-пайплайнов с корпоративными системами.", passed: 1}
+
+- name: applied_ai_llm_positive_close_wording
+  requirements: ["Опыт работы с AI/LLM-решениями в прикладных задачах."]
+  candidate_data: "Внедрял LLM-ассистентов для отдела продаж и поддержки, доводил сценарии до регулярного использования."
+  expect_passed: [1]
+  offline_output:
+    - {requirement: "Опыт работы с AI/LLM-решениями в прикладных задачах.", comment: "Описано прикладное внедрение LLM-ассистентов.", passed: 1}
+
+# --- роль НЕ подразумевает технологию (консервативность сохраняется) ---
+- name: role_does_not_imply_python
+  requirements: ["Опыт разработки на Python."]
+  candidate_data: "Backend Developer, 4 года. Разработка серверной логики и API. Технологии не указаны."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Опыт разработки на Python.", comment: "Должность не подтверждает конкретный язык.", passed: 0}
+
+- name: devops_does_not_imply_kubernetes
+  requirements: ["Опыт работы с Kubernetes."]
+  candidate_data: "DevOps Engineer. Настройка CI/CD и инфраструктуры. Kubernetes не указан."
+  expect_passed: [0]
+  offline_output:
+    - {requirement: "Опыт работы с Kubernetes.", comment: "Kubernetes явно не упомянут.", passed: 0}
+
+# --- пустой список требований ---
 - name: empty_requirements
   requirements: []
-  resume_text: "Навыки: Python, PostgreSQL, Docker."
+  candidate_data: "Навыки: Python, PostgreSQL, Docker."
   expect_passed: []
   offline_output: []
-
-- name: vacancy_text_is_not_candidate_evidence
-  input: |
-    Требования вакансии:
-    У кандидата есть опыт работы с Kubernetes.
-
-    Резюме кандидата:
-    Backend-разработчик. Навыки: Python, Docker.
-  requirements: ["У кандидата есть опыт работы с Kubernetes."]
-  expect_passed: [0]
-  offline_output:
-    - {requirement: "У кандидата есть опыт работы с Kubernetes.", comment: "В резюме Kubernetes отсутствует, текст вакансии не доказательство.", passed: 0}

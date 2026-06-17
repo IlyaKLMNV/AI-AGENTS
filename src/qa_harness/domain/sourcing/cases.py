@@ -56,15 +56,15 @@ def load_offline_cases(path: Path) -> List[OfflineCase]:
 
 @dataclass
 class GoldenScoreCase:
-    """Golden-кейс scoring (НОВАЯ задача): требования-предложения + резюме + эталонные passed.
+    """Golden-кейс scoring (НОВАЯ задача): требования + данные кандидата + эталонные passed.
 
-    requirements — список требований-предложений (может быть пустым); resume_text — текст резюме
-    кандидата (или комбинированный вход вакансия+резюме для compat-кейсов); expect_passed — эталон 0/1
-    той же длины, что requirements; offline_output — каннный ответ промпта для --offline (replay).
+    requirements — требования-предложения (может быть пустым); candidate_data — данные кандидата (резюме /
+    профиль / анкета / явно переданные данные — НЕ только резюме); expect_passed — эталон 0/1 той же длины;
+    offline_output — каннный ответ промпта для --offline (replay).
     """
     name: str
     requirements: List[str]
-    resume_text: str
+    candidate_data: str
     expect_passed: List[int] = field(default_factory=list)
     offline_output: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -83,13 +83,18 @@ def load_golden_score(path: Path) -> List[GoldenScoreCase]:
             raise ValueError(f"duplicate golden case name: {name}")
         seen.add(name)
         reqs = [str(r).strip() for r in (item.get("requirements") or []) if str(r).strip()]
-        resume_text = str(item.get("resume_text") if item.get("resume_text") is not None else item.get("input") or "")
+        # данные кандидата: candidate_data (новое) с фолбэком на resume_text/input (compat)
+        cdata = item.get("candidate_data")
+        if cdata is None:
+            cdata = item.get("resume_text")
+        if cdata is None:
+            cdata = item.get("input") or ""
         expect = [int(x) for x in (item.get("expect_passed") or [])]
         if len(expect) != len(reqs):
             raise ValueError(f"golden case {name}: expect_passed ({len(expect)}) != requirements ({len(reqs)})")
         oo = item.get("offline_output")
         out.append(GoldenScoreCase(
-            name=name, requirements=reqs, resume_text=resume_text, expect_passed=expect,
+            name=name, requirements=reqs, candidate_data=str(cdata), expect_passed=expect,
             offline_output=list(oo) if isinstance(oo, list) else [],
         ))
     return out

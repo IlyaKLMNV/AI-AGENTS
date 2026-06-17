@@ -1,11 +1,12 @@
 """Раннер sourcing_assistant: КОНСЕРВАТИВНАЯ 0/1-оценка резюме по требованиям.
 
-Что тестируем — промпт `sourcing_assistant`: на вход `{requirements:[...предложения...], resume_text:"..."}`,
-на выход JSON-массив 1:1 к требованиям, объект `{requirement(echo), comment, passed:0|1}` на каждое.
-Правило: 1 ТОЛЬКО при ЯВНОМ подтверждении в резюме; 0 — если подтверждения нет/косвенное/противоречивое.
+Что тестируем — промпт `sourcing_assistant`: на вход `{requirements:[...предложения...], candidate_data:"..."}`
+(резюме / профиль / анкета), на выход JSON-массив 1:1 к требованиям, объект `{requirement(echo), comment,
+passed:0|1}` на каждое. Правило: 1 при ЯВНОМ ИЛИ близком по смыслу подтверждении в данных кандидата
+(не только дословно); 0 — если подтверждения нет/косвенное (роль ≠ технология)/из текста вакансии.
 
 Режимы (см. матрицу в docs/MIGRATION_STATUS):
-- `--golden`  — реальный промпт на golden resume_text-кейсах: contract + semantic(passed == expect_passed);
+- `--golden`  — реальный промпт на golden candidate_data-кейсах: contract + semantic(passed == expect_passed);
 - `--offline` — replay offline_output из golden: contract + semantic (без сети);
 - `--generate`— LLM-резюме с известными positive/negative навыками: contract + semantic; BACKEND НЕ нужен;
 - (без флага) — backend: поиск ЖИВЫХ кандидатов по CDM → contract-ONLY (эталона passed нет; НЕ проверка
@@ -197,9 +198,9 @@ def _process_online(
         cand_id = str(cand.get("id") or cand.get("name") or "candidate")
         entry: Dict[str, Any] = {"id": cand_id, "predicted": None, "infra_error": None, "parse_error": None, "usage": None}
         profile = build_candidate_profile(cand)
-        resume_text = resume_text_from_profile(profile)  # новый вход промпта — резюме текстом
+        candidate_data = resume_text_from_profile(profile)  # новый вход промпта — данные кандидата текстом
         try:
-            raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "resume_text": resume_text}, ensure_ascii=False))
+            raw, usage = sourcing_client.run(json.dumps({"requirements": requirements, "candidate_data": candidate_data}, ensure_ascii=False))
             entry["usage"] = usage
         except Exception as e:  # noqa: BLE001 — сетевой/HTTP сбой = инфра
             entry["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
@@ -215,29 +216,55 @@ def _process_online(
 
 # ---------------- scoring-режимы (golden / offline / generate): contract + semantic ----------------
 
+# Требования-категории для generate: (требование, anchor-фраза для данных кандидата). Нейтральный стиль.
+# Готовность/устройство — близкие формулировки (рассматриваю/возможно), не только дословное «готов».
+_READINESS_POS = [
+    ("Готовность к редким командировкам в Ереван.", "командировки в Ереван возможны"),
+    ("Готовность работать в офисе в Москве.", "проживаю в Москве, офисный формат рассматриваю"),
+    ("Готовность к релокации в Ереван.", "релокацию в Ереван рассматриваю"),
+]
+_DEVICE_POS = [
+    ("Наличие стабильного интернет-соединения со скоростью не менее 20 Мбит/с.", "домашний интернет 100 Мбит/с"),
+    ("Наличие смартфона или планшета с Android или iOS.", "есть смартфон на Android"),
+]
+_READINESS_NEG = [
+    ("Готовность к релокации в Кипр.", "Кипр"),
+    ("Готовность к частым командировкам в Сочи.", "Сочи"),
+]
+
+
 def _build_generate_case(variant: int, *, gen_client: Any, gen_policy: GenerationPolicy,
                          gen_seed: int, pos_n: int, neg_n: int):
-    """Контролируемый кейс: positive-навыки (expect=1) + negative (expect=0) + decoy; LLM пишет резюме."""
+    """Контролируемый кейс СМЕШАННЫХ типов: навыки + готовность/устройство (близкие формулировки).
+
+    positive (expect=1): навык-в-данных + готовность/устройство (явно подтверждены в candidate_data);
+    negative (expect=0): навык-отсутствует + готовность-отсутствует. LLM пишет candidate_data, упоминая
+    positive-anchors и НЕ упоминая negative-anchors (валидация в ResumeSpec.parse).
+    """
     rng = random.Random(f"{gen_seed}:{variant}")
     domain = rng.choice(list(TECH_VOCAB))
-    pool = rng.sample(TECH_VOCAB[domain], min(pos_n + neg_n + 1, len(TECH_VOCAB[domain])))
-    positive = pool[:pos_n]
-    negative = pool[pos_n:pos_n + neg_n]
-    decoys = pool[pos_n + neg_n:pos_n + neg_n + 1]
-    requirements = [f"У кандидата есть опыт работы с {t}." for t in positive + negative]
-    expect = [1] * len(positive) + [0] * len(negative)
+    techs = rng.sample(TECH_VOCAB[domain], min(3, len(TECH_VOCAB[domain])))
+    pos_skill, neg_skill, decoy = techs[0], techs[1], techs[2]
+    avail = rng.choice(_READINESS_POS + _DEVICE_POS)       # одно подтверждаемое условие
+    neg_avail = rng.choice(_READINESS_NEG)                  # одно отсутствующее условие
+
+    requirements = [f"Опыт работы с {pos_skill}.", avail[0], f"Опыт работы с {neg_skill}.", neg_avail[0]]
+    expect = [1, 1, 0, 0]
+    must_mention = [pos_skill, avail[1], decoy]             # навык + anchor условия + decoy (смежное, не требование)
+    must_not_mention = [neg_skill, neg_avail[1]]
+
     gen = ResumeGenerator(gen_client)
     gr = generate_valid(
-        lambda _a: (gen.generate(ResumeSpec(domain, positive + decoys, negative, noise_level=variant % 3)), None),
+        lambda _a: (gen.generate(ResumeSpec(domain, must_mention, must_not_mention, noise_level=variant % 3)), None),
         policy=gen_policy)
-    resume_text = str(gr.item) if gr.ok else ""
+    candidate_data = str(gr.item) if gr.ok else ""
     case = GoldenScoreCase(name=f"v{variant}_{domain}", requirements=requirements,
-                           resume_text=resume_text, expect_passed=expect)
+                           candidate_data=candidate_data, expect_passed=expect)
     return case, gr, dict(gen.usage)
 
 
 def _process_score(case: GoldenScoreCase, sourcing_client: Any, replay: bool) -> Dict[str, Any]:
-    """Один scoring-кейс: реплей offline_output ИЛИ вызов промпта на {requirements, resume_text}."""
+    """Один scoring-кейс: реплей offline_output ИЛИ вызов промпта на {requirements, candidate_data}."""
     res: Dict[str, Any] = {"case": case, "predicted": None, "parse_error": None,
                            "infra_error": None, "usage": None}
     if replay:
@@ -245,7 +272,7 @@ def _process_score(case: GoldenScoreCase, sourcing_client: Any, replay: bool) ->
         return res
     try:
         raw, usage = sourcing_client.run(
-            json.dumps({"requirements": case.requirements, "resume_text": case.resume_text}, ensure_ascii=False))
+            json.dumps({"requirements": case.requirements, "candidate_data": case.candidate_data}, ensure_ascii=False))
         res["usage"] = usage
     except Exception as e:  # noqa: BLE001 — сетевой сбой промпта = инфра
         res["infra_error"] = f"sourcing:{type(e).__name__}:{e}"
@@ -379,7 +406,7 @@ def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
         rb.add_case(CaseRecord(
             case_id=cid, source=case_source, passed=passed,
             inputs={"criterion": "contract(1:1 echo) + semantic(passed == expect_passed)",
-                    "requirements": requirements, "resume_text": case.resume_text, "expect_passed": expect},
+                    "requirements": requirements, "candidate_data": case.candidate_data, "expect_passed": expect},
             output={"raw": None, "parsed": predicted},
             verdict={"evaluator": "sourcing_scoring", "passed": passed, "reason_codes": rc},
             subjects=subjects,
