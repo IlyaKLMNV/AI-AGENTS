@@ -8,6 +8,7 @@ LLM-клиент, отчёты, метрики, CLI). Доменная логи�
 from .usage import accumulate_usage, blank_usage, extract_usage_numbers, usage_total
 from .jsonio import expect_json_object, extract_json_substring, safe_json_loads
 from .config import PromptCfg, component_cfg, default_cfg_path, load_cfg, resolve_prompt
+from .run_loop import LoopOutcome, run_cases
 
 __all__ = [
     # usage
@@ -25,4 +26,7 @@ __all__ = [
     "component_cfg",
     "resolve_prompt",
     "default_cfg_path",
+    # run_loop
+    "run_cases",
+    "LoopOutcome",
 ]

@@ -22,11 +22,10 @@ import datetime
 import os
 import threading
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, usage_total
+from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.extractor import check_semantics
 from qa_harness.pipeline import (
@@ -301,25 +300,23 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             s3 = f" step3={res['step3']['kind']}/{res['step3']['count']}" if res.get("step3") else ""
             print(f"  [{'ok ' if quality_passed else 'MISS'}] {anchor.name} contract={int(bool(contract_ok))} semantic={semantic_ok} mapping={mapping_ok}{s3}")
 
-    total = len(anchors)
-    interrupted = False
-    done = 0
-    ex = ThreadPoolExecutor(max_workers=max(1, args.workers))
-    futures = {ex.submit(_process, a, client, steps, base_payload, sanitize_geo, backend, token, backend_down): a for a in anchors}
-    try:
-        for fut in as_completed(futures):
-            _fold(fut.result())
-            done += 1
-            if args.checkpoint_every and done % args.checkpoint_every == 0:
-                _flush()
-    except KeyboardInterrupt:
-        interrupted = True
-        for f in futures:
-            f.cancel()
+    def _on_interrupt() -> None:
         if not args.quiet:
             print("\n[interrupted] сохраняю частичный отчёт...")
-    finally:
-        ex.shutdown(wait=not interrupted, cancel_futures=interrupted)
+
+    # Оркестрация (пул/порядок/чекпоинты/Ctrl+C) — в core.run_loop; fail-fast (backend_down)
+    # остаётся здесь как shared state между _process и _fold, циклу про него знать не нужно.
+    outcome = run_cases(
+        anchors,
+        work=lambda a: _process(a, client, steps, base_payload, sanitize_geo, backend, token, backend_down),
+        fold=_fold,
+        max_workers=max(1, args.workers),
+        checkpoint_every=args.checkpoint_every,
+        on_checkpoint=_flush,
+        on_interrupt=_on_interrupt,
+    )
+    interrupted = outcome.interrupted
+    done, total = outcome.done, outcome.total
 
     metrics_path, cases_path = _flush(interrupted=interrupted)
     if not args.quiet:

@@ -29,7 +29,14 @@ from qa_harness.domain.classifiers import (
     HeuristicVerdictClassifier,
     StoredPromptVerdictClassifier,
 )
-from qa_harness.domain.generators import DialogueGenerator, DialogueSpec, pick_verdict_hint
+from qa_harness.domain.generators import (
+    DialogueGenerator,
+    DialogueSpec,
+    GenerationPolicy,
+    VariantSampler,
+    generate_valid,
+    pick_verdict_hint,
+)
 from qa_harness.domain.judge import LabelJudge
 from qa_harness.domain.text import CANDIDATE_PREFIX, RECRUITER_PREFIX, speaker_for_line, split_dialogue_lines
 
@@ -126,27 +133,43 @@ def _run_regression(rb, classifier, judge, args, clf_bucket, results, quiet) -> 
 
 
 def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, quiet, seed) -> None:
+    """Генерация диалогов под целевой вердикт через общий движок (generate_valid).
+
+    produce генерит диалог (DialogueGenerator.parse сам валидирует формат/END/утечку/deadlock — бросает
+    на невалидном), движок ретраит. БЕЗ fallback: лучше недодать (error+warn), чем мислейбл-диалог в
+    accuracy. VariantSampler даёт поверхностное разнообразие сверх verdict-hint.
+    """
     rng = random.Random(seed)
     cycle_state: Dict[str, int] = {v: 0 for v in VERDICTS}
     cdm_paths = load_cdm_files(args.cdm_dir, args.cdm_count)
+    sampler = VariantSampler(seed)
+    variant_counter = 0
 
     for target in VERDICTS:
         need = args.dialogs_per_verdict
-        attempts_limit = max(need * args.max_attempts_multiplier, 1)
-        got = attempts = idx = 0
-        while got < need and attempts < attempts_limit:
-            attempts += 1
-            cdm_path = rng.choice(cdm_paths)
-            hint = pick_verdict_hint(target, rng, args.scenario_mode, args.scenario_count_per_verdict, cycle_state)
-            try:
-                dialogue = generator.generate(DialogueSpec(load_json(cdm_path), target, hint, args.noise_level))
-                predicted, raw, usage = classifier.classify(dialogue)
-                accumulate_usage(clf_bucket, usage)
-            except Exception as e:  # noqa: BLE001 — попытка не удалась (валидация диалога/генерация), пробуем ещё
-                rb.add_error(f"synthetic:{target}:attempt{attempts}", repr(e))
+        for idx in range(1, need + 1):
+            meta: Dict[str, Any] = {}
+            style = sampler.at(variant_counter)
+            variant_counter += 1
+
+            def produce(_attempt, target=target, meta=meta, style=style):
+                cdm_path = rng.choice(cdm_paths)
+                hint = pick_verdict_hint(target, rng, args.scenario_mode, args.scenario_count_per_verdict, cycle_state)
+                spec = DialogueSpec(load_json(cdm_path), target, f"{hint} | {style.hint()}", args.noise_level)
+                dialogue = generator.generate(spec)  # parse() валидирует, бросает на невалидном
+                meta.update(cdm_file=cdm_path.name, hint=hint)
+                return dialogue, None
+
+            gr = generate_valid(produce, policy=GenerationPolicy(max_retries=max(args.max_attempts_multiplier, 1)))
+            if not gr.ok:
+                rb.add_error(f"synthetic:{target}:v{idx}", "; ".join(gr.errors[-2:]) or "generation failed")
+                if not quiet:
+                    print(f"  [warn] synthetic {target} v{idx}: генерация не удалась")
                 continue
-            idx += 1
-            got += 1
+
+            dialogue = gr.item
+            predicted, raw, usage = classifier.classify(dialogue)
+            accumulate_usage(clf_bucket, usage)
             verdict = judge.evaluate(predicted, target)
             results.append(("synthetic", target, predicted))
             rb.add_case(
@@ -156,7 +179,8 @@ def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, 
                     passed=verdict.passed,
                     inputs={
                         "criterion": f"verdict == {target}",
-                        "scenario": {"hint": hint, "target_label": target, "cdm_file": cdm_path.name},
+                        "scenario": {"hint": meta.get("hint"), "target_label": target,
+                                     "cdm_file": meta.get("cdm_file"), "gen_source": gr.source},
                     },
                     transcript=dialogue_to_transcript(dialogue),
                     output={"raw": raw, "parsed": predicted},
@@ -164,9 +188,7 @@ def _run_synthetic(rb, generator, classifier, judge, args, clf_bucket, results, 
                 )
             )
             if not quiet:
-                print(f"  [{'ok' if verdict.passed else 'MISS'}] synthetic {target} {got}/{need}: predicted={predicted}")
-        if got < need and not quiet:
-            print(f"  [warn] {target}: получено {got}/{need} (лимит попыток исчерпан)")
+                print(f"  [{'ok' if verdict.passed else 'MISS'}] synthetic {target} {idx}/{need}: predicted={predicted}")
 
 
 def run(args: argparse.Namespace) -> Dict[str, Path]:

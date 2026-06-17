@@ -75,14 +75,19 @@ class ModelClient:
         *,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
+        temperature: Optional[float] = None,
         client: Any = None,
     ) -> None:
         self._model = model
         self._base_url = base_url
         self._timeout = timeout
+        self._temperature = temperature
         self._client = client
 
     def create(self, input_text: str) -> Tuple[str, Any]:
         """Вернуть (output_text, usage)."""
         client = self._client or get_client(base_url=self._base_url, timeout=self._timeout)
-        return _text_and_usage(client.responses.create(model=self._model, input=input_text))
+        kwargs: Dict[str, Any] = {"model": self._model, "input": input_text}
+        if self._temperature is not None:  # вариативность генерации (судья — без temperature)
+            kwargs["temperature"] = self._temperature
+        return _text_and_usage(client.responses.create(**kwargs))

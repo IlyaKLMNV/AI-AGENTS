@@ -47,7 +47,7 @@
       "required": ["case_id", "source", "passed", "inputs", "verdict"],
       "properties": {
         "case_id": { "type": "string", "description": "stable, human-readable, unique per run; per-runner id-builder" },
-        "source": { "type": "string", "enum": ["cdm", "regression", "synthetic", "suite", "real"] },
+        "source": { "type": "string", "enum": ["cdm", "regression", "synthetic", "suite", "real", "anchor", "golden", "vacancy"] },
         "passed": { "type": "boolean" },
         "inputs": {
           "type": "object",
@@ -96,27 +96,45 @@
         },
         "subjects": {
           "type": "array",
-          "description": "For sourcing: N candidates inside one vacancy-case.",
+          "description": "sourcing: per-candidate (live backend/--search) ИЛИ per-requirement rows (golden/offline scoring).",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["id", "passed"],
-            "properties": {
-              "id": { "type": "string" },
-              "passed": { "type": "boolean" },
-              "verdict": { "$ref": "#/$defs/verdict" },
-              "requirement_results": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "requirement": { "type": "string" },
-                    "passed": { "type": "boolean" },
-                    "comment": { "type": "string" }
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "passed"],
+                "description": "live candidate: один объект на найденного кандидата",
+                "properties": {
+                  "id": { "type": "string" },
+                  "passed": { "type": "boolean", "description": "contract verdict for this candidate (form is valid)" },
+                  "candidate_data": { "type": "string", "description": "prompt input: candidate resume/profile text the prompt saw" },
+                  "verdict": { "$ref": "#/$defs/verdict" },
+                  "requirement_results": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "requirement": { "type": "string" },
+                        "passed": { "description": "raw prompt verdict per requirement: 0 or 1 (integer)", "type": ["integer", "boolean", "string", "null"] },
+                        "comment": { "type": "string" }
+                      }
+                    }
                   }
                 }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["requirement"],
+                "description": "golden/offline scoring row: ожидаемый vs фактический passed по требованию",
+                "properties": {
+                  "requirement": { "type": "string" },
+                  "expected_passed": { "type": ["integer", "null"] },
+                  "actual_passed": { "description": "raw prompt verdict: 0 or 1", "type": ["integer", "boolean", "string", "null"] },
+                  "comment": { "type": ["string", "null"] }
+                }
               }
-            }
+            ]
           }
         },
         "stages": {

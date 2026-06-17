@@ -3,7 +3,7 @@
 Тестовый стенд (НЕ продукт) для регрессионной проверки промптов рекрутингового AI-ассистента.
 Продуктовые промпты хранятся в OpenAI как stored prompts (`prompt_id` + `prompt_version`; реестр —
 `tests/tools/model.yaml`); раннеры гоняют их по сценариям и оценивают ответы. Всё на русском, Python 3.12.
-«Тесты промптов» — это CLI-раннеры; `pytest` используется только для юнит-тестов кода харнесса.
+«Тесты промптов» — это CLI-раннеры (единственный вид тестов здесь); юнит-тестов (`pytest`) на код харнесса не держим — корректность раннеров проверяется их `--offline`-режимами и прогоном глазами.
 
 ## Архитектура (идёт миграция)
 Проект переходит на новый устанавливаемый пакет **`qa_harness`** (src-layout). На время миграции
@@ -18,16 +18,16 @@
 - `adapters/`, `screeningAssistant/screeningAss.py` — используются легаси-раннерами (не трогаем до cutover).
 - `docs/` — план рефакторинга, схема отчётов, статус миграции, разбор extractor.
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
-  `reports_v2/` (новые two-file отчёты), `test_*.py` (pytest юнит-тесты).
+  `reports_v2/` (новые two-file отчёты).
 
-Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent**
-(остальные компоненты пока только в `app/`).
+Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**
+— миграция раннеров завершена; легаси `app/` остаётся до cutover.
 
 ## Подготовка окружения
 ```bash
 python3 -m venv .venv && source .venv/bin/activate      # WSL/Linux
 #   (Windows: python -m venv .venv ; .venv\Scripts\Activate.ps1)
-pip install -e .[dev]    # пакет qa_harness + dev-инструменты (pytest, jsonschema, vcrpy, import-linter)
+pip install -e .[dev]    # пакет qa_harness + dev-инструменты (import-linter и пр.)
 ```
 Легаси-`app/`-раннеры запускаются как и раньше (editable-install ставит и зависимости из requirements.txt).
 
@@ -39,6 +39,17 @@ pip install -e .[dev]    # пакет qa_harness + dev-инструменты (p
 - `AI_SEARCH_BASE_URL` — API-хост поиска кандидатов (эндпоинт `{URL}/site/searchBool`); для тест-стенда
   `https://testsecond.hlebusheck.ru`. ⚠️ `https://testsecond.podbor.io/search` — это веб-UI (редирект на /auth), НЕ API.
 - `AI_SEARCH_AUTH_TOKEN` — токен бэкенда; передаётся **в теле** запроса (раннер с флагом `--token-in-body`).
+
+> **Бэкенд-нагрузка (профильные раннеры).** `sourcing_assistant` тянет с бэкенда РЕАЛЬНЫЕ профили
+> (`limit>0`) — это медленный путь тест-стенда; при больших `--candidate-pool-size`/`--workers` он
+> отдаёт `Read timed out`. Щадящий вызов:
+> `python -m qa_harness.runners.sourcing_assistant --workers 1 --candidate-pool-size 5 --candidate-sample-size 5 --step3-timeout 120 --token-in-body`.
+> Только узнать ЧИСЛО кандидатов по всем вакансиям (быстро, `limit=0`, без таймаутов): добавь `--count-only`.
+> Профильные таймауты бьют по ШИРОКИМ вакансиям (большой `count`), не по конкретной настройке — сначала
+> `--count-only` для триажа, потом полный прогон по узким. `SSLEOFError`/`Max retries` — транзиентный обрыв (повтори).
+> Таймауты и `no_candidates_found` идут в `errors` (не в `failed`) — флакот бэкенда не портит сигнал
+> качества; узкие вакансии законно дают 0–1 кандидата. `one_line`/`extractor` ходят за `count`
+> (`limit=0`, ~секунды) — им щадящий режим не нужен.
 
 `prompt_id`/`prompt_version` — в `tests/tools/model.yaml` (источник правды), НЕ в `.env`. При необходимости
 можно переопределить env-переменными `<COMPONENT>_PROMPT_ID/_VERSION` или флагами `--prompt-id/--prompt-version`.
@@ -118,9 +129,9 @@ fail-fast по бэкенду (`--backend-fail-fast`), чекпоинты (`--ch
 отчёта по Ctrl+C. В отчёте: `stages[]` (step1/step2/step3), `checks[]` (contract/semantic/mapping),
 `metrics.step1/step2/step3`.
 
-### Юнит-тесты пакета и гейты
+### Гейт изоляции импортов
 ```bash
-pytest -q       # юнит-тесты qa_harness (core/domain/pipeline + offline e2e раннеров)
+# юнит-тестов (pytest) в репо нет — раннеры проверяем их --offline-режимами и глазами
 lint-imports    # контракт изоляции: qa_harness не зависит от app/
 ```
 
