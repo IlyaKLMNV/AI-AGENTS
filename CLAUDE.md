@@ -62,6 +62,21 @@ lint-imports                                            # контракт qa_ha
 `AI_SEARCH_BASE_URL` + `AI_SEARCH_AUTH_TOKEN`. Backend тест-стенда: **`https://testsecond.hlebusheck.ru`**
 (эндпоинт `/site/searchBool`), токен — **в теле** (флаг `--token-in-body`). `podbor.io/search` — это веб-UI, НЕ API.
 
+### Ответ `/site/searchBool` — структура (НЕ только число)
+Backend на `searchBool` возвращает JSON **`{count, profiles: [...]}`**: `count` — сколько кандидатов нашлось,
+`profiles` — массив объектов-кандидатов (`about`, `skills`, `positions` и пр.), **из которых можно вытащить
+самих кандидатов**, а не только их количество. Сколько `profiles` придёт, задаёт `limit` в payload:
+- `limit=0` → только `count` (быстро, без профилей) — так работает `sourcing --count-only` и step3 у
+  `extractor_agent`/`one_line` (им нужен лишь count как retrieval-инфо);
+- `limit=N>0` → backend кладёт до N объектов в `profiles` — так достают РЕАЛЬНЫХ кандидатов.
+
+`core`/`pipeline.call_backend_search_bool(...)` возвращает кортеж `(kind, status, attempts, count, error, json)`,
+где **6-й элемент `json` — это полный ответ** (`{count, profiles}`); `count` отдаётся отдельно для удобства,
+но профили берутся из `json["profiles"]`. Где это уже используется для извлечения кандидатов:
+- **новая арх.:** `qa_harness.runners.sourcing_assistant` — `_process_online` (по CDM-entities) и `_process_search`
+  (по реальным вакансиям через `--search`): `response["profiles"]` → `build_candidate_profile` → scoring;
+- **легаси:** `app/sourcing_assistant_runner.py` → `_search_backend_candidates` (`backend_response.get("profiles")`).
+
 ## Грабли (важно!)
 - **Большинство раннеров НЕ читают `.env`** — экспортируй в окружение (`set -a; source .env; set +a`).
 - `prompt_id`/`version` — **только из `model.yaml`** (источник правды); env/CLI-override опционально,
