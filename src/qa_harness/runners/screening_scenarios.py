@@ -400,6 +400,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
               f"errors(infra)={sm['errors']} done={outcome.done}/{total}")
         print(f"[done] metrics -> {metrics_path}")
         print(f"[done] cases   -> {cases_path}")
+        print(f"[done] review  -> {Path(cases_path).with_name(f'{RUNNER}_{run_id}.review.md')}")
     return {"metrics": metrics_path, "cases": cases_path}
 
 

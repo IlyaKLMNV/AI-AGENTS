@@ -35,23 +35,26 @@ class CaseRecord:
     stages: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        # Порядок ключей = порядок чтения проверяющего: вход (критерий) → диалог → ВЕРДИКТ.
+        # Вердикт идёт ПОСЛЕДНИМ намеренно — его читают после того, как увидели ожидаемое
+        # поведение и сам диалог (а не до, как было раньше).
         out: Dict[str, Any] = {
             "case_id": self.case_id,
-            "source": self.source,
             "passed": bool(self.passed),
+            "source": self.source,
             "inputs": self.inputs,
-            "verdict": self.verdict,
         }
         if self.transcript:
             out["transcript"] = self.transcript
         if self.output:
             out["output"] = self.output
-        if self.checks is not None:
-            out["checks"] = self.checks
         if self.subjects is not None:
             out["subjects"] = self.subjects
         if self.stages is not None:
             out["stages"] = self.stages
+        if self.checks is not None:
+            out["checks"] = self.checks
+        out["verdict"] = self.verdict
         return out
 
 
@@ -184,6 +187,121 @@ class ReportBuilder:
         return metrics_doc, cases_doc
 
 
+# ── человекочитаемый рендер (Markdown) ───────────────────────────────────────
+# Тот же набор данных, что в metrics/cases, но в порядке чтения проверяющего и так,
+# чтобы по одному кейсу ОЖИДАНИЕ → ДИАЛОГ → ВЕРДИКТ шли РЯДОМ, а не были раскиданы.
+# Пишется автоматически рядом с JSON (см. write_reports) — отдельный скрипт не нужен.
+
+_ROLE_LABELS = {
+    "candidate": "🧑 Кандидат",
+    "assistant": "🤖 Ассистент",
+    "recruiter": "🧑 Рекрутёр",
+    "user": "🧑 Пользователь",
+    "system": "⚙️ Система",
+}
+
+
+def _md_quote(text: Any) -> str:
+    """Многострочный текст как markdown-блокквота (каждая строка с '> ', \\n сохранены)."""
+    s = str(text or "").strip()
+    if not s:
+        return "> _(пусто)_"
+    return "\n".join(("> " + ln) if ln.strip() else ">" for ln in s.splitlines())
+
+
+def _render_turn(turn: Dict[str, Any]) -> str:
+    role = str(turn.get("role") or "?").lower()
+    label = _ROLE_LABELS.get(role, f"🔹 {role}")
+    end = "  `⟦диалог завершён⟧`" if turn.get("ended") else ""
+    return f"**{label}**{end}\n{_md_quote(turn.get('text'))}"
+
+
+def _render_case(case: Dict[str, Any]) -> str:
+    passed = bool(case.get("passed"))
+    inputs = case.get("inputs") or {}
+    scen = inputs.get("scenario") or {}
+    title = f"### {'✅ PASS' if passed else '❌ FAIL'} — `{case.get('case_id', '?')}`"
+    if scen.get("name"):
+        title += f" · {scen['name']}"
+    blocks: List[str] = [title]
+    if inputs.get("criterion"):
+        blocks.append(f"**Ожидалось:** {inputs['criterion']}")
+    if case.get("transcript"):
+        blocks.append("**Диалог:**\n\n" + "\n\n".join(_render_turn(t) for t in case["transcript"]))
+    out = case.get("output") or {}
+    if out.get("parsed") is not None:
+        blocks.append(f"**Выход (parsed):** `{json.dumps(out['parsed'], ensure_ascii=False)}`")
+    for key, heading in (("subjects", "Субъекты"), ("stages", "Этапы")):
+        items = case.get(key)
+        if items:
+            lines = [f"**{heading}:**"]
+            for it in items:
+                mark = "✅" if it.get("passed") else "❌"
+                lines.append(f"- {mark} {it.get('name') or it.get('id') or ''}")
+            blocks.append("\n".join(lines))
+    v = case.get("verdict") or {}
+    head = f"**Вердикт — {'PASS' if v.get('passed') else 'FAIL'}**"
+    judge = v.get("model") or v.get("evaluator")
+    if judge:
+        head += f" · судья `{judge}`"
+    if v.get("turn_ref") is not None:
+        head += f" · реплика {v['turn_ref']}"
+    vlines = [head] + [f"- {rc}" for rc in (v.get("reason_codes") or [])]
+    blocks.append("\n".join(vlines))
+    if v.get("comment"):
+        blocks.append(f"> 💬 {v['comment']}")
+    for ch in (case.get("checks") or []):
+        mark = "✅" if ch.get("passed") else "❌"
+        line = f"- {mark} `{ch.get('rule')}`"
+        if ch.get("detail"):
+            line += f": {ch['detail']}"
+        blocks.append(line)
+    return "\n\n".join(blocks)
+
+
+def render_review_md(metrics_doc: Dict[str, Any], cases_doc: Dict[str, Any]) -> str:
+    """Человекочитаемый Markdown по двум документам отчёта: провалы — первыми, прошедшие — свёрнуты."""
+    meta = (metrics_doc or {}).get("meta") or {}
+    summary = (metrics_doc or {}).get("summary") or {}
+    cases = (cases_doc or {}).get("cases") or []
+    runner = meta.get("runner") or (cases_doc or {}).get("runner") or "?"
+    run_id = meta.get("run_id") or (cases_doc or {}).get("run_id") or "?"
+    put = meta.get("prompt_under_test") or {}
+
+    header = [f"# QA-обзор — {runner} / {run_id}"]
+    sub: List[str] = []
+    if put:
+        sub.append(f"промпт `{put.get('component') or put.get('prompt_id') or '?'}` "
+                   f"v{put.get('prompt_version') or '?'}")
+    if (meta.get("models") or {}).get("evaluator"):
+        sub.append(f"судья `{meta['models']['evaluator']}`")
+    if meta.get("duration_s") is not None:
+        sub.append(f"{meta['duration_s']} c")
+    if sub:
+        header.append("*" + " · ".join(sub) + "*")
+    header.append(
+        "**Итог:** всего {} · ✅ {} · ❌ {} · ⚠️ инфра-ошибок {} · pass_rate {}%".format(
+            summary.get("total", len(cases)), summary.get("passed", 0),
+            summary.get("failed", 0), summary.get("errors", 0), summary.get("pass_rate", "—")))
+
+    failed = [c for c in cases if not c.get("passed")]
+    passed = [c for c in cases if c.get("passed")]
+    errors = (metrics_doc or {}).get("errors_index") or []
+
+    sections = ["\n".join(header)]
+    if failed:
+        sections.append("## ❌ Провалы ({})\n\n".format(len(failed))
+                        + "\n\n---\n\n".join(_render_case(c) for c in failed))
+    if errors:
+        sections.append("## ⚠️ Инфра-ошибки ({})\n\n".format(len(errors))
+                        + "\n".join(f"- `{e.get('case_id', '?')}` — {e.get('message', '')}" for e in errors))
+    if passed:
+        body = "\n\n---\n\n".join(_render_case(c) for c in passed)
+        sections.append("## ✅ Прошли ({})\n\n".format(len(passed))
+                        + f"<details><summary>Показать прошедшие кейсы</summary>\n\n{body}\n\n</details>")
+    return "\n\n".join(sections) + "\n"
+
+
 def write_reports(
     reports_dir: Path,
     runner: str,
@@ -191,11 +309,14 @@ def write_reports(
     metrics_doc: Dict[str, Any],
     cases_doc: Dict[str, Any],
 ) -> Tuple[Path, Path]:
-    """Записать оба файла (UTF-8 без BOM). Вернуть (metrics_path, cases_path)."""
+    """Записать отчёты прогона (UTF-8 без BOM): metrics.json + cases.json (для машин) и
+    review.md (человекочитаемый, рендерится здесь же). Вернуть (metrics_path, cases_path)."""
     out_dir = Path(reports_dir) / runner
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = out_dir / f"{runner}_{run_id}.metrics.json"
     cases_path = out_dir / f"{runner}_{run_id}.cases.json"
+    review_path = out_dir / f"{runner}_{run_id}.review.md"
     metrics_path.write_text(json.dumps(metrics_doc, ensure_ascii=False, indent=2), encoding="utf-8")
     cases_path.write_text(json.dumps(cases_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    review_path.write_text(render_review_md(metrics_doc, cases_doc), encoding="utf-8")
     return metrics_path, cases_path
