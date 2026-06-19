@@ -21,8 +21,8 @@
 Миграция раннеров завершена — все на `qa_harness`; легаси `app/` остаётся до cutover.
 
 ## Новые раннеры
-Запуск `python -m qa_harness.runners.<name>`; отчёт — два файла в `tests/reports_v2/<runner>/`
-(`*.metrics.json` + `*.cases.json`, схема — `docs/REPORT_SCHEMA.md`). `summary.passed/failed` =
+Запуск `python -m qa_harness.runners.<name>`; отчёт — три файла в `tests/reports_v2/<runner>/`
+(`*.metrics.json` + `*.cases.json` + человекочитаемый `*.review.md`, схема — `docs/REPORT_SCHEMA.md`). `summary.passed/failed` =
 **качество промпта**; инфра-сбои → `summary.errors` (не в `failed`).
 - классификаторы (message/verdict): `LabelJudge` (метка), accuracy + confusion + by_split; `--offline` без сети.
 - extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
@@ -93,7 +93,7 @@ Backend на `searchBool` возвращает JSON **`{count, profiles: [...]}`
   `Max retries` — транзиентный обрыв соединения (не таймаут), лечится повтором.
 - chain-группы сценариев зашиты в коде ЛЕГАСИ `app/screening_scenarios_runner.py`. В новом
   `qa_harness.runners.screening_scenarios` их нет — LLM-судья (`ScenarioJudge`) против `expected_behavior`
-  из CSV; онлайн гоняются только сценарии с примерами диалога кандидата (base CSV: 7/62, hh CSV: 0/50).
+  из CSV; онлайн гоняются только сценарии с примерами диалога кандидата (base CSV: 10/64, hh CSV: 0/50).
 
 ## Частые команды (новые раннеры)
 ```bash

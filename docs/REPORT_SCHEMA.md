@@ -1,10 +1,10 @@
 # Универсальная схема отчётов QA-харнесса
 
-> Применима ко всем ~12 промптам. Два файла на прогон. JSON-схемы: см.
+> Применима ко всем ~12 промптам. Три файла на прогон (два JSON + человекочитаемый `*.review.md`). JSON-схемы: см.
 > [schemas/report.metrics.schema.json](schemas/report.metrics.schema.json) и
 > [schemas/report.cases.schema.json](schemas/report.cases.schema.json).
 
-## 1. Зачем два файла
+## 1. Зачем разделение на файлы
 
 Сейчас каждый раннер пишет один монолитный JSON, где 65–86% объёма — текст диалогов,
 продублированный ещё раз в `mismatches`. Guardrails уже вынужденно завёл `*_compact.json`
@@ -14,11 +14,14 @@
 |---|---|---|---|
 | `<runner>_<run_id>.metrics.json` | `meta` + `summary` + `metrics` + `failures_index` | КБ | дашборды, тренды по версиям промпта, диффы, CI-gate |
 | `<runner>_<run_id>.cases.json` | `cases[]`: входы, транскрипт, выход, вердикты | КБ–МБ | drill-down при разборе падений, реплей |
+| `<runner>_<run_id>.review.md` | человекочитаемый рендер из тех двух (по кейсу: ожидание → диалог → вердикт; провалы первыми, прошедшие свёрнуты) | КБ–МБ | разбор глазами |
 
 Связь: одинаковый `meta.run_id` + `schema_version` в обоих; `failures_index[].case_id`
 ссылается на `cases[].case_id`. Сырой текст хранится **ровно один раз** — в `cases.json`.
+`review.md` — производная человекочитаемая проекция тех же данных (рендерится из обоих документов
+в `core/reporting.render_review_md`); не источник правды, перегенерируется в любой момент.
 
-Оба файла пишутся строго **UTF-8 без BOM** (чинит текущий разнобой `utf-8-sig`/BOM в 4 раннерах).
+Все три файла пишутся строго **UTF-8 без BOM** (чинит текущий разнобой `utf-8-sig`/BOM в 4 раннерах).
 
 ## 2. Файл МЕТРИК — стабильная оболочка у всех раннеров
 
@@ -160,7 +163,7 @@ class ReportBuilder:
         ...
 
 def write_reports(reports_dir, runner, run_id, metrics_doc, cases_doc) -> tuple[Path, Path]:
-    # пишет <runner>_<run_id>.metrics.json и .cases.json: ensure_ascii=False, indent=2, utf-8 БЕЗ BOM
+    # пишет <runner>_<run_id>.metrics.json, .cases.json и .review.md: ensure_ascii=False, indent=2, utf-8 БЕЗ BOM
     ...
 ```
 

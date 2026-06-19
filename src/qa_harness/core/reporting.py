@@ -1,4 +1,4 @@
-"""Единый сборщик отчётов: два файла на прогон (metrics + cases).
+"""Единый сборщик отчётов: три файла на прогон (metrics + cases JSON + человекочитаемый review.md).
 
 Спроектирован против двух непохожих семейств сразу (classifier и search-pipeline,
 P0-5): `metrics_extra` свободной формы вмещает classification/judge/backend/

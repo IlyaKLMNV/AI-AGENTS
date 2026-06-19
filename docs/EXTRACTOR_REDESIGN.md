@@ -35,7 +35,7 @@ backend-payload) → **step3** (поиск в backend `/site/searchBool`).
    нужен только `count`, поэтому по умолчанию `limit=0` (count-only). Таймаут бэкенда — отдельный
    `kind=timeout` в `metrics.step3` (виден отдельно от `http_error`).
 
-## Отчёт (two-file, как у всех раннеров)
+## Отчёт (три файла, как у всех раннеров)
 - `metrics.step1` = {total, contract_pass, semantic_pass, dirty_output, invalid_json};
 - `metrics.step2` = {mapping_pass, dropped_total, sanitized_total, unmapped_total};
 - `metrics.step3` = {success, insufficient_search_terms, zero_count, infra_errors, skipped};

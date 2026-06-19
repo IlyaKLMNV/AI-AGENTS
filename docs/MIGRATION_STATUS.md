@@ -46,7 +46,7 @@ one_line/responsibilities → first_touch → screening (std→hh).
 | Классификация stored-промптом (онлайн) | ✅ | `domain/classifiers/message.py` (`StoredPromptMessageClassifier`) |
 | Метрики: accuracy, per-class, confusion matrix | ✅ | `core/metrics.py` |
 | Regression-кейсы (`--mode regression`) | ✅ | `runners/message_classifier.py` |
-| Two-file отчёт + учёт токенов | ✅ | `core/reporting.py` |
+| Отчёт metrics+cases+review.md + учёт токенов | ✅ | `core/reporting.py` |
 | Офлайн-классификация без сети | ➕ | `HeuristicMessageClassifier` (новое) |
 | **Синтетическая генерация** (`--messages-per-class`) | ✅ | `domain/generators/` |
 | `CandidateMessageSynthesizer` (LLM из CDM-контекста) | ✅ | `domain/generators/message_gen.py` (`CandidateMessageGenerator`) |
@@ -141,7 +141,7 @@ shared state — цикл о нём не знает. Будущие раннер
 | step2: query → extractor-промпт → extractor_json + payload | ✅ | `pipeline/` (`parse_extractor_json`/`validate_step1_contract`/`build_step3_payload`/`mapping_report`) |
 | step3: backend `/site/searchBool` → count | ✅ | `pipeline/backend_client.py` |
 | `--steps 1\|1,2\|1,2,3`, backend/search-флаги, `--token-in-body` | ✅ | runner (как extractor) |
-| Two-file отчёт + `stages[]` + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + `stages[]` + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
 | Раздельный override промпта extractor (`--extractor-prompt-id/version`) | ✅ | runner (резолв `extractor_agent` из `model.yaml`) |
 | Офлайн без сети | ➕ | `--offline` replay `offline_query` из golden |
 | Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
@@ -179,7 +179,7 @@ shared state — цикл о нём не знает. Будущие раннер
 | Живой поиск кандидатов по НАЗВАНИЮ вакансии (extractor→backend→scoring) | ✅ | `--search` + `vacancies.yaml` (`_process_search`) |
 | Триаж count'ов (limit=0, без профилей) | ✅ | `--count-only` |
 | Отчёт: `subjects[]` с `candidate_data` (вход) + `requirement_results` (выход 0/1); при count=0 `search_input` в `errors_index` | ✅ | runner `_fold` |
-| Two-file отчёт + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты/Ctrl+C | ✅ | `core/reporting` + `core/run_loop` |
 | Источник требований `responsibilities_parser` (LLM) | ⬜ | пропущен (есть `cdm_key_requirements`/`stack_skills`; это отдельный раннер) |
 | Офлайн без сети | ➕ | `--offline` replay канонных кандидатов (`tests/fixtures/sourcing_assistant/offline.yaml`) |
 | Парити-сверка со старым | ⬜ глазами | (вручную по отчётам) |
@@ -209,7 +209,7 @@ shared state — цикл о нём не знает. Будущие раннер
 | Без дублей (нормализованных) | ✅ | `contract.find_duplicates` |
 | Заземление: anchor-термы требования найдены в тексте вакансии | ✅ сигнал | `domain/responsibilities/semantic.py` (`grounding_missing_anchors`) |
 | Совпадение с ожидаемым (`vacancy_stack∪skills`) | заменено | golden `expect`/`forbid` (`check_semantics`) |
-| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн без сети | ➕ | `--offline` replay `offline_output` из golden |
 | Парити-сверка | ⬜ глазами | (вручную) |
 
@@ -237,7 +237,7 @@ shared state — цикл о нём не знает. Будущие раннер
 | Извлечение зарплата/локация/формат | ✅ | golden `expect` (work_format точно; зарплата/локация — `<nonempty>`) |
 | Анти-утечка в additional_info (темы + метки спикера) | ✅ | `domain/screening_autofill/semantic.py` (`additional_info_leaks`) |
 | additional_info непустой при не-исключённом вопросе | ✅ | `expect_additional_info_nonempty` в golden |
-| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн без сети | ➕ | `--offline` replay `offline_output` из golden |
 | Синтетик-генератор диалогов (LLM) + детерминир. билдеры | ⬜ | НЕ переносим (curated-golden); при нужде — отдельно |
 | Парити-сверка | ⬜ глазами | (вручную) |
@@ -262,7 +262,7 @@ shared state — цикл о нём не знает. Будущие раннер
 | LLM-судья: facts_present / hallucinated_facts / question | ✅ | `domain/first_touch/judge.py` (`FactJudge` на `ModelClient` — первый LLM-судья) |
 | extra_numbers (выдуманные числа) | ✅ ≥5 цифр | `domain/first_touch/checks.py` |
 | company_hidden — нет утечки названия | ✅ | `checks.company_name_leaked` |
-| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн без сети | ➕ | `--offline` replay offline_message + эвристика вместо судьи |
 | Варианты `_hh` / `_event` | ⬜ | пока не переносим (отдельно) |
 | Нишевые prompt_rule / possessive-source проверки | ⬜ | не переносим (curated-golden) |
@@ -300,7 +300,7 @@ no_missing & no_hallucinated & no_forbidden & no_extra_numbers`.
 | LLM-судья 3 нарушений (self_answer / repeated_questions / premature_end) | ✅ | `domain/screening_guardrails/judge.py` (`GuardrailJudge`) |
 | Эвристики-фолбэк + жёсткий гейт (нет вопросов → premature=false) | ✅ | `domain/screening_guardrails/detectors.py` |
 | Per-turn разметка флагов в отчёте | ✅ | `transcript[].flags` (схема) |
-| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн без сети | ➕ | `--offline` replay `offline_turns` + эвристики (без судьи) |
 | Синтетик-генератор диалогов кандидата (GEN_MODEL) | ⬜ | заменён курируемыми golden-разговорами |
 | Парити-сверка | ⬜ глазами | (вручную) |
@@ -329,14 +329,14 @@ screening_assistant` | `screening_assistant_hh`). Сценарии берём и
 | Оценка соответствия ожидаемому поведению | ✅ (LLM-судья) | `domain/screening_scenarios/judge.py` (`ScenarioJudge`) |
 | hh-вариант (промпт `screening_assistant_hh`) | ✅ | `--component screening_assistant_hh` (+свой CSV) |
 | `--scenario-indices` / выборка | ✅ | `--scenario-indices` / `--sample N` (0 = все с примерами) |
-| Two-file отчёт + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
+| Отчёт metrics+cases+review.md + конкурентность/чекпоинты | ✅ | `core/reporting` + `core/run_loop` |
 | Офлайн-плумбинг (load+extract без сети) | ➕ | `--offline` |
 | ~4000 строк hardcoded-эвристик и chain-групп | ⬜ | заменены LLM-судьёй против `expected_behavior` |
 | Парити-сверка | 👁 глазами | base 7/7 passed (2026-06-12), 0 infra-ошибок; hh — нечего гонять (0 примеров) |
 
 **Осознанные отличия от легаси:**
 - hardcoded-эвристики/chain-группы → один LLM-судья (`ScenarioJudge`) против `expected_behavior` из CSV;
-- онлайн гоняются ТОЛЬКО сценарии с примерами диалога кандидата (base CSV: **7/62**, hh CSV: **0/50** —
+- онлайн гоняются ТОЛЬКО сценарии с примерами диалога кандидата (base CSV: **10/64**, hh CSV: **0/50** —
   у остальных в CSV пусто поле примеров); сценарий без примеров → **skip** (`metrics.scenarios.skipped_no_examples`), не `failed`/`errors`;
 - `passed` (кейс = сценарий) = поведение ассистента соответствует `expected_behavior` по сути (тон/формулировки не важны);
 - quality ≠ infra: сбой разговора/судьи → `errors`, не `failed`.

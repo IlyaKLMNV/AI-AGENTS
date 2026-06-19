@@ -18,7 +18,7 @@
 - `adapters/`, `screeningAssistant/screeningAss.py` — используются легаси-раннерами (не трогаем до cutover).
 - `docs/` — план рефакторинга, схема отчётов, статус миграции, разбор extractor.
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
-  `reports_v2/` (новые two-file отчёты).
+  `reports_v2/` (новые отчёты: metrics + cases + review.md).
 
 Уже переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**
 — миграция раннеров завершена; легаси `app/` остаётся до cutover.
@@ -78,9 +78,9 @@ pip install -e .[dev]    # пакет qa_harness + dev-инструменты (i
 `app/enrich_cdm_with_extractor_entities.py` заполняет только `vacancy.extractor_entities`.
 
 ## Раннеры новой архитектуры (`qa_harness`)
-Запуск: `python -m qa_harness.runners.<name>`. Отчёт — **два файла** на прогон в
+Запуск: `python -m qa_harness.runners.<name>`. Отчёт — **три файла** на прогон в
 `tests/reports_v2/<runner>/`: `*.metrics.json` (лёгкий: `meta` + `summary` + `metrics` +
-`failures_index`) и `*.cases.json` (по кейсам: входы, транскрипт/артефакты, вердикт). Полная схема —
+`failures_index`), `*.cases.json` (по кейсам: входы, транскрипт/артефакты, вердикт) и `*.review.md` (человекочитаемый рендер из тех двух). Полная схема —
 `docs/REPORT_SCHEMA.md`. `summary.passed/failed` отражает **качество промпта**, а инфра-сбои идут в
 `summary.errors` (а не в `failed`).
 

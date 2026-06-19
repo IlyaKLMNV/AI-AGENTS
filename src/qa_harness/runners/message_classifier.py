@@ -9,7 +9,7 @@
 - онлайн (по умолчанию): stored-промпт message_classifier (нужен OPENAI_API_KEY);
 - --offline: детерминированная эвристика без сети (только --mode regression).
 
-Каждый кейс судится LabelJudge'ом; метрики (accuracy/confusion/by_split) и two-file
+Каждый кейс судится LabelJudge'ом; метрики (accuracy/confusion/by_split) и трёхфайловый
 отчёт пишутся через core. Запуск:
   python -m qa_harness.runners.message_classifier --offline
   python -m qa_harness.runners.message_classifier --mode all --messages-per-class 3 --seed 42
