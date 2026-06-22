@@ -254,7 +254,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         raise EnvironmentError("OPENAI_API_KEY is not set")
     client = get_client(timeout=args.step1_timeout)
     eval_model = args.eval_model
-    judge = ScenarioJudge(ModelClient(eval_model, timeout=args.step1_timeout))
+    judge = ScenarioJudge(ModelClient(eval_model, timeout=args.step1_timeout, temperature=0))  # судья детерминирован: один вход → один вердикт
 
     # --- настройка режима генерации ---
     gen_setup: Dict[str, Any] = {}
