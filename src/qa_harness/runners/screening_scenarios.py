@@ -56,6 +56,13 @@ COMPONENT_CSV = {
     "screening_assistant": FIXTURES / "screening_scenarios.csv",
     "screening_assistant_hh": FIXTURES / "screening_scenarios_hh.csv",
 }
+# Дефолтный YAML констрейнтов генерации по компоненту: у hh свой файл, чтобы index-записи не
+# пересекались с base CSV (резолв идёт по index = номер строки; см. domain/.../constraints.py).
+_GEN_DIR = FIXTURES / "generation" / "screening_scenarios"
+COMPONENT_CONSTRAINTS = {
+    "screening_assistant": _GEN_DIR / "constraints.yaml",
+    "screening_assistant_hh": _GEN_DIR / "constraints_hh.yaml",
+}
 DEFAULT_EVAL_MODEL = "gpt-4.1"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 6
@@ -93,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--temperature", type=float, default=None, help="Temperature генератора кандидата (--generate).")
     p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Макс. ходов кандидата в адаптивном диалоге.")
     p.add_argument("--gen-retries", type=int, default=1, help="Повторов генерации реплики при провале валидации.")
-    p.add_argument("--constraints", type=Path, default=None, help="YAML констрейнтов генерации (по умолч. — fixtures).")
+    p.add_argument("--constraints", type=Path, default=None, help="YAML констрейнтов генерации (по умолч. — по --component: constraints.yaml / constraints_hh.yaml).")
     p.add_argument("--freeze-to", type=Path, default=None, help="Сохранить сгенерённые реплики кассетой (JSON) для воспроизводимости.")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
@@ -256,7 +263,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         gen_setup = dict(
             gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
             gen_model=args.gen_model,
-            constraints_entries=load_constraints(args.constraints),
+            constraints_entries=load_constraints(args.constraints or COMPONENT_CONSTRAINTS.get(args.component)),
             sampler=VariantSampler(gen_seed),
             max_turns=args.max_turns,
             gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
