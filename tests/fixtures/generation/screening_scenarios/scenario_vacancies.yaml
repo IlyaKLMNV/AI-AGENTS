@@ -1,43 +1,49 @@
-# Пер-сценарный контекст вакансии для screening_scenarios, компонент base (screening_assistant).
-# Мерджится поверх DEFAULT_VACANCY_INFO (см. runners/screening_scenarios.py). Резолв по index = № строки CSV.
-# Свой файл на компонент: index у base и hh — разные сценарии (как и constraints_hh.yaml).
-# Поля: любые из vacancy_info (title, company_name, hiring_company_name, work_format, location,
-# responsibilities, company_info{firm_description, vacancy_url}, min_salary/max_salary).
-#
-# NB: contact_source (#40/#41) здесь НЕ задаётся — нужен точный label поля из base-промпта v51
-# (в seed его пока нет). Добавим, когда будет контекст-блок base-промпта.
+# Пер-сценарный контекст вакансии для screening_scenarios, компонент base (screening_assistant v51).
+# Мерджится поверх DEFAULT_VACANCY_INFO. Резолв по index = № строки CSV. Свой файл на компонент.
+# Значения полей — строго по контекст-блоку и правилам промпта v51:
+#   work_format: "office" | "hybrid" | "remote"  (НЕ ON_SITE/FIELD_WORK — это словарь hh-промпта);
+#   скрытый поиск: company_name: "СКРЫТО"  (ровно это слово — см. ПРАВИЛО СКРЫТОСТИ КОМПАНИИ);
+#   contact_source: значение поля «Источник контакта кандидата» (триггер 7).
 
 scenarios:
-  # --- скрытый поиск: компания не раскрывается (пустая) → ассистенту нечего «слить» ---
+  # --- скрытый поиск: компания = СКРЫТО → промпт не раскрывает название/ссылки ---
   - index: 23
     match: "Вопрос о компании (при скрытом поиске)"
-    company_name: ""
+    company_name: "СКРЫТО"
     company_info:
       vacancy_url: ""
   - index: 24
     match: "Повторный вопрос о компании (при скрытом поиске)"
-    company_name: ""
+    company_name: "СКРЫТО"
     company_info:
       vacancy_url: ""
 
-  # --- локация/формат: вакансия НЕ remote, иначе про офис/гибрид/переезд спрашивать не из чего ---
+  # --- локация/формат: вакансия office/hybrid (не remote), иначе про офис/переезд спрашивать не из чего ---
   - index: 34
     match: "в городе вакансии, но не подтвердил"
-    work_format: "ON_SITE, HYBRID"
+    work_format: "office"
     location: "Москва"
   - index: 35
     match: "ближнем пригороде Москвы"
-    work_format: "ON_SITE, HYBRID"
+    work_format: "hybrid"
     location: "Москва"
   - index: 36
     match: "рядом с городом вакансии"
-    work_format: "ON_SITE, HYBRID"
+    work_format: "office"
     location: "Казань"
   - index: 37
     match: "не готов к офису или гибриду"
-    work_format: "ON_SITE"
+    work_format: "office"
     location: "Москва"
   - index: 39
     match: "слишком далеко от города"
-    work_format: "ON_SITE"
+    work_format: "office"
     location: "Москва"
+
+  # --- источник контакта (поле «Источник контакта кандидата», триггер 7) ---
+  # #40: contact_source заполнен → промпт подставляет значение в скрипт триггера 7.
+  # #41 (пустой) здесь НЕ задаём: дефолт и так без contact_source = это и есть «пустой» случай;
+  #     если #41 падает — это поведение промпта (fallback «из базы кандидатов»), а не контекст вакансии.
+  - index: 40
+    match: "contact_source заполнен"
+    contact_source: "ваш профиль на hh.ru"
