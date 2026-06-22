@@ -25,7 +25,7 @@ screening_assistant:
 
 screening_assistant_hh:
   prompt_id: pmpt_69fcfc0bced48193ba7d544092b466050a5817bedd826d40
-  prompt_version: 5
+  prompt_version: 6
   seed: 1234
 
 screening_autofill:
