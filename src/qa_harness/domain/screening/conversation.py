@@ -30,15 +30,23 @@ def _salary_phrase(vacancy_info: Dict[str, Any]) -> str:
 def build_seed_message(vacancy_info: Dict[str, Any], recruiter_name: str, candidate_name: str) -> str:
     """Первое assistant-сообщение разговора: детали вакансии + инструкции квалификации (как в легаси)."""
     ci = vacancy_info.get("company_info") or {}
+    # Опц. поля попадают в seed только если заданы (per-scenario контекст вакансии): нанимающая
+    # сторона (рекрутинговое агентство) и источник контакта. Дефолт без них — поведение неизменно.
+    _hiring = vacancy_info.get("hiring_company_name")
+    _contact = vacancy_info.get("contact_source")
+    extra_company = f"- Нанимающая сторона: {_hiring}\n" if _hiring else ""
+    extra_contact = f"- Источник контакта: {_contact}\n" if _contact else ""
     return (
         f"Ваше имя: {recruiter_name}\n"
         f"Имя кандидата: {candidate_name}\n\n"
         "**Детали вакансии**:\n"
         f"- Должность: {vacancy_info.get('title', '')}\n"
         f"- Название компании: {vacancy_info.get('company_name', '')}\n"
+        f"{extra_company}"
         f"- Обязанности: {vacancy_info.get('responsibilities', '')}\n"
         f"- Формат работы: {vacancy_info.get('work_format', '')}\n"
-        f"- Локация: {vacancy_info.get('location', '')}"
+        f"- Локация: {vacancy_info.get('location', '')}\n"
+        f"{extra_contact}"
         f"- Описание компании: {ci.get('firm_description', '')}\n"
         f"- Ссылка на вакансию: {ci.get('vacancy_url', '')}\n"
         f"- Зарплатная вилка: {_salary_phrase(vacancy_info)}\n\n"

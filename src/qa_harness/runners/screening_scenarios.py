@@ -43,7 +43,9 @@ from qa_harness.domain.screening_scenarios import (
     extract_candidate_examples,
     load_constraints,
     load_scenarios,
+    load_vacancies,
     parse_scenario_indices,
+    vacancy_for,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -62,6 +64,12 @@ _GEN_DIR = FIXTURES / "generation" / "screening_scenarios"
 COMPONENT_CONSTRAINTS = {
     "screening_assistant": _GEN_DIR / "constraints.yaml",
     "screening_assistant_hh": _GEN_DIR / "constraints_hh.yaml",
+}
+# Пер-сценарный контекст вакансии по компоненту (формат/локация/скрытый поиск/агентство/описание),
+# мерджится поверх DEFAULT_VACANCY_INFO. Свой файл на компонент — index у base/hh не пересекаются.
+COMPONENT_VACANCIES = {
+    "screening_assistant": _GEN_DIR / "scenario_vacancies.yaml",
+    "screening_assistant_hh": _GEN_DIR / "scenario_vacancies_hh.yaml",
 }
 DEFAULT_EVAL_MODEL = "gpt-4.1"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
@@ -101,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Макс. ходов кандидата в адаптивном диалоге.")
     p.add_argument("--gen-retries", type=int, default=1, help="Повторов генерации реплики при провале валидации.")
     p.add_argument("--constraints", type=Path, default=None, help="YAML констрейнтов генерации (по умолч. — по --component: constraints.yaml / constraints_hh.yaml).")
+    p.add_argument("--vacancies", type=Path, default=None, help="YAML пер-сценарного контекста вакансии (по умолч. — по --component).")
     p.add_argument("--freeze-to", type=Path, default=None, help="Сохранить сгенерённые реплики кассетой (JSON) для воспроизводимости.")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
@@ -130,7 +139,8 @@ def _select(scenarios: List[Scenario], indices_raw: str, sample: int, seed: Any,
     return pool
 
 
-def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examples: int) -> Dict[str, Any]:
+def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examples: int,
+             vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
     res: Dict[str, Any] = {"scenario": scenario, "turns": [], "verdict": None, "judge_usage": None, "call_error": None}
     candidate_turns = extract_candidate_examples(scenario.examples_raw, max_examples)
     if not candidate_turns:
@@ -138,7 +148,8 @@ def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examp
         return res
     try:
         conv = ScreeningConversation(client, prompt.prompt_id, prompt.prompt_version,
-                                     DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
+                                     vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO),
+                                     DEFAULT_RECRUITER_NAME, "Кандидат")
         conv.start()
     except Exception as e:  # noqa: BLE001
         res["call_error"] = f"conversation:{type(e).__name__}:{e}"
@@ -179,7 +190,8 @@ def _judge_into(res: Dict[str, Any], judge: Any, scenario: Scenario) -> None:
 
 def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: Any, gen_client: Any,
                       gen_model: str, constraints_entries: list, sampler: VariantSampler,
-                      max_turns: int, gen_policy: GenerationPolicy) -> Dict[str, Any]:
+                      max_turns: int, gen_policy: GenerationPolicy,
+                      vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
     """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ живой ассистент, затем судья."""
     scenario, variant = item
     res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "turns": [],
@@ -188,7 +200,8 @@ def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: A
     style = sampler.at(scenario.index * 1000 + variant)  # детерминированный стиль на (сценарий, вариант)
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = ScreeningConversation(assistant_client, prompt.prompt_id, prompt.prompt_version,
-                                 DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
+                                 vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO),
+                                 DEFAULT_RECRUITER_NAME, "Кандидат")
     eff_turns = constraints.max_turns or max_turns  # per-scenario лимит (тесно-очерченным — меньше)
     result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
     for t in result.turns:
@@ -255,6 +268,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     client = get_client(timeout=args.step1_timeout)
     eval_model = args.eval_model
     judge = ScenarioJudge(ModelClient(eval_model, timeout=args.step1_timeout, temperature=0))  # судья детерминирован: один вход → один вердикт
+    vacancies = load_vacancies(args.vacancies or COMPONENT_VACANCIES.get(args.component))  # per-scenario контекст вакансии
 
     # --- настройка режима генерации ---
     gen_setup: Dict[str, Any] = {}
@@ -267,6 +281,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             sampler=VariantSampler(gen_seed),
             max_turns=args.max_turns,
             gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            vacancies=vacancies,
         )
         work_items: List[Any] = [(s, v) for s in scenarios for v in range(max(1, args.variants))]
         models = {"candidate_generator": args.gen_model, "assistant": prompt.prompt_id, "evaluator": eval_model}
