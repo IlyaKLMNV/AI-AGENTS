@@ -28,6 +28,30 @@
 - extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
   (step1/step2/step3); конкурентность + fail-fast + чекпоинты. См. `docs/EXTRACTOR_REDESIGN.md`.
 
+## Источник промптов: platform.openai.com ↔ репозиторий `prompts` (переключатель)
+Промпт-под-тестом берётся из одного из двух источников, переключение — одним ключом (см.
+`docs/LOCAL_PROMPTS.md`, ядро — `src/qa_harness/core/prompt_source.py`):
+- **local** — ⭐ приоритетный способ. Пакет `prompts` (репозиторий podbor/prompts), ставится как релиз
+  (wheel из GHCR-образа/GitHub Release): тело из `system.md` + параметры из `config.yaml`, вызов
+  `responses.create(model=..., input=messages, ...)`. Единый источник правды прод/тесты (OpenAI выключает
+  `v1/prompts`: 03.06.2026 / 30.11.2026). Рекомендованный запуск — через Docker (см. `docs/LOCAL_PROMPTS.md`).
+- **stored** (дефолт для обратной совместимости) — `platform.openai.com`, `responses.create(prompt={id,version})`.
+
+Флаги у всех LLM-раннеров (через `core.add_prompt_source_args`): `--prompt-source {stored,local}`
+(или env `QA_HARNESS_PROMPT_SOURCE`) · `--local-prompt-version vN` (пин версии; иначе `pointer.yaml active`
+в самом пакете — так тестируют не-дефолтную версию, не трогая пакет) · `--prompts-path`/env
+`PROMPTS_REPO_PATH` (ДЕВ-обходной путь к исходникам). По умолчанию берётся **установленный релиз** (как в
+проде — wheel из GHCR-образа `ghcr.io/podbor/prompts`, установка — `docs/LOCAL_PROMPTS.md`); неявного
+подхвата соседнего `../prompts` нет (иначе тестировали бы локальную копию вместо релиза). Резолв версии в пакете: `--local-prompt-version` > env
+`<COMPONENT>_PROMPT_VERSION` > `pointer.yaml active`. Маппинг имён (`model.yaml` → директория в `prompts`)
+— поле `local_component` в `model.yaml` (`first_touch`→`FIRST_TOUCH`, `screening_autofill`→
+`screening_autofill_prompt` и т.п.; где не задан — identity). **Screening тестируется в local** (v51),
+в отличие от eggplant-api. Фабрика `core.make_prompt_client` → `StoredPromptClient`|`LocalPromptClient`
+(общий `.run()`); мультитёрн `ScreeningConversation` в local шлёт system как `instructions=` при
+серверном `conversation=`. `meta.prompt_under_test.source` в отчёте = `stored|local`.
+Тестирование — локальное: пакет `prompts` ставится в venv (wheel из GitHub Release / GHCR-образа —
+`docs/LOCAL_PROMPTS.md`). Неявного подхвата соседнего `../prompts` нет (только явный `--prompts-path`).
+
 ## Вариативная генерация (движок `domain/generators`)
 Помимо курируемых golden у раннеров есть режим `--generate` — вариативная LLM-генерация входов, чтобы
 проверять робастность промпта на РАЗНЫХ входах (а не на фиксированном эталоне). Общий движок:
