@@ -24,7 +24,19 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    LOCAL,
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    load_local_spec,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import CandidateAgent, GenerationPolicy, VariantSampler
 from qa_harness.domain.screening import ScreeningConversation, run_adaptive_conversation
@@ -86,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель LLM-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None, help="Override screening_assistant prompt_id.")
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=2, help="Параллельных разговоров (каждый — несколько ходов).")
     p.add_argument("--step1-timeout", type=int, default=90, help="Таймаут вызовов LLM, сек.")
     p.add_argument("--checkpoint-every", type=int, default=10)
@@ -107,7 +120,8 @@ def _heuristic_turn(candidate: str, reply: str, end: bool) -> Dict[str, Any]:
             "usage": None, "judge_usage": None}
 
 
-def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bool) -> Dict[str, Any]:
+def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bool,
+             spec: Any = None) -> Dict[str, Any]:
     res: Dict[str, Any] = {"case": case, "turns": [], "call_error": None}
     if offline:
         for ot in case.offline_turns:
@@ -115,7 +129,7 @@ def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bo
         return res
     try:
         conv = ScreeningConversation(client, prompt.prompt_id, prompt.prompt_version,
-                                     DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, case.candidate_name)
+                                     DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, case.candidate_name, spec=spec)
         conv.start()
     except Exception as e:  # noqa: BLE001
         res["call_error"] = f"conversation:{type(e).__name__}:{e}"
@@ -139,7 +153,8 @@ def _process(case: GoldenCase, client: Any, prompt: Any, judge: Any, offline: bo
 
 
 def _process_generate(item: Any, *, client: Any, prompt: Any, judge: Any, gen_client: Any, gen_model: str,
-                      sampler: VariantSampler, max_turns: int, gen_policy: GenerationPolicy) -> Dict[str, Any]:
+                      sampler: VariantSampler, max_turns: int, gen_policy: GenerationPolicy,
+                      spec: Any = None) -> Dict[str, Any]:
     """Одна (персона, вариант): адаптивный LLM-кандидат ↔ ассистент, затем guardrail-судья по каждому ходу."""
     persona, persona_index, variant = item
     res: Dict[str, Any] = {"case": None, "persona": str(persona["key"]), "variant": variant,
@@ -148,7 +163,7 @@ def _process_generate(item: Any, *, client: Any, prompt: Any, judge: Any, gen_cl
     style = sampler.at(persona_index * 1000 + variant)
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = ScreeningConversation(client, prompt.prompt_id, prompt.prompt_version,
-                                 DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат")
+                                 DEFAULT_VACANCY_INFO, DEFAULT_RECRUITER_NAME, "Кандидат", spec=spec)
     eff_turns = constraints.max_turns or max_turns
     result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
     if result.error:
@@ -172,11 +187,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, PROMPT_COMPONENT, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
 
     if args.generate and args.offline:
         raise ValueError("--generate несовместим с --offline (вариативная генерация требует сети).")
 
-    client = judge = None
+    client = judge = spec = None
     eval_model = None
     gen_setup: Dict[str, Any] = {}
     if not args.offline:
@@ -185,6 +201,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set")
         client = get_client(timeout=args.step1_timeout)
+        # local-источник: тело/параметры screening-ассистента из пакета prompts (иначе stored prompt={id,version})
+        spec = load_local_spec(prompt.local_component, args.local_prompt_version) if source == LOCAL else None
         eval_model = args.eval_model
         judge = GuardrailJudge(ModelClient(eval_model, timeout=args.step1_timeout))
 
@@ -214,7 +232,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": PROMPT_COMPONENT, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models=models,
@@ -319,10 +337,10 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     if args.generate:
         def _work(it):
-            return _process_generate(it, client=client, prompt=prompt, judge=judge, **gen_setup)
+            return _process_generate(it, client=client, prompt=prompt, judge=judge, spec=spec, **gen_setup)
     else:
         def _work(c):
-            return _process(c, client, prompt, judge, args.offline)
+            return _process(c, client, prompt, judge, args.offline, spec=spec)
 
     def _on_interrupt() -> None:
         if not args.quiet:

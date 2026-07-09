@@ -31,7 +31,19 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    LOCAL,
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    load_local_spec,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import CandidateAgent, GenerationPolicy, VariantSampler
 from qa_harness.domain.screening import ScreeningConversation, run_adaptive_conversation
@@ -114,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=3, help="Параллельных сценариев (каждый — живой разговор).")
     p.add_argument("--step1-timeout", type=int, default=90)
     p.add_argument("--checkpoint-every", type=int, default=10)
@@ -140,7 +153,7 @@ def _select(scenarios: List[Scenario], indices_raw: str, sample: int, seed: Any,
 
 
 def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examples: int,
-             vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+             vacancies: Dict[int, Dict[str, Any]], spec: Any = None) -> Dict[str, Any]:
     res: Dict[str, Any] = {"scenario": scenario, "turns": [], "verdict": None, "judge_usage": None, "call_error": None}
     candidate_turns = extract_candidate_examples(scenario.examples_raw, max_examples)
     if not candidate_turns:
@@ -149,7 +162,7 @@ def _process(scenario: Scenario, client: Any, prompt: Any, judge: Any, max_examp
     try:
         conv = ScreeningConversation(client, prompt.prompt_id, prompt.prompt_version,
                                      vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO),
-                                     DEFAULT_RECRUITER_NAME, "Кандидат")
+                                     DEFAULT_RECRUITER_NAME, "Кандидат", spec=spec)
         conv.start()
     except Exception as e:  # noqa: BLE001
         res["call_error"] = f"conversation:{type(e).__name__}:{e}"
@@ -191,7 +204,7 @@ def _judge_into(res: Dict[str, Any], judge: Any, scenario: Scenario) -> None:
 def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: Any, gen_client: Any,
                       gen_model: str, constraints_entries: list, sampler: VariantSampler,
                       max_turns: int, gen_policy: GenerationPolicy,
-                      vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+                      vacancies: Dict[int, Dict[str, Any]], spec: Any = None) -> Dict[str, Any]:
     """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ живой ассистент, затем судья."""
     scenario, variant = item
     res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "turns": [],
@@ -201,7 +214,7 @@ def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: A
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = ScreeningConversation(assistant_client, prompt.prompt_id, prompt.prompt_version,
                                  vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO),
-                                 DEFAULT_RECRUITER_NAME, "Кандидат")
+                                 DEFAULT_RECRUITER_NAME, "Кандидат", spec=spec)
     eff_turns = constraints.max_turns or max_turns  # per-scenario лимит (тесно-очерченным — меньше)
     result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
     for t in result.turns:
@@ -221,7 +234,7 @@ def _process_generate(item: Any, *, assistant_client: Any, prompt: Any, judge: A
 def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], prompt: Any, run_id: str, started) -> Dict[str, Path]:
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": args.component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, resolve_source(args.prompt_source), args.local_prompt_version),
         run_id=run_id, started_at=started.isoformat(timespec="seconds"),
         models={"generator": None, "evaluator": None}, seed=prompt.seed,
         args={"offline": True, "component": args.component, "scenarios": len(scenarios)},
@@ -253,6 +266,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, args.component, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
     seed = args.seed if args.seed is not None else prompt.seed
     csv_path = args.csv or COMPONENT_CSV[args.component]
     scenarios = _select(load_scenarios(csv_path), args.scenario_indices, args.sample, seed,
@@ -266,6 +280,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     if not os.environ.get("OPENAI_API_KEY"):
         raise EnvironmentError("OPENAI_API_KEY is not set")
     client = get_client(timeout=args.step1_timeout)
+    # local-источник: тело/параметры screening-ассистента из пакета prompts (иначе stored prompt={id,version})
+    spec = load_local_spec(prompt.local_component, args.local_prompt_version) if source == LOCAL else None
     eval_model = args.eval_model
     judge = ScenarioJudge(ModelClient(eval_model, timeout=args.step1_timeout, temperature=0))  # судья детерминирован: один вход → один вердикт
     vacancies = load_vacancies(args.vacancies or COMPONENT_VACANCIES.get(args.component))  # per-scenario контекст вакансии
@@ -297,7 +313,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": args.component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id, started_at=started.isoformat(timespec="seconds"),
         models=models, seed=seed, args=run_args,
     )
@@ -386,10 +402,10 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     if args.generate:
         def _work(it):
-            return _process_generate(it, assistant_client=client, prompt=prompt, judge=judge, **gen_setup)
+            return _process_generate(it, assistant_client=client, prompt=prompt, judge=judge, spec=spec, **gen_setup)
     else:
         def _work(sc):
-            return _process(sc, client, prompt, judge, args.max_examples)
+            return _process(sc, client, prompt, judge, args.max_examples, vacancies, spec=spec)
 
     def _on_interrupt() -> None:
         if not args.quiet:

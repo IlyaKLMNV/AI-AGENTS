@@ -1,9 +1,15 @@
 """Мультитёрн-разговор со screening_assistant через OpenAI Conversations API.
 
 Переписано из легаси screeningAssistant/screeningAss.py (БЕЗ импорта легаси): разговор сидируется
-сообщением с деталями вакансии и инструкциями квалификации, затем реплики кандидата шлются в
-stored-промпт screening_assistant с conversation=<id>. Общая инфра для screening_guardrails и
-screening_scenarios. Сеть только здесь; детекторы/судья — отдельно.
+сообщением с деталями вакансии и инструкциями квалификации, затем реплики кандидата шлются
+ассистенту с conversation=<id>. Общая инфра для screening_guardrails и screening_scenarios.
+Сеть только здесь; детекторы/судья — отдельно.
+
+Источник промпта переключаемый (см. core.prompt_source):
+- stored (дефолт): prompt={id, version} — тело/модель/параметры на platform.openai.com;
+- local: spec из пакета `prompts` — system-текст идёт параметром instructions=, модель и
+  параметры — из config.yaml нужной версии. spec принимается duck-typed (домен не импортирует
+  `prompts` — spec грузит раннер через core.load_local_spec).
 """
 
 from __future__ import annotations
@@ -76,8 +82,10 @@ class ScreeningConversation:
     """Stateful-разговор со screening_assistant. start() сидирует тред, respond() — один ход кандидата."""
 
     def __init__(self, client: Any, prompt_id: str, prompt_version: Optional[str],
-                 vacancy_info: Dict[str, Any], recruiter_name: str, candidate_name: str) -> None:
+                 vacancy_info: Dict[str, Any], recruiter_name: str, candidate_name: str,
+                 *, spec: Any = None) -> None:
         self._client = client
+        self._spec = spec  # не None -> local-режим (тело/параметры из пакета prompts)
         self._prompt: Dict[str, Any] = {"id": prompt_id}
         if prompt_version:
             self._prompt["version"] = str(prompt_version)
@@ -91,12 +99,31 @@ class ScreeningConversation:
         self._conversation_id = conv.id
         return self._conversation_id
 
+    def _local_kwargs(self, candidate_message: str) -> Dict[str, Any]:
+        """responses.create-параметры для local-источника: system → instructions, + модель/параметры."""
+        s = self._spec
+        kwargs: Dict[str, Any] = {
+            "model": s.model,
+            "conversation": self._conversation_id,
+            "input": candidate_message,
+            "instructions": s.system_text,  # системный промпт применяется на каждом ходу (как stored-промпт)
+            "text": {"format": s.text_format},
+        }
+        for attr in ("temperature", "top_p", "max_output_tokens", "store"):
+            val = getattr(s, attr, None)
+            if val is not None:
+                kwargs[attr] = val
+        return kwargs
+
     def respond(self, candidate_message: str) -> TurnResult:
         if MATERNITY_RE.search(candidate_message or ""):
             return TurnResult("Извините за беспокойство!", True, None)
-        resp = self._client.responses.create(
-            prompt=self._prompt, conversation=self._conversation_id, input=candidate_message
-        )
+        if self._spec is not None:
+            resp = self._client.responses.create(**self._local_kwargs(candidate_message))
+        else:
+            resp = self._client.responses.create(
+                prompt=self._prompt, conversation=self._conversation_id, input=candidate_message
+            )
         usage = getattr(resp, "usage", None)
         text = getattr(resp, "output_text", "") or ""
         if not text:
