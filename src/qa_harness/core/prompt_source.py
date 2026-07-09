@@ -140,8 +140,14 @@ def make_prompt_client(
                               client=client, text_format=text_format)
 
 
-def prompt_under_test_meta(prompt_cfg: Any, source: str, local_version: Optional[str] = None) -> dict:
-    """Метаданные промпта-под-тестом для отчёта (что реально тестировалось и откуда)."""
+def prompt_under_test_meta(prompt_cfg: Any, source: str, local_version: Optional[str] = None, *,
+                          prompts_path: Optional[str] = None) -> dict:
+    """Метаданные промпта-под-тестом для отчёта (что реально тестировалось и откуда).
+
+    Для local резолвит фактическую версию и модель из пакета `prompts` (а не платформенный
+    номер из model.yaml): в отчёт попадает `local_version` вида `v13` и `model` из config.yaml —
+    то, что реально исполнялось. Резолв безопасен: при недоступности пакета — мягкий фолбэк.
+    """
     meta = {
         "component": prompt_cfg.component,
         "source": source,
@@ -150,5 +156,11 @@ def prompt_under_test_meta(prompt_cfg: Any, source: str, local_version: Optional
     }
     if source == LOCAL:
         meta["local_component"] = prompt_cfg.local_component
-        meta["local_version"] = local_version or getattr(prompt_cfg, "local_version", None) or "active"
+        version = local_version or getattr(prompt_cfg, "local_version", None)
+        try:
+            spec = load_local_spec(prompt_cfg.local_component, version, prompts_path=prompts_path)
+            meta["local_version"] = spec.version  # разрезолвленная (напр. v13), а не "active"
+            meta["model"] = spec.model             # реальная LLM-модель из config.yaml пакета
+        except Exception:  # noqa: BLE001  пакет недоступен (напр. offline) — не роняем отчёт
+            meta["local_version"] = version or "active"
     return meta

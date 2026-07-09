@@ -180,8 +180,11 @@ pip install "git+ssh://git@github.com/podbor/prompts.git"   # @<тег> для �
 
 ## Отчёт
 
-`meta.prompt_under_test.source` = `stored | local`. Для local дополнительно `local_component` и
-`local_version` (`active`, если версия не пинилась) — видно, что именно и откуда тестировалось.
+`meta.prompt_under_test.source` = `stored | local`. Для local дополнительно `local_component`,
+**разрезолвленная** `local_version` (напр. `v13`) и `model` (реальная LLM-модель из `config.yaml` пакета) —
+то, что фактически исполнялось. Шапка `review.md` это показывает во всех режимах, напр.:
+`промпт first_touch (local) FIRST_TOUCH v13 · модель gpt-4.1-2025-04-14` либо
+`промпт first_touch (stored) v14`.
 
 ## Грабли
 

@@ -271,8 +271,15 @@ def render_review_md(metrics_doc: Dict[str, Any], cases_doc: Dict[str, Any]) -> 
     header = [f"# QA-обзор — {runner} / {run_id}"]
     sub: List[str] = []
     if put:
-        sub.append(f"промпт `{put.get('component') or put.get('prompt_id') or '?'}` "
-                   f"v{put.get('prompt_version') or '?'}")
+        comp = put.get("component") or put.get("prompt_id") or "?"
+        if put.get("source") == "local":
+            # local: реально тестируется директория/версия из пакета prompts (не платформенный номер)
+            line = f"промпт `{comp}` (local) `{put.get('local_component') or comp}` {put.get('local_version') or '?'}"
+            if put.get("model"):
+                line += f" · модель `{put['model']}`"
+        else:
+            line = f"промпт `{comp}` (stored) v{put.get('prompt_version') or '?'}"
+        sub.append(line)
     if (meta.get("models") or {}).get("evaluator"):
         sub.append(f"судья `{meta['models']['evaluator']}`")
     if meta.get("duration_s") is not None:
