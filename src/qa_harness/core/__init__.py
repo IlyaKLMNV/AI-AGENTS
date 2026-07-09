@@ -8,6 +8,16 @@ LLM-клиент, отчёты, метрики, CLI). Доменная логи�
 from .usage import accumulate_usage, blank_usage, extract_usage_numbers, usage_total
 from .jsonio import expect_json_object, extract_json_substring, safe_json_loads
 from .config import PromptCfg, component_cfg, default_cfg_path, load_cfg, resolve_prompt
+from .prompt_source import (
+    LOCAL,
+    STORED,
+    add_prompt_source_args,
+    ensure_prompts_importable,
+    load_local_spec,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_source,
+)
 from .run_loop import LoopOutcome, run_cases
 
 __all__ = [
@@ -26,6 +36,15 @@ __all__ = [
     "component_cfg",
     "resolve_prompt",
     "default_cfg_path",
+    # prompt_source (переключатель stored ↔ local)
+    "STORED",
+    "LOCAL",
+    "resolve_source",
+    "add_prompt_source_args",
+    "make_prompt_client",
+    "load_local_spec",
+    "ensure_prompts_importable",
+    "prompt_under_test_meta",
     # run_loop
     "run_cases",
     "LoopOutcome",

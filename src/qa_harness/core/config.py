@@ -53,12 +53,21 @@ def component_cfg(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
 
 @dataclass(frozen=True)
 class PromptCfg:
-    """Резолвнутая конфигурация stored-промпта."""
+    """Резолвнутая конфигурация промпта-под-тестом.
+
+    prompt_id/prompt_version — stored-источник (platform.openai.com).
+    local_component/local_version — local-источник (пакет `prompts`): имя директории
+    компонента в репозитории prompts (отличается от имени в model.yaml для части
+    компонентов, напр. first_touch -> FIRST_TOUCH) и опц. пин версии (иначе pointer.yaml
+    active). Какой источник использовать — решает переключатель (см. core.prompt_source).
+    """
 
     component: str
     prompt_id: str
     prompt_version: Optional[str] = None
     seed: Optional[int] = None
+    local_component: Optional[str] = None
+    local_version: Optional[str] = None
 
 
 def resolve_prompt(
@@ -74,6 +83,10 @@ def resolve_prompt(
     env_prefix по умолчанию = component.upper() (например, "message_classifier" ->
     переменные MESSAGE_CLASSIFIER_PROMPT_ID / MESSAGE_CLASSIFIER_PROMPT_VERSION).
     Бросает ValueError, если prompt_id не найден ни в одном источнике.
+
+    Дополнительно (для local-источника, пакет `prompts`) читает из model.yaml опц. поля
+    local_component (имя директории компонента в репозитории prompts; по умолчанию = component)
+    и local_version (пин версии; по умолчанию None -> pointer.yaml active в самом пакете).
     """
     prefix = (env_prefix or component).upper()
     block = component_cfg(cfg, component)
@@ -87,10 +100,14 @@ def resolve_prompt(
 
     pver = cli_version or os.environ.get(f"{prefix}_PROMPT_VERSION") or block.get("prompt_version")
     seed = block.get("seed")
+    local_component = block.get("local_component") or component
+    local_version = block.get("local_version")
 
     return PromptCfg(
         component=component,
         prompt_id=str(pid),
         prompt_version=str(pver) if pver is not None else None,
         seed=int(seed) if seed is not None else None,
+        local_component=str(local_component),
+        local_version=str(local_version) if local_version is not None else None,
     )

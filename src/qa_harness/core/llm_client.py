@@ -1,11 +1,14 @@
 """Клиенты OpenAI Responses API.
 
 Поправка критика (docs/REFACTOR_PLAN.md §4): НЕ безусловный singleton — клиент
-кэшируется по (base_url, timeout), а роли разведены на два класса:
-- `StoredPromptClient` — для промпта-под-тестом (prompt={id, version});
+кэшируется по (base_url, timeout), а роли разведены на классы:
+- `StoredPromptClient` — промпт-под-тестом из platform.openai.com (prompt={id, version});
+- `LocalPromptClient` — промпт-под-тестом из пакета `prompts` (тело/параметры локально,
+  вызывается как model=... + input=messages). Тот же контракт .run(input_text) -> (text, usage),
+  поэтому раннеры не различают источники — выбор делает core.prompt_source.make_prompt_client;
 - `ModelClient` — для генератора/судьи (model=...).
 
-Оба принимают опциональный `client=` для подмены в offline/replay/тестах
+Все принимают опциональный `client=` для подмены в offline/replay/тестах
 (никакой сети). openai импортируется лениво, чтобы `import qa_harness.core`
 не требовал установленного openai в чисто-юнит-окружении.
 """
@@ -63,6 +66,49 @@ class StoredPromptClient:
         kwargs: Dict[str, Any] = {"prompt": self._prompt, "input": input_text}
         if self._text_format is not None:
             kwargs["text"] = self._text_format
+        return _text_and_usage(client.responses.create(**kwargs))
+
+
+class LocalPromptClient:
+    """Вызов промпта-под-тестом из пакета `prompts` (локальный источник).
+
+    Тело/параметры берутся из PromptSpec (system.md + config.yaml нужной версии), а сам вызов —
+    обычный responses.create(model=..., input=messages, ...), как в проде-потребителе пакета.
+    Контракт .run(input_text) -> (text, usage) идентичен StoredPromptClient.
+
+    args в build_input НЕ передаём: раннеры уже кладут весь контекст в input_text (как и в
+    stored-режиме), а без args рендер не вызывает str.format — литеральные {} в теле безопасны.
+    """
+
+    def __init__(
+        self,
+        component: str,
+        version: Optional[str] = None,
+        *,
+        client: Any = None,
+        text_format: Optional[dict] = None,
+    ) -> None:
+        from qa_harness.core.prompt_source import load_local_spec  # ленивый: не тянуть prompts зря
+
+        self._spec = load_local_spec(component, version)
+        self._client = client
+        self._text_format = text_format  # полный text=... (как у StoredPromptClient); None -> из spec
+
+    @property
+    def spec(self) -> Any:
+        return self._spec
+
+    def run(self, input_text: str) -> Tuple[str, Any]:
+        """Вернуть (output_text, usage)."""
+        client = self._client or get_client()
+        messages = self._spec.build_input(user_input=input_text)
+        kwargs: Dict[str, Any] = {"model": self._spec.model, "input": messages}
+        # None означает «не задано в config.yaml» — параметр не передаём (как у потребителя пакета).
+        for attr in ("temperature", "top_p", "max_output_tokens", "store"):
+            val = getattr(self._spec, attr, None)
+            if val is not None:
+                kwargs[attr] = val
+        kwargs["text"] = self._text_format if self._text_format is not None else {"format": self._spec.text_format}
         return _text_and_usage(client.responses.create(**kwargs))
 
 

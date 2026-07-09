@@ -1,17 +1,23 @@
-first_touch:  
+# local_component — имя директории компонента в репозитории `prompts` (для --prompt-source local),
+# когда оно отличается от ключа в этом реестре. Где не задано — берётся сам ключ (identity).
+
+first_touch:
   prompt_id: pmpt_694a88c0ce708196ae2722f68b452760081b5f35879bbd4e
   prompt_version: 14
   seed: 1234
+  local_component: FIRST_TOUCH
 
 first_touch_hh:
   prompt_id: pmpt_69b1c0e900988196bc62ef7809e7939c07e3907d5493ecc5
   prompt_version: 3
   seed: 1234
+  local_component: HH_FIRST_TOUCH
 
 first_touch_event_invite:
   prompt_id: pmpt_69ce8e02fc4081958ec897a73fa07961066f8c3e46cdc060
   prompt_version: 8
   seed: 1234
+  local_component: event_first_touch
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
@@ -32,6 +38,7 @@ screening_autofill:
   prompt_id: pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902
   prompt_version: 27
   seed: 1234
+  local_component: screening_autofill_prompt
 
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
