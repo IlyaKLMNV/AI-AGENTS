@@ -20,7 +20,17 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    usage_total,
+)
 from qa_harness.core.cdm import load_cdm_files, load_json
 from qa_harness.core.metrics import classification_metrics, split_summary
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
@@ -102,6 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
     return p
@@ -202,20 +213,21 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
     seed = args.seed if args.seed is not None else prompt.seed
     gen_model = args.dialogue_gen_model or DEFAULT_GEN_MODEL
 
     if args.offline:
         classifier: Any = HeuristicVerdictClassifier()
     else:
-        from qa_harness.core.llm_client import StoredPromptClient
-
-        classifier = StoredPromptVerdictClassifier(StoredPromptClient(prompt.prompt_id, prompt.prompt_version))
+        classifier = StoredPromptVerdictClassifier(
+            make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                               prompts_path=args.prompts_path))
 
     judge = LabelJudge(VERDICTS)
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": gen_model if args.mode in ("synthetic", "all") else None, "evaluator": None},

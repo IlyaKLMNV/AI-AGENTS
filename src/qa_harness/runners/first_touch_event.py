@@ -24,7 +24,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.first_touch_event import (
     EventJudge,
@@ -51,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель event-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=4, help="Параллельных воркеров (2 LLM-вызова на кейс).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызовов LLM, сек.")
     p.add_argument("--checkpoint-every", type=int, default=20)
@@ -99,16 +111,18 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, PROMPT_COMPONENT, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
 
     gen_client = judge = None
     eval_model = None
     if not args.offline:
-        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+        from qa_harness.core.llm_client import ModelClient, get_client
 
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set")
         llm = get_client(timeout=args.step1_timeout)
-        gen_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=llm,
+        gen_client = make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                                        prompts_path=args.prompts_path, client=llm,
                                         text_format={"format": {"type": "text"}})
         eval_model = args.eval_model
         judge = EventJudge(ModelClient(eval_model, timeout=args.step1_timeout))
@@ -117,7 +131,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": prompt.prompt_id, "evaluator": eval_model},

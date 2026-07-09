@@ -37,7 +37,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.cdm import load_cdm_files, load_json
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
@@ -146,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--quiet", action="store_true")
     return p
 
@@ -402,15 +414,17 @@ def _process_score(case: GoldenScoreCase, sourcing_client: Any, replay: bool) ->
 def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
     """Scoring-режимы (golden / offline / generate): contract + semantic(expect_passed). БЕЗ backend."""
     mode = "offline" if args.offline else ("generate" if args.generate else "golden")
+    source = resolve_source(args.prompt_source)
     online = mode != "offline"
     sourcing_client = None
     gen_setup: Dict[str, Any] = {}
     if online:
-        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+        from qa_harness.core.llm_client import ModelClient, get_client
 
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
-        sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+        sourcing_client = make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                                             prompts_path=args.prompts_path, client=get_client(timeout=args.step1_timeout))
 
     if mode == "generate":
         gen_seed = args.gen_seed if args.gen_seed is not None else (prompt.seed if prompt.seed is not None else 0)
@@ -432,7 +446,7 @@ def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id, started_at=started.isoformat(timespec="seconds"),
         models=models, seed=prompt.seed, args=run_args,
     )
@@ -555,6 +569,7 @@ def _run_scoring(args, prompt, run_id, started) -> Dict[str, Path]:
 
 def _run_count_only(args, items, prompt, run_id, started, backend, token, sanitize_geo) -> Dict[str, Path]:
     """Диагностика: число кандидатов на вакансию (limit=0, быстро). Профили не тянем, промпт не зовём."""
+    source = resolve_source(args.prompt_source)
     count_payload = make_base_payload(only_with_contacts=True, current_position_title=True, limit=0, offset=0)
     backend_down = threading.Event()
     counts: Dict[str, int] = {}
@@ -615,7 +630,7 @@ def _run_count_only(args, items, prompt, run_id, started, backend, token, saniti
     }
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id, started_at=started.isoformat(timespec="seconds"),
         models={"generator": None, "evaluator": None}, seed=prompt.seed,
         args={"count_only": True, "cases": len(items), "workers": args.workers},
@@ -642,6 +657,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
     seed = args.seed if args.seed is not None else prompt.seed
 
     # scoring-режимы (golden / offline / generate): contract + semantic(expect_passed), БЕЗ backend
@@ -649,11 +665,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
         return _run_scoring(args, prompt, run_id, started)
 
     # дефолт: backend (поиск ЖИВЫХ кандидатов) — contract-only (нет эталона passed для живых профилей)
-    from qa_harness.core.llm_client import StoredPromptClient, get_client
+    from qa_harness.core.llm_client import get_client
 
     if not os.environ.get("OPENAI_API_KEY"):
         raise EnvironmentError("OPENAI_API_KEY is not set (sourcing prompt requires it)")
-    sourcing_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+    sourcing_client = make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                                         prompts_path=args.prompts_path, client=get_client(timeout=args.step1_timeout))
 
     base_url = args.base_url or os.environ.get("AI_SEARCH_BASE_URL")
     token = args.token or os.environ.get("AI_SEARCH_AUTH_TOKEN") or ""
@@ -669,7 +686,8 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
             raise ValueError("--search несовместим с --count-only")
         extractor = resolve_prompt(cfg, EXTRACTOR_COMPONENT, cli_id=args.extractor_prompt_id,
                                    cli_version=args.extractor_prompt_version)
-        extractor_client = StoredPromptClient(extractor.prompt_id, extractor.prompt_version,
+        # helper extractor в local-режиме — боевая версия из pointer.yaml (свой --local-prompt-version не пробрасываем)
+        extractor_client = make_prompt_client(extractor, source=source, prompts_path=args.prompts_path,
                                               client=get_client(timeout=args.step1_timeout))
         items = list(load_search_vacancies(args.vacancies_file))
         case_source = "vacancy"
@@ -691,7 +709,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models={"generator": None, "evaluator": None},

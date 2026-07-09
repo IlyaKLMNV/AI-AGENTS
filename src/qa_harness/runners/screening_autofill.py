@@ -30,7 +30,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
     AutofillDialogueGenerator,
@@ -79,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-flatten", action="store_true", help="НЕ расплющивать диалог в одну строку (по умолчанию плющим, как прод).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=6, help="Параллельных воркеров (I/O-bound LLM-вызовы).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызова промпта, сек.")
     p.add_argument("--checkpoint-every", type=int, default=20, help="Перезапись отчёта каждые N кейсов (0=только в конце).")
@@ -155,6 +167,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
 
     if args.generate and args.offline:
         raise ValueError("--generate несовместим с --offline (генерация требует сети).")
@@ -162,11 +175,12 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     flatten = not args.no_flatten
     client = None
     if not args.offline:
-        from qa_harness.core.llm_client import StoredPromptClient, get_client
+        from qa_harness.core.llm_client import get_client
 
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set (промпт requires it)")
-        client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=get_client(timeout=args.step1_timeout))
+        client = make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                                    prompts_path=args.prompts_path, client=get_client(timeout=args.step1_timeout))
 
     gen_setup: Dict[str, Any] = {}
     if args.generate:
@@ -196,7 +210,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models=models,

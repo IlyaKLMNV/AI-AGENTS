@@ -31,7 +31,18 @@ from typing import Any, Dict, List
 
 import random
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
     DOMAINS,
@@ -84,6 +95,7 @@ def build_parser(default_component: str = "first_touch", default_golden: Path = 
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель LLM-судьи (по умолчанию {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--prompt-id", default=None)
     p.add_argument("--prompt-version", default=None)
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=4, help="Параллельных воркеров (2 LLM-вызова на кейс).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызовов LLM (генерация/судья), сек.")
     p.add_argument("--checkpoint-every", type=int, default=20, help="Перезапись отчёта каждые N кейсов (0=только в конце).")
@@ -198,6 +210,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     prompt = resolve_prompt(cfg, component, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
 
     if args.generate and args.offline:
         raise ValueError("--generate несовместим с --offline (генерация требует сети).")
@@ -206,12 +219,13 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
     eval_model = None
     gen_setup: Dict[str, Any] = {}
     if not args.offline:
-        from qa_harness.core.llm_client import ModelClient, StoredPromptClient, get_client
+        from qa_harness.core.llm_client import ModelClient, get_client
 
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set")
         llm = get_client(timeout=args.step1_timeout)
-        gen_client = StoredPromptClient(prompt.prompt_id, prompt.prompt_version, client=llm,
+        gen_client = make_prompt_client(prompt, source=source, local_version=args.local_prompt_version,
+                                        prompts_path=args.prompts_path, client=llm,
                                         text_format={"format": {"type": "text"}})
         eval_model = args.eval_model
         judge = FactJudge(ModelClient(eval_model, timeout=args.step1_timeout))
@@ -239,7 +253,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=component,
-        prompt_under_test={"component": component, "prompt_id": prompt.prompt_id, "prompt_version": prompt.prompt_version},
+        prompt_under_test=prompt_under_test_meta(prompt, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models=models,

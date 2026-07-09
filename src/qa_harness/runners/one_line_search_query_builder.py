@@ -32,7 +32,18 @@ from typing import Any, Dict, List, Optional
 
 import random
 
-from qa_harness.core import accumulate_usage, blank_usage, load_cfg, resolve_prompt, run_cases, usage_total
+from qa_harness.core import (
+    accumulate_usage,
+    add_prompt_source_args,
+    blank_usage,
+    load_cfg,
+    make_prompt_client,
+    prompt_under_test_meta,
+    resolve_prompt,
+    resolve_source,
+    run_cases,
+    usage_total,
+)
 from qa_harness.core.reporting import CaseRecord, ReportBuilder, write_reports
 from qa_harness.domain.generators import (
     SOFT_NOISE,
@@ -88,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-version", default=None, help="Override prompt_version билдера.")
     p.add_argument("--extractor-prompt-id", default=None, help="Override prompt_id extractor (step2).")
     p.add_argument("--extractor-prompt-version", default=None, help="Override prompt_version extractor (step2).")
+    add_prompt_source_args(p)
     p.add_argument("--workers", type=int, default=6, help="Параллельных воркеров (I/O-bound).")
     p.add_argument("--step1-timeout", type=int, default=60, help="Таймаут вызовов LLM (builder/extractor), сек.")
     p.add_argument("--step3-timeout", type=int, default=45, help="Таймаут вызова backend (step3), сек.")
@@ -220,6 +232,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     cfg = load_cfg(args.cfg)
     builder = resolve_prompt(cfg, RUNNER, cli_id=args.prompt_id, cli_version=args.prompt_version)
+    source = resolve_source(args.prompt_source)
     extractor = None
     if 2 in steps:
         extractor = resolve_prompt(
@@ -228,14 +241,16 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     builder_client = extractor_client = None
     if not args.offline:
-        from qa_harness.core.llm_client import StoredPromptClient, get_client
+        from qa_harness.core.llm_client import get_client
 
         if not os.environ.get("OPENAI_API_KEY"):
             raise EnvironmentError("OPENAI_API_KEY is not set (step1 builder requires it)")
         llm = get_client(timeout=args.step1_timeout)
-        builder_client = StoredPromptClient(builder.prompt_id, builder.prompt_version, client=llm)
+        builder_client = make_prompt_client(builder, source=source, local_version=args.local_prompt_version,
+                                            prompts_path=args.prompts_path, client=llm)
         if extractor is not None:
-            extractor_client = StoredPromptClient(extractor.prompt_id, extractor.prompt_version, client=llm)
+            # helper extractor в local-режиме — на боевой версии из pointer.yaml (свой --local-prompt-version не пробрасываем)
+            extractor_client = make_prompt_client(extractor, source=source, prompts_path=args.prompts_path, client=llm)
 
     backend: Optional[BackendCfg] = None
     token = ""
@@ -287,7 +302,7 @@ def run(args: argparse.Namespace) -> Dict[str, Path]:
 
     rb = ReportBuilder(
         runner=RUNNER,
-        prompt_under_test={"component": RUNNER, "prompt_id": builder.prompt_id, "prompt_version": builder.prompt_version},
+        prompt_under_test=prompt_under_test_meta(builder, source, args.local_prompt_version),
         run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models=models,
