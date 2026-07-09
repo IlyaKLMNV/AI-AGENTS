@@ -1,0 +1,17 @@
+# не тащим в build-контекст лишнее (быстрее сборка, чище образ; .env НЕ попадает в образ — ключ даём в рантайме)
+.git
+.github
+.venv
+venv
+**/__pycache__/
+*.pyc
+*.pyo
+tests/reports_v2/
+_wheels/
+.env
+.env.*
+.idea/
+.claude/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
