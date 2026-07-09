@@ -14,7 +14,7 @@
   - `runners/` — тонкие раннеры (`python -m qa_harness.runners.<name>`).
 - **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, `python -m app.<runner>`). **НЕ удалять до cutover.**
 - `adapters/`, `screeningAssistant/screeningAss.py` — нужны легаси `screening_*`-раннерам.
-- `docs/` — `REFACTOR_PLAN.md`, `REPORT_SCHEMA.md`, `MIGRATION_STATUS.md` (статус по раннерам),
+- `docs/` — `REPORT_SCHEMA.md`, `LOCAL_PROMPTS.md` (переключатель источника промптов),
   `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
 
 Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**.

@@ -7,16 +7,16 @@
 
 ## Архитектура (идёт миграция)
 Проект переходит на новый устанавливаемый пакет **`qa_harness`** (src-layout). На время миграции
-два дерева сосуществуют, старое не удаляется до финального cutover (см. `docs/REFACTOR_PLAN.md`):
+два дерева сосуществуют, старое не удаляется до финального cutover:
 
 - **`src/qa_harness/`** — НОВАЯ архитектура (целевая): переиспользуемое ядро + тонкие раннеры:
   - `core/` — инфраструктура (llm_client, config, usage, jsonio, metrics, reporting, cdm);
   - `domain/` — рекрутинговая логика (judge, generators, classifiers, extractor, text);
   - `pipeline/` — конвейер AI-поиска (step1 parse → step2 payload → step3 backend);
   - `runners/` — тонкие CLI-раннеры.
-- **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, мигрируются по одному; статус — `docs/MIGRATION_STATUS.md`).
+- **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, мигрируются по одному).
 - `adapters/`, `screeningAssistant/screeningAss.py` — используются легаси-раннерами (не трогаем до cutover).
-- `docs/` — план рефакторинга, схема отчётов, статус миграции, разбор extractor.
+- `docs/` — схема отчётов, локальные промпты (`LOCAL_PROMPTS.md`), разбор extractor.
 - `tests/` — `fixtures/` (данные), `tools/model.yaml` (реестр промптов), `reports/` (легаси-отчёты),
   `reports_v2/` (новые отчёты: metrics + cases + review.md).
 
