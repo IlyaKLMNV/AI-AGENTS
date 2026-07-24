@@ -26,6 +26,7 @@ class AdaptiveTurn:
     gen_usage: Any = None          # usage генерации реплики кандидата
     assistant_usage: Any = None    # usage ответа ассистента
     gen_attempts: int = 1
+    tool_trace: Any = None         # снимок хода, если движок его даёт (split: Decision+state); монолит — None
 
 
 @dataclass
@@ -63,7 +64,7 @@ def run_adaptive_conversation(conv: ScreeningConversation, candidate: CandidateA
         res.turns.append(AdaptiveTurn(
             candidate=candidate_msg, candidate_source=gr.source, reply=reply,
             end=tr.conversation_end, gen_usage=gr.usage, assistant_usage=tr.usage,
-            gen_attempts=gr.attempts,
+            gen_attempts=gr.attempts, tool_trace=getattr(tr, "tool_trace", None),
         ))
         history.append(("candidate", candidate_msg))
         history.append(("assistant", reply))

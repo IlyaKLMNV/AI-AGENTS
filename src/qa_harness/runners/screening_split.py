@@ -44,11 +44,15 @@ from qa_harness.core import (
     usage_total,
 )
 from qa_harness.domain import screening_split as sp
+from qa_harness.domain.generators import CandidateAgent, GenerationPolicy, VariantSampler
+from qa_harness.domain.screening import run_adaptive_conversation
 from qa_harness.domain.screening_scenarios import (
     END_MARKER,
     Scenario,
     ScenarioJudge,
+    constraints_for,
     extract_candidate_examples,
+    load_constraints,
     load_scenarios,
     load_vacancies,
     parse_scenario_indices,
@@ -61,12 +65,16 @@ DEFAULT_CSV = FIXTURES / "screening_split" / "scenarios.csv"
 # Пер-сценарный контекст вакансии (формат/локация/вилка/скрытость) — переиспользуем набор
 # монолита: index в split-CSV совпадает с базовым (1..64), кейс 65 берёт DEFAULT_VACANCY_INFO.
 DEFAULT_VACANCIES = FIXTURES / "generation" / "screening_scenarios" / "scenario_vacancies.yaml"
+# Констрейнты генерации кандидата — переиспользуем набор монолита (index совпадает; кейс 65 → дефолт).
+DEFAULT_CONSTRAINTS = FIXTURES / "generation" / "screening_scenarios" / "constraints.yaml"
 DEFAULT_CHECKS = FIXTURES / "screening_split" / "scenario_checks.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "screening_split"
 ANALYZER_COMPONENT = "screening_analyzer"
 INTERVIEWER_COMPONENT = "screening_interviewer"
 DEFAULT_EVAL_MODEL = "gpt-4.1"
+DEFAULT_GEN_MODEL = "gpt-4.1-mini"
+DEFAULT_MAX_TURNS = 6
 DEFAULT_RECRUITER_NAME = "Анна"
 DEFAULT_VACANCY_INFO: Dict[str, Any] = {
     "title": "Python Backend Developer",
@@ -89,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario-indices", default=None, help="Точечные номера строк CSV, напр. 1,7,65 (override --sample).")
     p.add_argument("--max-examples", type=int, default=4, help="Сколько реплик кандидата брать из примеров на сценарий.")
     p.add_argument("--offline", action="store_true", help="Плумбинг: сценарии + реплики + санити чистого домена, без сети.")
+    # --- вариативный режим (адаптивный LLM-кандидат вместо реплик из CSV) ---
+    p.add_argument("--generate", action="store_true", help="Вариативный режим: реплики кандидата генерит адаптивный LLM (разблокирует сценарии без примеров).")
+    p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора кандидата (по умолч. {DEFAULT_GEN_MODEL}).")
+    p.add_argument("--gen-seed", type=int, default=None, help="Seed разнообразия стилей (по умолч. = --seed).")
+    p.add_argument("--variants", type=int, default=1, help="Сколько вариативных прогонов на сценарий (--generate).")
+    p.add_argument("--temperature", type=float, default=None, help="Temperature генератора кандидата (--generate).")
+    p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Макс. ходов кандидата в адаптивном диалоге.")
+    p.add_argument("--gen-retries", type=int, default=1, help="Повторов генерации реплики при провале валидации.")
+    p.add_argument("--constraints", type=Path, default=None, help="YAML констрейнтов генерации (по умолч. набор монолита).")
     p.add_argument("--analyzer-version", default=None, metavar="vN", help="Версия screening_analyzer в пакете prompts (иначе pointer.yaml active).")
     p.add_argument("--interviewer-version", default=None, metavar="vN", help="Версия screening_interviewer (иначе pointer.yaml active).")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель судей диалога/Интервьюера (по умолч. {DEFAULT_EVAL_MODEL}).")
@@ -172,21 +189,61 @@ def _process(scenario: Scenario, *, client: Any, analyzer_client: Any, interview
     _judge_into(res, judge, scenario)
     if res["call_error"]:  # инфра-сбой судьи диалога — слой B не считаем
         return res
+    _eval_layer_b(res, vinfo, ijudge)
+    return res
 
-    # --- слой B: утечка секрета (детерминированно) + судья Интервьюера (LLM) ---
+
+def _eval_layer_b(res: Dict[str, Any], vinfo: Dict[str, Any], ijudge: Any) -> None:
+    """Слой B: утечка секрета (детерминированно, с атрибуцией) + судья Интервьюера (LLM). Общий для golden/generate."""
     leak = sp.leak_scan(res["turns"], vinfo)
     res["leak"] = {"passed": leak.passed, "details": leak.details, "culprit": leak.culprit}
-    if ijudge is not None:
-        pairs = [{"turn": i, "instruction": (t.get("decision") or {}).get("instruction") or "", "message": t["reply"]}
-                 for i, t in enumerate(res["turns"], 1)
-                 if isinstance(t.get("decision"), dict) and t["decision"].get("next_action") == "ask"]
-        if pairs:
-            try:
-                iverdict, iusage = ijudge.evaluate(pairs)
-                res["iverdict"] = {"passed": iverdict.passed, "violations": iverdict.violations, "comment": iverdict.comment}
-                res["ijudge_usage"] = iusage
-            except Exception as e:  # noqa: BLE001 — судья Интервьюера не критичен для прогона
-                res["iverdict"] = {"passed": True, "violations": [], "comment": f"судья Интервьюера недоступен: {type(e).__name__}"}
+    if ijudge is None:
+        return
+    pairs = [{"turn": i, "instruction": (t.get("decision") or {}).get("instruction") or "", "message": t["reply"]}
+             for i, t in enumerate(res["turns"], 1)
+             if isinstance(t.get("decision"), dict) and t["decision"].get("next_action") == "ask"]
+    if not pairs:
+        return
+    try:
+        iverdict, iusage = ijudge.evaluate(pairs)
+        res["iverdict"] = {"passed": iverdict.passed, "violations": iverdict.violations, "comment": iverdict.comment}
+        res["ijudge_usage"] = iusage
+    except Exception as e:  # noqa: BLE001 — судья Интервьюера не критичен для прогона
+        res["iverdict"] = {"passed": True, "violations": [], "comment": f"судья Интервьюера недоступен: {type(e).__name__}"}
+
+
+def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interviewer_spec: Any, judge: Any, ijudge: Any,
+                      gen_client: Any, gen_model: str, constraints_entries: list, sampler: Any, max_turns: int,
+                      gen_policy: Any, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+    """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ split-движок, затем судья+слои A/B."""
+    scenario, variant = item
+    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "turns": [], "verdict": None,
+                           "judge_usage": None, "leak": None, "iverdict": None, "ijudge_usage": None,
+                           "call_error": None, "gen_sources": []}
+    vinfo = vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO)
+    constraints = constraints_for(scenario, constraints_entries)
+    style = sampler.at(scenario.index * 1000 + variant)  # детерминированный стиль на (сценарий, вариант)
+    agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
+    conv = sp.SplitConversation(client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
+                                vacancy_info=vinfo, recruiter_name=DEFAULT_RECRUITER_NAME, candidate_name="Кандидат")
+    eff_turns = constraints.max_turns or max_turns
+    result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
+    for t in result.turns:
+        tr = t.tool_trace or {}
+        res["turns"].append({"candidate": t.candidate, "reply": t.reply, "end": t.end,
+                             "usage": t.assistant_usage, "gen_usage": t.gen_usage, "source": t.candidate_source,
+                             "decision": tr.get("decision"), "state": tr.get("state")})
+        res["gen_sources"].append(t.candidate_source)
+    if result.error:
+        res["call_error"] = result.error
+        return res
+    if not res["turns"]:
+        res["call_error"] = "empty_dialogue"
+        return res
+    _judge_into(res, judge, scenario)
+    if res["call_error"]:
+        return res
+    _eval_layer_b(res, vinfo, ijudge)
     return res
 
 
@@ -291,10 +348,38 @@ def run(args: argparse.Namespace) -> Any:
     vacancies = load_vacancies(args.vacancies or DEFAULT_VACANCIES)
     checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
 
+    # golden гоняет только сценарии с примерами; --generate разблокирует все (кандидат генерится).
     selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
-                       runnable_only=True, max_examples=args.max_examples)
-    print(f"Сценариев в CSV: {len(scenarios)} · выбрано (с примерами): {len(selected)} · CSV: {args.csv}")
-    print(f"Аналитик {a_spec.version}/{a_spec.model} · Интервьюер {interviewer_spec.version}/{interviewer_spec.model} · судья {args.eval_model}")
+                       runnable_only=not args.generate, max_examples=args.max_examples)
+
+    gen_setup: Dict[str, Any] = {}
+    if args.generate:
+        gen_seed = args.gen_seed if args.gen_seed is not None else (args.seed if args.seed is not None else 0)
+        gen_setup = dict(
+            gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
+            gen_model=args.gen_model,
+            constraints_entries=load_constraints(args.constraints or DEFAULT_CONSTRAINTS),
+            sampler=VariantSampler(gen_seed),
+            max_turns=args.max_turns,
+            gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
+            vacancies=vacancies,
+        )
+        work_items: List[Any] = [(s, v) for s in selected for v in range(max(1, args.variants))]
+        models = {"candidate_generator": args.gen_model, "analyzer": a_spec.model,
+                  "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
+        run_args = {"mode": "generate", "scenarios": len(selected), "variants": args.variants,
+                    "gen_model": args.gen_model, "gen_seed": gen_seed, "max_turns": args.max_turns,
+                    "eval_model": args.eval_model, "workers": args.workers}
+    else:
+        work_items = list(selected)
+        models = {"analyzer": a_spec.model, "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
+        run_args = {"mode": "golden", "scenarios": len(selected), "max_examples": args.max_examples,
+                    "workers": args.workers, "eval_model": args.eval_model}
+
+    sel_note = f"выбрано: {len(selected)}" + (f" × {max(1, args.variants)} вар. = {len(work_items)}" if args.generate else " (с примерами)")
+    print(f"Сценариев в CSV: {len(scenarios)} · {sel_note} · режим: {run_args['mode']} · CSV: {args.csv}")
+    print(f"Аналитик {a_spec.version}/{a_spec.model} · Интервьюер {interviewer_spec.version}/{interviewer_spec.model} · судья {args.eval_model}"
+          + (f" · генератор {args.gen_model}" if args.generate else ""))
 
     put = {
         "component": "screening_split", "source": "local", "prompt_id": None, "prompt_version": None,
@@ -305,18 +390,18 @@ def run(args: argparse.Namespace) -> Any:
     rb = ReportBuilder(
         runner=RUNNER, prompt_under_test=put, run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
-        models={"analyzer": a_spec.model, "interviewer": interviewer_spec.model, "evaluator": args.eval_model},
-        seed=args.seed,
-        args={"mode": "golden", "scenarios": len(selected), "max_examples": args.max_examples,
-              "workers": args.workers, "eval_model": args.eval_model},
+        models=models, seed=args.seed, args=run_args,
     )
 
     usage_bucket = blank_usage()
-    m, reasons = Counter(), Counter()
+    gen_usage_bucket = blank_usage()
+    m, reasons, gen_sources = Counter(), Counter(), Counter()
 
     def _flush(interrupted: bool = False):
         rb.set_token_usage(usage_total(usage_bucket))
         extra: Dict[str, Any] = {"scenarios": dict(m), "reasons": dict(reasons)}
+        if args.generate:
+            extra["generation"] = {"usage": usage_total(gen_usage_bucket), "sources": dict(gen_sources)}
         if interrupted:
             extra["interrupted"] = True
         finished = datetime.datetime.now()
@@ -326,11 +411,18 @@ def run(args: argparse.Namespace) -> Any:
 
     def _fold(res: Dict[str, Any]) -> None:
         s: Scenario = res["scenario"]
+        is_gen = res.get("mode") == "generate"
+        variant = res.get("variant")
         for t in res["turns"]:
-            accumulate_usage(usage_bucket, t.get("usage"))
+            accumulate_usage(usage_bucket, t.get("usage"))       # ответ движка (Аналитик+Интервьюер)
+            accumulate_usage(usage_bucket, t.get("gen_usage"))   # генерация реплики → в общий total
+            accumulate_usage(gen_usage_bucket, t.get("gen_usage"))
         accumulate_usage(usage_bucket, res["judge_usage"])
         accumulate_usage(usage_bucket, res.get("ijudge_usage"))
-        cid = f"scenario:{s.index}:{s.name[:40]}"
+        for src in res.get("gen_sources", []):
+            gen_sources[src] += 1
+        tag = f"{s.index}" + (f"/v{variant}" if is_gen else "")
+        cid = f"scenario:{s.index}:" + (f"v{variant}:" if is_gen else "") + s.name[:40]
 
         if res["call_error"] == "no_candidate_examples":
             m["skipped_no_examples"] += 1
@@ -340,7 +432,7 @@ def run(args: argparse.Namespace) -> Any:
             reasons[res["call_error"].split(":")[0]] += 1
             m["errors"] += 1
             if not args.quiet:
-                print(f"  [ERR ] {s.index} {s.name[:45]}: {res['call_error']}")
+                print(f"  [ERR ] {tag} {s.name[:45]}: {res['call_error']}")
             return
 
         m["total"] += 1
@@ -348,8 +440,8 @@ def run(args: argparse.Namespace) -> Any:
         transcript: List[Dict[str, Any]] = []
         for i, t in enumerate(res["turns"], start=1):
             transcript.append({"turn": 2 * i - 1, "role": "candidate", "text": t["candidate"]})
-            tag = _trace_tag(t.get("decision"))
-            text = t["reply"] + (f"\n\n⟨trace: {tag}⟩" if tag else "")
+            ttag = _trace_tag(t.get("decision"))
+            text = t["reply"] + (f"\n\n⟨trace: {ttag}⟩" if ttag else "")
             a_turn: Dict[str, Any] = {"turn": 2 * i, "role": "assistant", "text": text,
                                       "decision": t.get("decision"), "state": t.get("state")}
             if t["end"]:
@@ -361,17 +453,21 @@ def run(args: argparse.Namespace) -> Any:
         iverdict = res.get("iverdict")
         dialogue_passed = bool(verdict.passed)
         analyzer_ok = (not acheck.has_checks) or acheck.passed
+        # Слой A детерминирован для golden (фикс. вход → фикс. Decision). В --generate вход варьируется
+        # (мультитёрн), финальный state может легитимно отличаться → analyzer НЕ гейтит, лишь сигнал.
+        analyzer_gates = acheck.has_checks and not is_gen
         leak_ok = bool(leak["passed"])
         interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
-        passed = dialogue_passed and analyzer_ok and leak_ok and interviewer_ok
+        passed = dialogue_passed and leak_ok and interviewer_ok and (analyzer_ok or not analyzer_gates)
 
         if passed:
             m["passed"] += 1
         else:
             m["failed"] += 1
         if acheck.has_checks and not acheck.passed:
-            m["analyzer_fail"] += 1
-            reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
+            m["analyzer_fail" if analyzer_gates else "analyzer_flag_generate"] += 1
+            if analyzer_gates:
+                reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
         if not leak_ok:
             m[("analyzer_leak" if leak.get("culprit") == "analyzer" else "interviewer_leak")] += 1
         if iverdict is not None and not iverdict["passed"]:
@@ -382,7 +478,7 @@ def run(args: argparse.Namespace) -> Any:
 
         # общий вердикт кейса; reason_codes атрибутированы — видно, В КОМ ошибка
         reason_codes: List[str] = []
-        if acheck.has_checks and not acheck.passed:
+        if analyzer_gates and not acheck.passed:
             reason_codes += ["[Аналитик] " + d for d in acheck.details if "OK" not in d]
         if not leak_ok:
             leak_tag = "[Аналитик] " if leak.get("culprit") == "analyzer" else "[Интервьюер] "
@@ -393,8 +489,8 @@ def run(args: argparse.Namespace) -> Any:
 
         case_checks: List[Dict[str, Any]] = []
         if acheck.has_checks:
-            case_checks.append({"rule": "Аналитик: инварианты Decision", "passed": acheck.passed,
-                                "detail": "; ".join(acheck.details)})
+            a_rule = "Аналитик: инварианты Decision" + ("" if not is_gen else " (сигнал, generate)")
+            case_checks.append({"rule": a_rule, "passed": acheck.passed, "detail": "; ".join(acheck.details)})
         case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
                             "detail": "; ".join(leak["details"])})
         if iverdict is not None:
@@ -410,15 +506,21 @@ def run(args: argparse.Namespace) -> Any:
                      "passed": passed, "reason_codes": reason_codes[:12], "comment": verdict.comment},
         ))
         if not args.quiet:
-            a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else " A:FAIL")
+            a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else (" A:FAIL" if analyzer_gates else " A:flag"))
             b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
-            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:38]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}{b_tag}")
+            fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
+            print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:36]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}{b_tag}" + (f" fb={fb}" if fb else ""))
 
-    def _work(sc: Scenario) -> Dict[str, Any]:
-        return _process(sc, client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
-                        judge=judge, ijudge=ijudge, max_examples=args.max_examples, vacancies=vacancies)
+    if args.generate:
+        def _work(it: Any) -> Dict[str, Any]:
+            return _process_generate(it, client=client, analyzer_client=analyzer_client,
+                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge, **gen_setup)
+    else:
+        def _work(it: Any) -> Dict[str, Any]:
+            return _process(it, client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
+                            judge=judge, ijudge=ijudge, max_examples=args.max_examples, vacancies=vacancies)
 
-    outcome = run_cases(list(selected), work=_work, fold=_fold, max_workers=max(1, args.workers),
+    outcome = run_cases(list(work_items), work=_work, fold=_fold, max_workers=max(1, args.workers),
                         checkpoint_every=args.checkpoint_every, on_checkpoint=_flush,
                         on_interrupt=lambda: print("\n[interrupted] сохраняю частичный отчёт...") if not args.quiet else None)
 
@@ -427,7 +529,7 @@ def run(args: argparse.Namespace) -> Any:
         import json as _json
         sm = _json.loads(Path(metrics_path).read_text(encoding="utf-8"))["summary"]
         tag = "partial" if outcome.interrupted else "summary"
-        print(f"[{tag}] scenarios={sm['total']} passed={sm['passed']} failed={sm['failed']} errors(infra)={sm['errors']} done={outcome.done}/{len(selected)}")
+        print(f"[{tag}] cases={sm['total']} passed={sm['passed']} failed={sm['failed']} errors(infra)={sm['errors']} done={outcome.done}/{len(work_items)}")
         print(f"[done] metrics -> {metrics_path}")
         print(f"[done] review  -> {Path(cases_path).with_name(f'{RUNNER}_{run_id}.review.md')}")
     return {"metrics": metrics_path, "cases": cases_path}
