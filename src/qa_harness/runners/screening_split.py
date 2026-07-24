@@ -91,7 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offline", action="store_true", help="Плумбинг: сценарии + реплики + санити чистого домена, без сети.")
     p.add_argument("--analyzer-version", default=None, metavar="vN", help="Версия screening_analyzer в пакете prompts (иначе pointer.yaml active).")
     p.add_argument("--interviewer-version", default=None, metavar="vN", help="Версия screening_interviewer (иначе pointer.yaml active).")
-    p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолч. {DEFAULT_EVAL_MODEL}).")
+    p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель судей диалога/Интервьюера (по умолч. {DEFAULT_EVAL_MODEL}).")
+    p.add_argument("--no-interviewer-judge", action="store_true", help="Отключить LLM-судью Интервьюера (слой B — только детерминированный leak-scan).")
     p.add_argument("--vacancies", type=Path, default=None, help="YAML пер-сценарного контекста вакансии (по умолч. набор монолита).")
     p.add_argument("--checks", type=Path, default=None, help="YAML инвариантов Decision Аналитика (по умолч. scenario_checks.yaml).")
     p.add_argument("--workers", type=int, default=3, help="Параллельных сценариев (каждый — живой разговор).")
@@ -140,18 +141,18 @@ def _trace_tag(decision: dict | None) -> str:
 
 # ── golden-прогон одного сценария: split-разговор → судья диалога ────────────────
 def _process(scenario: Scenario, *, client: Any, analyzer_client: Any, interviewer_spec: Any,
-             judge: Any, max_examples: int, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
-    res: Dict[str, Any] = {"scenario": scenario, "turns": [], "verdict": None,
-                           "judge_usage": None, "call_error": None}
+             judge: Any, ijudge: Any, max_examples: int, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+    res: Dict[str, Any] = {"scenario": scenario, "turns": [], "verdict": None, "judge_usage": None,
+                           "leak": None, "iverdict": None, "ijudge_usage": None, "call_error": None}
     candidate_turns = extract_candidate_examples(scenario.examples_raw, max_examples)
     if not candidate_turns:
         res["call_error"] = "no_candidate_examples"
         return res
+    vinfo = vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO)
     try:
         conv = sp.SplitConversation(
             client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
-            vacancy_info=vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO),
-            recruiter_name=DEFAULT_RECRUITER_NAME, candidate_name="Кандидат")
+            vacancy_info=vinfo, recruiter_name=DEFAULT_RECRUITER_NAME, candidate_name="Кандидат")
         conv.start()
     except Exception as e:  # noqa: BLE001
         res["call_error"] = f"conversation:{type(e).__name__}:{e}"
@@ -169,6 +170,23 @@ def _process(scenario: Scenario, *, client: Any, analyzer_client: Any, interview
         if result.conversation_end:
             break
     _judge_into(res, judge, scenario)
+    if res["call_error"]:  # инфра-сбой судьи диалога — слой B не считаем
+        return res
+
+    # --- слой B: утечка секрета (детерминированно) + судья Интервьюера (LLM) ---
+    leak = sp.leak_scan(res["turns"], vinfo)
+    res["leak"] = {"passed": leak.passed, "details": leak.details, "culprit": leak.culprit}
+    if ijudge is not None:
+        pairs = [{"turn": i, "instruction": (t.get("decision") or {}).get("instruction") or "", "message": t["reply"]}
+                 for i, t in enumerate(res["turns"], 1)
+                 if isinstance(t.get("decision"), dict) and t["decision"].get("next_action") == "ask"]
+        if pairs:
+            try:
+                iverdict, iusage = ijudge.evaluate(pairs)
+                res["iverdict"] = {"passed": iverdict.passed, "violations": iverdict.violations, "comment": iverdict.comment}
+                res["ijudge_usage"] = iusage
+            except Exception as e:  # noqa: BLE001 — судья Интервьюера не критичен для прогона
+                res["iverdict"] = {"passed": True, "violations": [], "comment": f"судья Интервьюера недоступен: {type(e).__name__}"}
     return res
 
 
@@ -268,6 +286,8 @@ def run(args: argparse.Namespace) -> Any:
     interviewer_spec = load_local_spec(INTERVIEWER_COMPONENT, i_ver)
     a_spec = analyzer_client.spec
     judge = ScenarioJudge(ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
+    ijudge = None if args.no_interviewer_judge else sp.InterviewerJudge(
+        ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
     vacancies = load_vacancies(args.vacancies or DEFAULT_VACANCIES)
     checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
 
@@ -309,6 +329,7 @@ def run(args: argparse.Namespace) -> Any:
         for t in res["turns"]:
             accumulate_usage(usage_bucket, t.get("usage"))
         accumulate_usage(usage_bucket, res["judge_usage"])
+        accumulate_usage(usage_bucket, res.get("ijudge_usage"))
         cid = f"scenario:{s.index}:{s.name[:40]}"
 
         if res["call_error"] == "no_candidate_examples":
@@ -334,11 +355,15 @@ def run(args: argparse.Namespace) -> Any:
             if t["end"]:
                 a_turn["ended"] = True
             transcript.append(a_turn)
-        # --- слой A: детерминированные инварианты Decision Аналитика ---
+        # --- слой A (Аналитик, детерминированно) + слой B (Интервьюер: leak + LLM-судья) ---
         acheck = sp.evaluate_analyzer(s.index, res["turns"], checks_by_index)
+        leak = res.get("leak") or {"passed": True, "details": [], "culprit": None}
+        iverdict = res.get("iverdict")
         dialogue_passed = bool(verdict.passed)
         analyzer_ok = (not acheck.has_checks) or acheck.passed
-        passed = dialogue_passed and analyzer_ok  # общий вердикт = диалог И Аналитик
+        leak_ok = bool(leak["passed"])
+        interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
+        passed = dialogue_passed and analyzer_ok and leak_ok and interviewer_ok
 
         if passed:
             m["passed"] += 1
@@ -347,33 +372,51 @@ def run(args: argparse.Namespace) -> Any:
         if acheck.has_checks and not acheck.passed:
             m["analyzer_fail"] += 1
             reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
+        if not leak_ok:
+            m[("analyzer_leak" if leak.get("culprit") == "analyzer" else "interviewer_leak")] += 1
+        if iverdict is not None and not iverdict["passed"]:
+            m["interviewer_fail"] += 1
         if not dialogue_passed:
             for v in verdict.violations[:6]:
                 reasons[v[:60]] += 1
 
-        # вердикт кейса = общий; reason_codes атрибутированы (Аналитик / диалог)
+        # общий вердикт кейса; reason_codes атрибутированы — видно, В КОМ ошибка
         reason_codes: List[str] = []
         if acheck.has_checks and not acheck.passed:
             reason_codes += ["[Аналитик] " + d for d in acheck.details if "OK" not in d]
-        reason_codes += list(verdict.violations[:8])
-        case_checks = ([{"rule": "Аналитик: инварианты Decision", "passed": acheck.passed,
-                         "detail": "; ".join(acheck.details)}] if acheck.has_checks else None)
+        if not leak_ok:
+            leak_tag = "[Аналитик] " if leak.get("culprit") == "analyzer" else "[Интервьюер] "
+            reason_codes += [leak_tag + d for d in leak["details"]]
+        if iverdict is not None and not iverdict["passed"]:
+            reason_codes += ["[Интервьюер] " + v for v in iverdict["violations"][:4]]
+        reason_codes += list(verdict.violations[:6])
+
+        case_checks: List[Dict[str, Any]] = []
+        if acheck.has_checks:
+            case_checks.append({"rule": "Аналитик: инварианты Decision", "passed": acheck.passed,
+                                "detail": "; ".join(acheck.details)})
+        case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
+                            "detail": "; ".join(leak["details"])})
+        if iverdict is not None:
+            case_checks.append({"rule": "Интервьюер: верность инструкции (LLM)", "passed": bool(iverdict["passed"]),
+                                "detail": iverdict["comment"] or "; ".join(iverdict["violations"][:4])})
 
         rb.add_case(CaseRecord(
             case_id=cid, source="suite", passed=passed,
             inputs={"criterion": s.expected_behavior or "expected behavior per scenario",
                     "scenario": {"index": s.index, "name": s.name, "description": s.description}},
             transcript=transcript, checks=case_checks,
-            verdict={"evaluator": "screening_split (диалог+Аналитик)", "model": args.eval_model,
-                     "passed": passed, "reason_codes": reason_codes[:10], "comment": verdict.comment},
+            verdict={"evaluator": "screening_split (диалог+Аналитик+Интервьюер)", "model": args.eval_model,
+                     "passed": passed, "reason_codes": reason_codes[:12], "comment": verdict.comment},
         ))
         if not args.quiet:
             a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else " A:FAIL")
-            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:40]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}")
+            b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
+            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:38]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}{b_tag}")
 
     def _work(sc: Scenario) -> Dict[str, Any]:
         return _process(sc, client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
-                        judge=judge, max_examples=args.max_examples, vacancies=vacancies)
+                        judge=judge, ijudge=ijudge, max_examples=args.max_examples, vacancies=vacancies)
 
     outcome = run_cases(list(selected), work=_work, fold=_fold, max_workers=max(1, args.workers),
                         checkpoint_every=args.checkpoint_every, on_checkpoint=_flush,

@@ -19,6 +19,7 @@ from .decision import REQUIRED_FIELDS, parse_and_validate
 from .engine import ConversationResult, ScreeningSplitEngine
 from .errors import AssistantError
 from .interviewer import ScreeningInterviewer
+from .interviewer_judge import InterviewerJudge, InterviewerVerdict
 from .scripts import is_known, is_terminal, render_script
 from .state import apply_updates, init_state, is_complete
 from .store import InMemoryStateStore
@@ -43,6 +44,9 @@ __all__ = [
     "load_checks",
     "CheckResult",
     "LeakResult",
+    # судья Интервьюера (слой B, семантика)
+    "InterviewerJudge",
+    "InterviewerVerdict",
     # чистые примитивы (state/scripts/context)
     "init_state",
     "apply_updates",
