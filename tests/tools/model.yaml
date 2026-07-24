@@ -40,6 +40,16 @@ screening_autofill:
   seed: 1234
   local_component: screening_autofill_prompt
 
+# --- split-скрининг (два промпта из пакета `prompts`). LOCAL-ONLY: stored-эквивалента
+# на platform.openai.com нет, поэтому prompt_id не задаём — раннер screening_split берёт
+# тела/схему из пакета prompts по local_component (см. docs/LOCAL_PROMPTS.md). ---
+screening_analyzer:
+  seed: 1234
+  local_component: screening_analyzer
+screening_interviewer:
+  seed: 1234
+  local_component: screening_interviewer
+
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
   prompt_version: 9
