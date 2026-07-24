@@ -13,6 +13,7 @@ in-memory стор вместо Mongo и QA-наблюдаемость (last_dec
 
 from .analyzer import ScreeningAnalyzer
 from .context import build_context, build_interviewer_seed, candidate_source, salary_display
+from .conversation import SplitConversation, TurnResult
 from .decision import REQUIRED_FIELDS, parse_and_validate
 from .engine import ConversationResult, ScreeningSplitEngine
 from .errors import AssistantError
@@ -26,6 +27,8 @@ __all__ = [
     "ScreeningSplitEngine",
     "ConversationResult",
     "InMemoryStateStore",
+    "SplitConversation",
+    "TurnResult",
     # роли
     "ScreeningAnalyzer",
     "ScreeningInterviewer",
