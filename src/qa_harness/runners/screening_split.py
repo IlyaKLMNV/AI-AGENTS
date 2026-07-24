@@ -61,6 +61,7 @@ DEFAULT_CSV = FIXTURES / "screening_split" / "scenarios.csv"
 # Пер-сценарный контекст вакансии (формат/локация/вилка/скрытость) — переиспользуем набор
 # монолита: index в split-CSV совпадает с базовым (1..64), кейс 65 берёт DEFAULT_VACANCY_INFO.
 DEFAULT_VACANCIES = FIXTURES / "generation" / "screening_scenarios" / "scenario_vacancies.yaml"
+DEFAULT_CHECKS = FIXTURES / "screening_split" / "scenario_checks.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "screening_split"
 ANALYZER_COMPONENT = "screening_analyzer"
@@ -92,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interviewer-version", default=None, metavar="vN", help="Версия screening_interviewer (иначе pointer.yaml active).")
     p.add_argument("--eval-model", default=DEFAULT_EVAL_MODEL, help=f"Модель ScenarioJudge (по умолч. {DEFAULT_EVAL_MODEL}).")
     p.add_argument("--vacancies", type=Path, default=None, help="YAML пер-сценарного контекста вакансии (по умолч. набор монолита).")
+    p.add_argument("--checks", type=Path, default=None, help="YAML инвариантов Decision Аналитика (по умолч. scenario_checks.yaml).")
     p.add_argument("--workers", type=int, default=3, help="Параллельных сценариев (каждый — живой разговор).")
     p.add_argument("--step1-timeout", type=int, default=90)
     p.add_argument("--checkpoint-every", type=int, default=10)
@@ -267,6 +269,7 @@ def run(args: argparse.Namespace) -> Any:
     a_spec = analyzer_client.spec
     judge = ScenarioJudge(ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
     vacancies = load_vacancies(args.vacancies or DEFAULT_VACANCIES)
+    checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
 
     selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
                        runnable_only=True, max_examples=args.max_examples)
@@ -331,24 +334,42 @@ def run(args: argparse.Namespace) -> Any:
             if t["end"]:
                 a_turn["ended"] = True
             transcript.append(a_turn)
-        passed = bool(verdict.passed)
+        # --- слой A: детерминированные инварианты Decision Аналитика ---
+        acheck = sp.evaluate_analyzer(s.index, res["turns"], checks_by_index)
+        dialogue_passed = bool(verdict.passed)
+        analyzer_ok = (not acheck.has_checks) or acheck.passed
+        passed = dialogue_passed and analyzer_ok  # общий вердикт = диалог И Аналитик
+
         if passed:
             m["passed"] += 1
         else:
             m["failed"] += 1
+        if acheck.has_checks and not acheck.passed:
+            m["analyzer_fail"] += 1
+            reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
+        if not dialogue_passed:
             for v in verdict.violations[:6]:
                 reasons[v[:60]] += 1
+
+        # вердикт кейса = общий; reason_codes атрибутированы (Аналитик / диалог)
+        reason_codes: List[str] = []
+        if acheck.has_checks and not acheck.passed:
+            reason_codes += ["[Аналитик] " + d for d in acheck.details if "OK" not in d]
+        reason_codes += list(verdict.violations[:8])
+        case_checks = ([{"rule": "Аналитик: инварианты Decision", "passed": acheck.passed,
+                         "detail": "; ".join(acheck.details)}] if acheck.has_checks else None)
 
         rb.add_case(CaseRecord(
             case_id=cid, source="suite", passed=passed,
             inputs={"criterion": s.expected_behavior or "expected behavior per scenario",
                     "scenario": {"index": s.index, "name": s.name, "description": s.description}},
-            transcript=transcript,
-            verdict={"evaluator": "screening_split_dialogue_judge", "model": args.eval_model,
-                     "passed": passed, "reason_codes": verdict.violations[:8], "comment": verdict.comment},
+            transcript=transcript, checks=case_checks,
+            verdict={"evaluator": "screening_split (диалог+Аналитик)", "model": args.eval_model,
+                     "passed": passed, "reason_codes": reason_codes[:10], "comment": verdict.comment},
         ))
         if not args.quiet:
-            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:42]} turns={len(res['turns'])} viol={len(verdict.violations)}")
+            a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else " A:FAIL")
+            print(f"  [{'ok ' if passed else 'MISS'}] {s.index} {s.name[:40]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}")
 
     def _work(sc: Scenario) -> Dict[str, Any]:
         return _process(sc, client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,

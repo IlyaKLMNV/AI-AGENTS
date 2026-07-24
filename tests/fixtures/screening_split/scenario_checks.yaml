@@ -1,0 +1,54 @@
+# Детерминированные инварианты Decision/state Аналитика (слой A) по трассе split-хода.
+# Ассертим ТОЛЬКО то, что зарплатное правило реально фиксирует (семантические якоря),
+# не весь Decision — устойчиво к легитимной вариативности. index = номер строки в
+# tests/fixtures/screening_split/scenarios.csv (совпадает с базовым golden монолита; 65 — новый).
+#
+# Поля проверок:
+#   expect_salary / expect_format   — статус в ИТОГОВОМ state (closed|pending|n/a)
+#   expect_script_key               — точный script_key сработал хоть раз (напр. KO_SALARY)
+#   expect_script_prefix            — сработал script_key с префиксом
+#   expect_no_script_prefix         — НИ ОДИН script_key с префиксом не сработал (напр. KO)
+#   expect_asking                   — на каком-то ходу Аналитик ставил asking=<val>
+#   expect_end                      — завершился ли диалог (bool)
+#
+# Многие зарплатные сценарии без реплик-кандидата в CSV → в golden не гоняются, проверки
+# сработают в режиме --generate (Этап 4). Кейс 65 гоняется в golden (есть реплика).
+
+scenarios:
+  # --- ЗАКРЫТЬ зарплату (конкретная сумма, без KO) ---
+  - index: 32          # «Зарплатные ожидания ниже вилки» → closed молча, не отказ
+    expect_salary: closed
+    expect_no_script_prefix: KO
+  - index: 42          # «сумма в пределах вилки» → closed, без лишнего уточнения/KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+  - index: 44          # «диапазон в пределах вилки» → closed по верхней границе, без KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+
+  # --- KO по зарплате (конкретная сумма ВЫШЕ максимума) ---
+  - index: 43          # «сумма выше вилки» → KO_SALARY + завершение
+    expect_script_key: KO_SALARY
+    expect_end: true
+
+  # --- УТОЧНИТЬ (неоднозначная сумма): pending + asking=salary, БЕЗ KO ---
+  - index: 45          # «без единиц: двузначное число» → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+  - index: 46          # «без единиц: двузначный диапазон» → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+  - index: 47          # «почасовая ставка» → уточнить (не сравнивать с месячной вилкой)
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+  - index: 48          # «валюта» → уточнить (не конвертировать грубо)
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+  - index: 65          # НОВЫЙ: «от 260 на руки» — голое число без единиц/периода → УТОЧНИТЬ,
+    expect_salary: pending          # правило «без единиц» важнее «от X закрываем»
+    expect_asking: salary
+    expect_no_script_prefix: KO

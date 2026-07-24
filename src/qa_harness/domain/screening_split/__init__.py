@@ -12,6 +12,7 @@ in-memory стор вместо Mongo и QA-наблюдаемость (last_dec
 """
 
 from .analyzer import ScreeningAnalyzer
+from .checks import CheckResult, LeakResult, evaluate_analyzer, leak_scan, load_checks
 from .context import build_context, build_interviewer_seed, candidate_source, salary_display
 from .conversation import SplitConversation, TurnResult
 from .decision import REQUIRED_FIELDS, parse_and_validate
@@ -36,6 +37,12 @@ __all__ = [
     "parse_and_validate",
     "REQUIRED_FIELDS",
     "AssistantError",
+    # детерминированные проверки (слой A/B)
+    "evaluate_analyzer",
+    "leak_scan",
+    "load_checks",
+    "CheckResult",
+    "LeakResult",
     # чистые примитивы (state/scripts/context)
     "init_state",
     "apply_updates",
