@@ -144,3 +144,55 @@ scenarios:
   - index: 55          # chain: пауза после приоритетов → event=pause, не END
     expect_event: pause
     expect_end: false
+
+  # ─────────── Терминальные триггеры → нужный STOP_* + завершение ───────────
+  - index: 10          # за пределами РФ
+    expect_script_key: STOP_ABROAD
+    expect_end: true
+  - index: 11          # глобальное несоответствие профиля
+    expect_script_key: STOP_NO_EXPERIENCE
+    expect_end: true
+  - index: 13          # прямой отказ/нет интереса
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 14          # не беспокоить/удалить контакт
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 15          # уже трудоустроен
+    expect_script_key: STOP_ALREADY_EMPLOYED
+    expect_end: true
+  - index: 16          # просьба денег
+    expect_script_key: STOP_MONEY_REQUEST
+    expect_end: true
+  - index: 18          # ошибка в имени / не тот адресат
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 19          # написали в выходной
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 21          # написали другому человеку
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 38          # смерть/утрата
+    expect_script_key: STOP_GRIEF
+    expect_end: true
+
+  # ─────────── Повторные триггеры (порог) ───────────
+  - index: 27          # 2-й раз «вы бот?» → STOP_BOT_REPEAT
+    expect_script_key: STOP_BOT_REPEAT
+    expect_end: true
+  - index: 30          # упорно требует нашу вилку → STOP_SALARY_DEMAND
+    expect_script_key: STOP_SALARY_DEMAND
+    expect_end: true
+
+  # ─────────── Нетерминальные (диалог НЕ завершать) ───────────
+  - index: 12          # спрашивает нашу зарплату (1-й раз) → спросить его ожидания, не END
+    expect_asking: salary
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 20          # исправление источника резюме → REPLY_CONTACT_SOURCE, не END
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+  - index: 22          # попытка назначить звонок → отказать и продолжить, не END
+    expect_no_script_prefix: STOP
+    expect_end: false
