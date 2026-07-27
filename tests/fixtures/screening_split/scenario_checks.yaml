@@ -40,9 +40,10 @@ scenarios:
     expect_end: false
 
   # ─────────── ЗАКРЫТЬ зарплату (конкретная сумма, без KO, диалог продолжается) ───────────
-  - index: 32          # ниже вилки → closed молча, не отказ
+  - index: 32          # ниже вилки → closed молча, не отказ, продолжить
     expect_salary: closed
     expect_no_script_prefix: KO
+    expect_end: false
   - index: 42          # в пределах вилки → closed, без лишнего уточнения/KO
     expect_salary: closed
     expect_no_script_prefix: KO
@@ -196,3 +197,30 @@ scenarios:
   - index: 22          # попытка назначить звонок → отказать и продолжить, не END
     expect_no_script_prefix: STOP
     expect_end: false
+
+  # ─────────── Вопрос о компании / ссылке → ответить и продолжить (не завершать) ───────────
+  - index: 23          # скрытый поиск → не раскрывать, продолжить
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 24          # скрытый поиск, повторно → не раскрывать, продолжить
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 28          # открытый поиск → ответить фактами, продолжить
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 31          # открытый поиск → назвать компанию, продолжить
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 62          # ссылка на вакансию → дать ссылку, продолжить
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Нет опыта по ОДНОМУ навыку → продолжить (split-корректно; не STOP_NO_EXPERIENCE) ───────────
+  - index: 25
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── «Уже писали раньше» — спорный (монолит ждал END); фиксируем прод-поведение split ───────────
+  - index: 17
+    expect_script_prefix: STOP
+    expect_end: true
