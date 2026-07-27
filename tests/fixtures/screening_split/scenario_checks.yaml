@@ -1,54 +1,90 @@
 # Детерминированные инварианты Decision/state Аналитика (слой A) по трассе split-хода.
-# Ассертим ТОЛЬКО то, что зарплатное правило реально фиксирует (семантические якоря),
-# не весь Decision — устойчиво к легитимной вариативности. index = номер строки в
-# tests/fixtures/screening_split/scenarios.csv (совпадает с базовым golden монолита; 65 — новый).
+# index = номер строки в scenarios.csv. Сценарий с записью здесь + скриптовым входом
+# (candidate_inputs.yaml) — ДЕТЕРМИНИРОВАННЫЙ гейт: проверяем трассу, LLM-судья диалога
+# (ScenarioJudge) НЕ зовётся (это и есть перевод с монолит-`expected` на машинные инварианты).
 #
-# Поля проверок:
-#   expect_salary / expect_format   — статус в ИТОГОВОМ state (closed|pending|n/a)
-#   expect_script_key               — точный script_key сработал хоть раз (напр. KO_SALARY)
-#   expect_script_prefix            — сработал script_key с префиксом
-#   expect_no_script_prefix         — НИ ОДИН script_key с префиксом не сработал (напр. KO)
-#   expect_asking                   — на каком-то ходу Аналитик ставил asking=<val>
-#   expect_end                      — завершился ли диалог (bool)
-#
-# Многие зарплатные сценарии без реплик-кандидата в CSV → в golden не гоняются, проверки
-# сработают в режиме --generate (Этап 4). Кейс 65 гоняется в golden (есть реплика).
+# Поля: expect_salary/format (итоговый state) · expect_script_key (точный, сработал) ·
+#       expect_script_prefix / expect_no_script_prefix · expect_asking (был на к.-л. ходу) ·
+#       expect_end (завершился ли диалог).
 
 scenarios:
-  # --- ЗАКРЫТЬ зарплату (конкретная сумма, без KO) ---
-  - index: 32          # «Зарплатные ожидания ниже вилки» → closed молча, не отказ
-    expect_salary: closed
-    expect_no_script_prefix: KO
-  - index: 42          # «сумма в пределах вилки» → closed, без лишнего уточнения/KO
-    expect_salary: closed
-    expect_no_script_prefix: KO
-  - index: 44          # «диапазон в пределах вилки» → closed по верхней границе, без KO
-    expect_salary: closed
-    expect_no_script_prefix: KO
+  # ─────────── Триггеры (терминальные) → нужный STOP_*/KO_* + завершение ───────────
+  - index: 1   # политика
+    expect_script_key: STOP_POLITICS
+    expect_end: true
+  - index: 2   # агрессия/оскорбления
+    expect_script_key: STOP_ABUSE
+    expect_end: true
+  - index: 3   # бессмыслица (2-й раз → repeat)
+    expect_script_key: STOP_GIBBERISH_REPEAT
+    expect_end: true
+  - index: 4   # иностранный язык
+    expect_script_key: STOP_FOREIGN_LANG
+    expect_end: true
+  - index: 5   # флирт
+    expect_script_key: STOP_FLIRT
+    expect_end: true
+  - index: 6   # неформальное/абсурд (2-й раз → repeat)
+    expect_script_key: STOP_GIBBERISH_REPEAT
+    expect_end: true
+  - index: 7   # мошенничество/легитимность
+    expect_script_key: STOP_FRAUD_CHECK
+    expect_end: true
+  - index: 9   # критика вакансии/компании/процесса
+    expect_script_key: STOP_CRITICISM
+    expect_end: true
 
-  # --- KO по зарплате (конкретная сумма ВЫШЕ максимума) ---
-  - index: 43          # «сумма выше вилки» → KO_SALARY + завершение
+  # ─────────── Нетерминальный триггер ───────────
+  - index: 8   # источник контакта → скрипт, НЕ завершать
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+
+  # ─────────── ЗАКРЫТЬ зарплату (конкретная сумма, без KO, диалог продолжается) ───────────
+  - index: 32          # ниже вилки → closed молча, не отказ
+    expect_salary: closed
+    expect_no_script_prefix: KO
+  - index: 42          # в пределах вилки → closed, без лишнего уточнения/KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 44          # диапазон в пределах вилки → closed по верхней, без KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+
+  # ─────────── KO по зарплате (конкретная сумма ВЫШЕ максимума) ───────────
+  - index: 43          # сумма выше вилки → KO_SALARY + завершение
     expect_script_key: KO_SALARY
     expect_end: true
 
-  # --- УТОЧНИТЬ (неоднозначная сумма): pending + asking=salary, БЕЗ KO ---
-  - index: 45          # «без единиц: двузначное число» → уточнить
+  # ─────────── УТОЧНИТЬ (неоднозначная сумма): pending + asking=salary, БЕЗ KO, без завершения ───────────
+  - index: 45          # без единиц: двузначное число
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
-  - index: 46          # «без единиц: двузначный диапазон» → уточнить
+    expect_end: false
+  - index: 46          # без единиц: двузначный диапазон
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
-  - index: 47          # «почасовая ставка» → уточнить (не сравнивать с месячной вилкой)
+    expect_end: false
+  - index: 47          # почасовая ставка
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
-  - index: 48          # «валюта» → уточнить (не конвертировать грубо)
+    expect_end: false
+  - index: 48          # валюта
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
-  - index: 65          # НОВЫЙ: «от 260 на руки» — голое число без единиц/периода → УТОЧНИТЬ,
-    expect_salary: pending          # правило «без единиц» важнее «от X закрываем»
+    expect_end: false
+  - index: 61          # gross/процент сверху → уточнить net, не KO
+    expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
+    expect_end: false
+  - index: 65          # «от 260» голым числом без единиц → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false

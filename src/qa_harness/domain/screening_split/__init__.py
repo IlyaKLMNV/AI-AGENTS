@@ -12,6 +12,7 @@ in-memory стор вместо Mongo и QA-наблюдаемость (last_dec
 """
 
 from .analyzer import ScreeningAnalyzer
+from .candidate_script import build_scripted_turns, load_candidate_inputs
 from .checks import CheckResult, LeakResult, evaluate_analyzer, leak_scan, load_checks
 from .context import build_context, build_interviewer_seed, candidate_source, salary_display
 from .conversation import SplitConversation, TurnResult
@@ -44,6 +45,9 @@ __all__ = [
     "load_checks",
     "CheckResult",
     "LeakResult",
+    # скриптовые входы кандидата (C1)
+    "load_candidate_inputs",
+    "build_scripted_turns",
     # судья Интервьюера (слой B, семантика)
     "InterviewerJudge",
     "InterviewerVerdict",

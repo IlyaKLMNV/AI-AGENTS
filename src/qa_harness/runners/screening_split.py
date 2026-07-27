@@ -68,6 +68,7 @@ DEFAULT_VACANCIES = FIXTURES / "generation" / "screening_scenarios" / "scenario_
 # Констрейнты генерации кандидата — переиспользуем набор монолита (index совпадает; кейс 65 → дефолт).
 DEFAULT_CONSTRAINTS = FIXTURES / "generation" / "screening_scenarios" / "constraints.yaml"
 DEFAULT_CHECKS = FIXTURES / "screening_split" / "scenario_checks.yaml"
+DEFAULT_INPUTS = FIXTURES / "screening_split" / "candidate_inputs.yaml"
 DEFAULT_OUT_DIR = REPO_ROOT / "tests" / "reports_v2"
 RUNNER = "screening_split"
 ANALYZER_COMPONENT = "screening_analyzer"
@@ -112,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-interviewer-judge", action="store_true", help="Отключить LLM-судью Интервьюера (слой B — только детерминированный leak-scan).")
     p.add_argument("--vacancies", type=Path, default=None, help="YAML пер-сценарного контекста вакансии (по умолч. набор монолита).")
     p.add_argument("--checks", type=Path, default=None, help="YAML инвариантов Decision Аналитика (по умолч. scenario_checks.yaml).")
+    p.add_argument("--candidate-inputs", type=Path, default=None, help="YAML скриптовых реплик кандидата (по умолч. candidate_inputs.yaml).")
     p.add_argument("--workers", type=int, default=3, help="Параллельных сценариев (каждый — живой разговор).")
     p.add_argument("--step1-timeout", type=int, default=90)
     p.add_argument("--checkpoint-every", type=int, default=10)
@@ -124,14 +126,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _select(scenarios: List[Scenario], indices_raw: str | None, sample: int, seed: Any,
-            *, runnable_only: bool, max_examples: int) -> List[Scenario]:
+            *, runnable_only: bool, max_examples: int, scripted_indices: set | None = None) -> List[Scenario]:
     if indices_raw:  # точечный выбор — как просили, без фильтра
         wanted = parse_scenario_indices(indices_raw)
         by_idx = {s.index: s for s in scenarios}
         return [by_idx[i] for i in wanted if i in by_idx]
     pool = scenarios
-    if runnable_only:  # онлайн golden: гонять можно лишь сценарии с примерами диалога кандидата
-        pool = [s for s in scenarios if extract_candidate_examples(s.examples_raw, max_examples)]
+    scripted = scripted_indices or set()
+    if runnable_only:  # онлайн golden: гоняем сценарии с примерами ИЛИ со скриптовым входом
+        pool = [s for s in scenarios if s.index in scripted or extract_candidate_examples(s.examples_raw, max_examples)]
     if sample and sample > 0:
         return random.Random(seed).sample(pool, min(sample, len(pool)))
     return pool
@@ -156,16 +159,18 @@ def _trace_tag(decision: dict | None) -> str:
     return " · ".join(parts)
 
 
-# ── golden-прогон одного сценария: split-разговор → судья диалога ────────────────
-def _process(scenario: Scenario, *, client: Any, analyzer_client: Any, interviewer_spec: Any,
-             judge: Any, ijudge: Any, max_examples: int, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
-    res: Dict[str, Any] = {"scenario": scenario, "turns": [], "verdict": None, "judge_usage": None,
-                           "leak": None, "iverdict": None, "ijudge_usage": None, "call_error": None}
-    candidate_turns = extract_candidate_examples(scenario.examples_raw, max_examples)
+# ── прогон одного сценария на ФИКСИРОВАННЫХ репликах (golden из CSV / скриптовые) ──
+# gate_mode: "analyzer" — детерминированный гейт по трассе (ScenarioJudge НЕ зовём) ·
+#            "dialogue" — гейт LLM-судьёй диалога (для сценариев без машинных инвариантов).
+def _run_fixed_turns(scenario: Scenario, variant: int, candidate_turns: List[str], *, client: Any,
+                     analyzer_client: Any, interviewer_spec: Any, judge: Any, ijudge: Any,
+                     vinfo: Dict[str, Any], gate_mode: str) -> Dict[str, Any]:
+    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "turns": [], "verdict": None,
+                           "judge_usage": None, "leak": None, "iverdict": None, "ijudge_usage": None,
+                           "call_error": None, "gate": gate_mode, "gen_sources": []}
     if not candidate_turns:
         res["call_error"] = "no_candidate_examples"
         return res
-    vinfo = vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO)
     try:
         conv = sp.SplitConversation(
             client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
@@ -186,9 +191,10 @@ def _process(scenario: Scenario, *, client: Any, analyzer_client: Any, interview
                              "decision": tr.get("decision"), "state": tr.get("state")})
         if result.conversation_end:
             break
-    _judge_into(res, judge, scenario)
-    if res["call_error"]:  # инфра-сбой судьи диалога — слой B не считаем
-        return res
+    if gate_mode == "dialogue":
+        _judge_into(res, judge, scenario)
+        if res["call_error"]:  # инфра-сбой судьи диалога — слой B не считаем
+            return res
     _eval_layer_b(res, vinfo, ijudge)
     return res
 
@@ -217,9 +223,9 @@ def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interview
                       gen_policy: Any, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
     """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ split-движок, затем судья+слои A/B."""
     scenario, variant = item
-    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "turns": [], "verdict": None,
-                           "judge_usage": None, "leak": None, "iverdict": None, "ijudge_usage": None,
-                           "call_error": None, "gen_sources": []}
+    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "gate": "dialogue",
+                           "turns": [], "verdict": None, "judge_usage": None, "leak": None, "iverdict": None,
+                           "ijudge_usage": None, "call_error": None, "gen_sources": []}
     vinfo = vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO)
     constraints = constraints_for(scenario, constraints_entries)
     style = sampler.at(scenario.index * 1000 + variant)  # детерминированный стиль на (сценарий, вариант)
@@ -347,10 +353,16 @@ def run(args: argparse.Namespace) -> Any:
         ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
     vacancies = load_vacancies(args.vacancies or DEFAULT_VACANCIES)
     checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
+    inputs_by_index = sp.load_candidate_inputs(args.candidate_inputs or DEFAULT_INPUTS)  # C1: скриптовые входы
 
-    # golden гоняет только сценарии с примерами; --generate разблокирует все (кандидат генерится).
+    # golden гоняет сценарии с примерами ИЛИ со скриптовым входом; --generate разблокирует все.
     selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
-                       runnable_only=not args.generate, max_examples=args.max_examples)
+                       runnable_only=not args.generate, max_examples=args.max_examples,
+                       scripted_indices=set(inputs_by_index))
+
+    n_variants = max(1, args.variants)
+    work_items: List[Any] = [(s, v) for s in selected for v in range(n_variants)]
+    n_scripted = sum(1 for s in selected if s.index in inputs_by_index)
 
     gen_setup: Dict[str, Any] = {}
     if args.generate:
@@ -364,20 +376,18 @@ def run(args: argparse.Namespace) -> Any:
             gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
             vacancies=vacancies,
         )
-        work_items: List[Any] = [(s, v) for s in selected for v in range(max(1, args.variants))]
         models = {"candidate_generator": args.gen_model, "analyzer": a_spec.model,
                   "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
-        run_args = {"mode": "generate", "scenarios": len(selected), "variants": args.variants,
+        run_args = {"mode": "generate", "scenarios": len(selected), "scripted": n_scripted, "variants": n_variants,
                     "gen_model": args.gen_model, "gen_seed": gen_seed, "max_turns": args.max_turns,
                     "eval_model": args.eval_model, "workers": args.workers}
     else:
-        work_items = list(selected)
         models = {"analyzer": a_spec.model, "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
-        run_args = {"mode": "golden", "scenarios": len(selected), "max_examples": args.max_examples,
-                    "workers": args.workers, "eval_model": args.eval_model}
+        run_args = {"mode": "golden", "scenarios": len(selected), "scripted": n_scripted, "variants": n_variants,
+                    "max_examples": args.max_examples, "workers": args.workers, "eval_model": args.eval_model}
 
-    sel_note = f"выбрано: {len(selected)}" + (f" × {max(1, args.variants)} вар. = {len(work_items)}" if args.generate else " (с примерами)")
-    print(f"Сценариев в CSV: {len(scenarios)} · {sel_note} · режим: {run_args['mode']} · CSV: {args.csv}")
+    print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} (скриптовых: {n_scripted}) × {n_variants} = "
+          f"{len(work_items)} · режим: {run_args['mode']} · CSV: {args.csv}")
     print(f"Аналитик {a_spec.version}/{a_spec.model} · Интервьюер {interviewer_spec.version}/{interviewer_spec.model} · судья {args.eval_model}"
           + (f" · генератор {args.gen_model}" if args.generate else ""))
 
@@ -436,7 +446,7 @@ def run(args: argparse.Namespace) -> Any:
             return
 
         m["total"] += 1
-        verdict = res["verdict"]
+        verdict = res.get("verdict")  # None в analyzer-gate (ScenarioJudge не звали)
         transcript: List[Dict[str, Any]] = []
         for i, t in enumerate(res["turns"], start=1):
             transcript.append({"turn": 2 * i - 1, "role": "candidate", "text": t["candidate"]})
@@ -447,18 +457,22 @@ def run(args: argparse.Namespace) -> Any:
             if t["end"]:
                 a_turn["ended"] = True
             transcript.append(a_turn)
-        # --- слой A (Аналитик, детерминированно) + слой B (Интервьюер: leak + LLM-судья) ---
+        # --- слой A (Аналитик) + слой B (Интервьюер) с учётом РЕЖИМА ГЕЙТА ---
+        # gate="analyzer": детерминированный вход+инварианты → слой A ГЕЙТИТ, ScenarioJudge не звали;
+        # gate="dialogue": вход варьируется/нет инвариантов → гейтит LLM-судья, слой A — лишь СИГНАЛ.
+        gate = res.get("gate", "dialogue")
         acheck = sp.evaluate_analyzer(s.index, res["turns"], checks_by_index)
         leak = res.get("leak") or {"passed": True, "details": [], "culprit": None}
         iverdict = res.get("iverdict")
-        dialogue_passed = bool(verdict.passed)
+        dialogue_passed = True if verdict is None else bool(verdict.passed)
+        dialogue_violations = [] if verdict is None else list(verdict.violations)
+        dialogue_comment = "" if verdict is None else verdict.comment
         analyzer_ok = (not acheck.has_checks) or acheck.passed
-        # Слой A детерминирован для golden (фикс. вход → фикс. Decision). В --generate вход варьируется
-        # (мультитёрн), финальный state может легитимно отличаться → analyzer НЕ гейтит, лишь сигнал.
-        analyzer_gates = acheck.has_checks and not is_gen
+        analyzer_gates = (gate == "analyzer") and acheck.has_checks
         leak_ok = bool(leak["passed"])
         interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
-        passed = dialogue_passed and leak_ok and interviewer_ok and (analyzer_ok or not analyzer_gates)
+        core_ok = analyzer_ok if gate == "analyzer" else dialogue_passed
+        passed = core_ok and leak_ok and interviewer_ok
 
         if passed:
             m["passed"] += 1
@@ -472,8 +486,8 @@ def run(args: argparse.Namespace) -> Any:
             m[("analyzer_leak" if leak.get("culprit") == "analyzer" else "interviewer_leak")] += 1
         if iverdict is not None and not iverdict["passed"]:
             m["interviewer_fail"] += 1
-        if not dialogue_passed:
-            for v in verdict.violations[:6]:
+        if gate == "dialogue" and not dialogue_passed:
+            for v in dialogue_violations[:6]:
                 reasons[v[:60]] += 1
 
         # общий вердикт кейса; reason_codes атрибутированы — видно, В КОМ ошибка
@@ -485,11 +499,12 @@ def run(args: argparse.Namespace) -> Any:
             reason_codes += [leak_tag + d for d in leak["details"]]
         if iverdict is not None and not iverdict["passed"]:
             reason_codes += ["[Интервьюер] " + v for v in iverdict["violations"][:4]]
-        reason_codes += list(verdict.violations[:6])
+        if gate == "dialogue":
+            reason_codes += list(dialogue_violations[:6])
 
         case_checks: List[Dict[str, Any]] = []
         if acheck.has_checks:
-            a_rule = "Аналитик: инварианты Decision" + ("" if not is_gen else " (сигнал, generate)")
+            a_rule = "Аналитик: инварианты Decision" + ("" if analyzer_gates else " (сигнал)")
             case_checks.append({"rule": a_rule, "passed": acheck.passed, "detail": "; ".join(acheck.details)})
         case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
                             "detail": "; ".join(leak["details"])})
@@ -502,23 +517,36 @@ def run(args: argparse.Namespace) -> Any:
             inputs={"criterion": s.expected_behavior or "expected behavior per scenario",
                     "scenario": {"index": s.index, "name": s.name, "description": s.description}},
             transcript=transcript, checks=case_checks,
-            verdict={"evaluator": "screening_split (диалог+Аналитик+Интервьюер)", "model": args.eval_model,
-                     "passed": passed, "reason_codes": reason_codes[:12], "comment": verdict.comment},
+            verdict={"evaluator": f"screening_split (gate:{gate})", "model": args.eval_model,
+                     "passed": passed, "reason_codes": reason_codes[:12], "comment": dialogue_comment},
         ))
         if not args.quiet:
             a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else (" A:FAIL" if analyzer_gates else " A:flag"))
             b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
             fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
-            print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:36]} turns={len(res['turns'])} viol={len(verdict.violations)}{a_tag}{b_tag}" + (f" fb={fb}" if fb else ""))
+            g = "scr" if s.index in inputs_by_index else ("gen" if is_gen else "gld")
+            print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:34]} [{g}] turns={len(res['turns'])} viol={len(dialogue_violations)}{a_tag}{b_tag}" + (f" fb={fb}" if fb else ""))
 
-    if args.generate:
-        def _work(it: Any) -> Dict[str, Any]:
-            return _process_generate(it, client=client, analyzer_client=analyzer_client,
+    def _gate_for(s: Scenario) -> str:
+        # instrumented (есть машинные инварианты) → детерминированный гейт по трассе, без ScenarioJudge
+        return "analyzer" if s.index in checks_by_index else "dialogue"
+
+    def _work(item: Any) -> Dict[str, Any]:
+        s, v = item
+        vinfo = vacancy_for(s, vacancies, DEFAULT_VACANCY_INFO)
+        if s.index in inputs_by_index:  # C1: скриптовый детерминированный вход
+            turns = sp.build_scripted_turns(inputs_by_index[s.index], vinfo, variant=v,
+                                            seed=(args.seed or 0), index=s.index)
+            return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
+                                    interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
+                                    vinfo=vinfo, gate_mode=_gate_for(s))
+        if args.generate:  # LLM-адаптивный кандидат (сценарии без скриптового рецепта)
+            return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                      interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge, **gen_setup)
-    else:
-        def _work(it: Any) -> Dict[str, Any]:
-            return _process(it, client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
-                            judge=judge, ijudge=ijudge, max_examples=args.max_examples, vacancies=vacancies)
+        turns = extract_candidate_examples(s.examples_raw, args.max_examples)  # golden: реплики из CSV
+        return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
+                                interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
+                                vinfo=vinfo, gate_mode=_gate_for(s))
 
     outcome = run_cases(list(work_items), work=_work, fold=_fold, max_workers=max(1, args.workers),
                         checkpoint_every=args.checkpoint_every, on_checkpoint=_flush,
