@@ -62,6 +62,24 @@ def _askings(turns: List[Dict[str, Any]]) -> List[str]:
     return out
 
 
+def _events(turns: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    for t in turns:
+        dec = t.get("decision") if isinstance(t, dict) else None
+        ev = dec.get("event") if isinstance(dec, dict) else None
+        if ev:
+            out.append(ev)
+    return out
+
+
+def _last_asking(turns: List[Dict[str, Any]]) -> Any:
+    for t in reversed(turns):
+        dec = t.get("decision") if isinstance(t, dict) else None
+        if isinstance(dec, dict):
+            return dec.get("asking")
+    return None
+
+
 def _final_state(turns: List[Dict[str, Any]]) -> Dict[str, Any]:
     for t in reversed(turns):
         st = t.get("state") if isinstance(t, dict) else None
@@ -123,6 +141,21 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         ok = ok and hit
         askings_str = ", ".join(askings) or "—"
         details.append(f"asking={want} (хоть раз): {'OK' if hit else 'не было (были: ' + askings_str + ')'}")
+
+    if spec.get("expect_last_asking"):
+        want = spec["expect_last_asking"]
+        got = _last_asking(turns)
+        hit = got == want
+        ok = ok and hit
+        details.append(f"asking на последнем ходу={want}: {'OK' if hit else f'факт {got}'}")
+
+    if spec.get("expect_event"):
+        want = spec["expect_event"]
+        evs = _events(turns)
+        hit = want in evs
+        ok = ok and hit
+        evs_str = ", ".join(evs) or "—"
+        details.append(f"event={want} (хоть раз): {'OK' if hit else 'не было (были: ' + evs_str + ')'}")
 
     if "expect_end" in spec:
         want = bool(spec["expect_end"])

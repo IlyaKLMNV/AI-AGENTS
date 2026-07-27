@@ -88,3 +88,59 @@ scenarios:
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
+
+  # ─────────── ФОРМАТ/ЛОКАЦИЯ (office/hybrid): спросить готовность, не отказывать сразу ───────────
+  - index: 34          # в городе вакансии, не подтвердил → спросить формат, не KO
+    expect_format: pending
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 35          # ближний пригород → спросить формат, не KO
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 36          # рядом с городом → спросить формат, не KO
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 37          # не готов к офису/переезду → KO_FORMAT_* + завершение
+    expect_script_prefix: KO_FORMAT
+    expect_end: true
+  - index: 39          # слишком далеко, НЕ отказывался → спросить переезд/формат, не KO сразу
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+
+  # ─────────── ИСТОЧНИК КОНТАКТА → скрипт, НЕ завершать ───────────
+  - index: 40          # contact_source заполнен
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+  - index: 41          # contact_source пустой (fallback про базу)
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+
+  # ─────────── «ВСЁ В РЕЗЮМЕ» → переспросить ТОТ ЖЕ вопрос, не переходить дальше ───────────
+  - index: 49          # после дефлекта «в резюме» на последнем ходу всё ещё asking=q1, не завершать
+    expect_last_asking: q1
+    expect_no_script_prefix: KO
+    expect_end: false
+
+  # ─────────── ПАУЗА (1-я/2-я → continue; событие pause распознано, диалог не завершён) ───────────
+  - index: 50          # пауза до приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
+  - index: 51          # пауза после приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
+  - index: 52          # всё закрыто → FINISH + END
+    expect_script_key: FINISH
+    expect_end: true
+  - index: 53          # chain: пауза до приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
+  - index: 54          # chain: возобновление → на последнем ходу спрашиваем приоритет (salary), не END
+    expect_last_asking: salary
+    expect_end: false
+  - index: 55          # chain: пауза после приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
