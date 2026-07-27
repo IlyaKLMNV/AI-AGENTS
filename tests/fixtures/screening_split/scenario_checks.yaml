@@ -179,6 +179,9 @@ scenarios:
     expect_end: true
 
   # ─────────── Повторные триггеры (порог) ───────────
+  - index: 26          # 1-й раз «вы бот?» → bot_check, представиться, не END (B поймает потерю «внешний рекрутер»)
+    expect_event: bot_check
+    expect_end: false
   - index: 27          # 2-й раз «вы бот?» → STOP_BOT_REPEAT
     expect_script_key: STOP_BOT_REPEAT
     expect_end: true
@@ -224,3 +227,31 @@ scenarios:
   - index: 17
     expect_script_prefix: STOP
     expect_end: true
+
+  # ─────────── Chain-сценарии (продолжения; не завершать раньше времени) ───────────
+  - index: 56          # продолжение после паузы после приоритетов → пауза распознана, не END
+    expect_event: pause
+    expect_end: false
+  - index: 57          # источник контакта → скрипт, не END
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+  - index: 58          # продолжение после вопроса об источнике → скрипт на 1-м ходу, не END
+    expect_script_key: REPLY_CONTACT_SOURCE
+    expect_end: false
+  - index: 59          # «всё в резюме» по текущему вопросу → переспросить q1, не END
+    expect_last_asking: q1
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 60          # ответ по сути после переспроса → перейти к q2, не END
+    expect_last_asking: q2
+    expect_end: false
+
+  # ─────────── Аудио/голосовые → отказать и продолжить (не завершать) ───────────
+  - index: 64
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Город = город вакансии (remote) → не отказывать, продолжить ───────────
+  - index: 33
+    expect_no_script_prefix: KO
+    expect_end: false
