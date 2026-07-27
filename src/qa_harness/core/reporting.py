@@ -33,6 +33,9 @@ class CaseRecord:
     checks: Optional[List[Dict[str, Any]]] = None
     subjects: Optional[List[Dict[str, Any]]] = None
     stages: Optional[List[Dict[str, Any]]] = None
+    # Ключ детерминированной сортировки кейсов в отчёте (напр. (scenario_index, variant)).
+    # None → кейс сохраняет порядок вставки. Внутреннее поле, в to_dict не выводится.
+    order: Optional[Tuple[Any, ...]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         # Порядок ключей = порядок чтения проверяющего: вход (критерий) → диалог → ВЕРДИКТ.
@@ -134,6 +137,10 @@ class ReportBuilder:
         finished_at: Optional[str] = None,
         duration_s: Optional[float] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        # Детерминированный порядок отчёта: если у ВСЕХ кейсов задан order — сортируем по нему
+        # (независимо от порядка завершения при concurrency). Иначе — порядок вставки (др. раннеры).
+        if self._cases and all(c.order is not None for c in self._cases):
+            self._cases.sort(key=lambda c: c.order)
         total = len(self._cases)
         passed = sum(1 for c in self._cases if c.passed)
         failed = total - passed
@@ -315,15 +322,21 @@ def write_reports(
     run_id: str,
     metrics_doc: Dict[str, Any],
     cases_doc: Dict[str, Any],
+    *,
+    write_review: bool = True,
 ) -> Tuple[Path, Path]:
     """Записать отчёты прогона (UTF-8 без BOM): metrics.json + cases.json (для машин) и
-    review.md (человекочитаемый, рендерится здесь же). Вернуть (metrics_path, cases_path)."""
+    review.md (человекочитаемый). Вернуть (metrics_path, cases_path).
+
+    write_review=False — не писать review.md (пока используется только screening_split;
+    TODO: убрать review.md глобально у всех раннеров, см. docs/screening_split_backlog.md A1)."""
     out_dir = Path(reports_dir) / runner
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = out_dir / f"{runner}_{run_id}.metrics.json"
     cases_path = out_dir / f"{runner}_{run_id}.cases.json"
-    review_path = out_dir / f"{runner}_{run_id}.review.md"
     metrics_path.write_text(json.dumps(metrics_doc, ensure_ascii=False, indent=2), encoding="utf-8")
     cases_path.write_text(json.dumps(cases_doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    review_path.write_text(render_review_md(metrics_doc, cases_doc), encoding="utf-8")
+    if write_review:
+        review_path = out_dir / f"{runner}_{run_id}.review.md"
+        review_path.write_text(render_review_md(metrics_doc, cases_doc), encoding="utf-8")
     return metrics_path, cases_path

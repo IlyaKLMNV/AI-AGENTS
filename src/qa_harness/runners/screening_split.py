@@ -140,25 +140,6 @@ def _select(scenarios: List[Scenario], indices_raw: str | None, sample: int, see
     return pool
 
 
-# ── трасса решения Аналитика в компактный вид (для читабельности review.md) ──────
-def _trace_tag(decision: dict | None) -> str:
-    if not decision:
-        return ""
-    parts = [decision.get("next_action") or "?"]
-    if decision.get("script_key"):
-        parts.append(f"script={decision['script_key']}")
-    if decision.get("asking"):
-        parts.append(f"asking={decision['asking']}")
-    if decision.get("event"):
-        parts.append(f"event={decision['event']}")
-    ups = decision.get("updates") or []
-    if ups:
-        parts.append("updates=[" + ",".join(f"{u.get('key')}={u.get('value')}" for u in ups) + "]")
-    if decision.get("source"):  # форс кода: counter_cap/reask_cap/analyzer_error
-        parts.append(f"src={decision['source']}")
-    return " · ".join(parts)
-
-
 # ── прогон одного сценария на ФИКСИРОВАННЫХ репликах (golden из CSV / скриптовые) ──
 # gate_mode: "analyzer" — детерминированный гейт по трассе (ScenarioJudge НЕ зовём) ·
 #            "dialogue" — гейт LLM-судьёй диалога (для сценариев без машинных инвариантов).
@@ -417,7 +398,7 @@ def run(args: argparse.Namespace) -> Any:
         finished = datetime.datetime.now()
         md, cd = rb.finalize(extra, finished_at=finished.isoformat(timespec="seconds"),
                              duration_s=round((finished - started).total_seconds(), 3))
-        return write_reports(args.out_dir, RUNNER, run_id, md, cd)
+        return write_reports(args.out_dir, RUNNER, run_id, md, cd, write_review=False)  # A1: без review.md
 
     def _fold(res: Dict[str, Any]) -> None:
         s: Scenario = res["scenario"]
@@ -447,13 +428,20 @@ def run(args: argparse.Namespace) -> Any:
 
         m["total"] += 1
         verdict = res.get("verdict")  # None в analyzer-gate (ScenarioJudge не звали)
+        # A2/A3: round = номер обмена (кандидат+ассистент); text = ПОЛНЫЙ вывод без ⟨trace⟩;
+        # обе роли видны — analyzer_instruction (что велел Аналитик) + text (что реально ушло) + turn_kind.
         transcript: List[Dict[str, Any]] = []
+        had_ask = False
         for i, t in enumerate(res["turns"], start=1):
-            transcript.append({"turn": 2 * i - 1, "role": "candidate", "text": t["candidate"]})
-            ttag = _trace_tag(t.get("decision"))
-            text = t["reply"] + (f"\n\n⟨trace: {ttag}⟩" if ttag else "")
-            a_turn: Dict[str, Any] = {"turn": 2 * i, "role": "assistant", "text": text,
-                                      "decision": t.get("decision"), "state": t.get("state")}
+            transcript.append({"round": i, "role": "candidate", "text": t["candidate"]})
+            d = t.get("decision") or {}
+            na = d.get("next_action")
+            kind = "script" if na == "script" else ("interviewer_reply" if na == "ask" else "fallback")
+            if na == "ask":
+                had_ask = True
+            a_turn: Dict[str, Any] = {"round": i, "role": "assistant", "text": t["reply"],
+                                      "turn_kind": kind, "analyzer_instruction": d.get("instruction"),
+                                      "decision": d, "state": t.get("state")}
             if t["end"]:
                 a_turn["ended"] = True
             transcript.append(a_turn)
@@ -506,15 +494,20 @@ def run(args: argparse.Namespace) -> Any:
         if acheck.has_checks:
             a_rule = "Аналитик: инварианты Decision" + ("" if analyzer_gates else " (сигнал)")
             case_checks.append({"rule": a_rule, "passed": acheck.passed, "detail": "; ".join(acheck.details)})
-        case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
-                            "detail": "; ".join(leak["details"])})
+        if had_ask or not leak_ok:  # A4: leak-канарейка осмысленна только если говорил Интервьюер
+            case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
+                                "detail": "; ".join(leak["details"])})
         if iverdict is not None:
             case_checks.append({"rule": "Интервьюер: верность инструкции (LLM)", "passed": bool(iverdict["passed"]),
                                 "detail": iverdict["comment"] or "; ".join(iverdict["violations"][:4])})
 
+        v_ord = variant or 0
+        input_mode = "scripted" if s.index in inputs_by_index else ("generate" if is_gen else "golden")
         rb.add_case(CaseRecord(
             case_id=cid, source="suite", passed=passed,
+            order=(s.index, v_ord),  # A2: детерминированная сортировка отчёта по (сценарий, вариант)
             inputs={"criterion": s.expected_behavior or "expected behavior per scenario",
+                    "variant": v_ord, "input_mode": input_mode,
                     "scenario": {"index": s.index, "name": s.name, "description": s.description}},
             transcript=transcript, checks=case_checks,
             verdict={"evaluator": f"screening_split (gate:{gate})", "model": args.eval_model,
@@ -559,7 +552,7 @@ def run(args: argparse.Namespace) -> Any:
         tag = "partial" if outcome.interrupted else "summary"
         print(f"[{tag}] cases={sm['total']} passed={sm['passed']} failed={sm['failed']} errors(infra)={sm['errors']} done={outcome.done}/{len(work_items)}")
         print(f"[done] metrics -> {metrics_path}")
-        print(f"[done] review  -> {Path(cases_path).with_name(f'{RUNNER}_{run_id}.review.md')}")
+        print(f"[done] cases   -> {cases_path}")
     return {"metrics": metrics_path, "cases": cases_path}
 
 

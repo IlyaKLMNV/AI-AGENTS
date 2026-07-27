@@ -9,7 +9,11 @@
 
 ## A. Отчётность
 
-### A1. Убрать `review.md` из всех раннеров и проекта — item 1
+### A1. Убрать `review.md` — СДЕЛАНО для screening_split; TODO глобально — item 1
+> **Статус:** `write_reports(..., write_review=False)` — `screening_split` больше не пишет review.md.
+> Остальные раннеры пишут (дефолт `write_review=True`). **TODO (позже):** убрать review.md
+> ГЛОБАЛЬНО у всех раннеров + вычистить доки (`REPORT_SCHEMA/LOCAL_PROMPTS/README/CLAUDE`).
+
 - **Как чинить:** удалить генерацию `review.md` в `core/reporting.py` (`render_review_md`, `_render_case`, `_render_turn`, запись в `write_reports`). Останутся `*.metrics.json` + `*.cases.json`.
 - **НЕ забыть (уточнение):** после удаления вычистить упоминания `review.md` из ДОКУМЕНТАЦИИ. Найти: `grep -rn "review.md\|review\.md\|человекочитаем" docs/ README.md CLAUDE.md` — минимум `docs/REPORT_SCHEMA.md` и, вероятно, README/CLAUDE.md. Убрать/переписать.
 - **Реально:** да, но `write_reports` — общий для ВСЕХ раннеров (не только split). Затрагивает весь проект. Низкий риск (только удаление вывода), но проверить, что никто не читает `.review.md` программно (`grep -rn "review" src/`).
