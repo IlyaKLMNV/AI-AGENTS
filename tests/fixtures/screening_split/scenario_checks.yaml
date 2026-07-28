@@ -79,12 +79,12 @@ scenarios:
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 61          # gross/процент сверху → уточнить net, не KO
+  - index: 58          # gross/процент сверху → уточнить net, не KO
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 65          # «от 260» голым числом без единиц → уточнить
+  - index: 62          # «от 260» голым числом без единиц → уточнить
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
@@ -216,7 +216,7 @@ scenarios:
   - index: 31          # открытый поиск → назвать компанию, продолжить
     expect_no_script_prefix: STOP
     expect_end: false
-  - index: 62          # ссылка на вакансию → дать ссылку, продолжить
+  - index: 59          # ссылка на вакансию → дать ссылку, продолжить
     expect_no_script_prefix: STOP
     expect_end: false
 
@@ -234,22 +234,12 @@ scenarios:
   - index: 56          # продолжение после паузы после приоритетов → пауза распознана, не END
     expect_event: pause
     expect_end: false
-  - index: 57          # источник контакта → скрипт, не END
-    expect_script_key: REPLY_CONTACT_SOURCE
-    expect_end: false
-  - index: 58          # продолжение после вопроса об источнике → скрипт на 1-м ходу, не END
-    expect_script_key: REPLY_CONTACT_SOURCE
-    expect_end: false
-  - index: 59          # «всё в резюме» по текущему вопросу → переспросить q1, не END
-    expect_last_asking: q1
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 60          # ответ по сути после переспроса → перейти к q2, не END
+  - index: 57          # ответ по сути после переспроса → перейти к q2, не END
     expect_last_asking: q2
     expect_end: false
 
   # ─────────── Аудио/голосовые → отказать и продолжить (не завершать) ───────────
-  - index: 64
+  - index: 61
     expect_no_script_prefix: STOP
     expect_end: false
 

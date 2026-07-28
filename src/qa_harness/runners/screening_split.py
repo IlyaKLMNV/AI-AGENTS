@@ -17,7 +17,7 @@ Decision; `screening_interviewer` — «рот», одно сообщение) +
   следующий этап; `--generate` — позже.
 
   python -m qa_harness.runners.screening_split --offline
-  python -m qa_harness.runners.screening_split --scenario-indices 65 --prompts-path ../prompts
+  python -m qa_harness.runners.screening_split --scenario-indices 62 --prompts-path ../prompts
 """
 
 from __future__ import annotations
@@ -63,9 +63,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 DEFAULT_CSV = FIXTURES / "screening_split" / "scenarios.csv"
 # Пер-сценарный контекст вакансии (формат/локация/вилка/скрытость) — переиспользуем набор
-# монолита: index в split-CSV совпадает с базовым (1..64), кейс 65 берёт DEFAULT_VACANCY_INFO.
+# монолита. ВНИМАНИЕ про индексы: split-CSV реиндексирован (удалены дубли 57/58/59), поэтому
+# split-строки 1..56 == база 1..56, а split 57..62 == база 60..65. Записи вакансий все ≤40 (в
+# неизменной зоне), сценарии без записи берут DEFAULT_VACANCY_INFO — расхождение их не задевает.
 DEFAULT_VACANCIES = FIXTURES / "generation" / "screening_scenarios" / "scenario_vacancies.yaml"
-# Констрейнты генерации кандидата — переиспользуем набор монолита (index совпадает; кейс 65 → дефолт).
+# Констрейнты генерации — набор монолита (base-keyed по index). После реиндекса split-инъекция(60)/
+# аудио(61) НЕ мапятся на base-записи 63/64 → в generated берут дженерик-констрейнты (обе — edge/
+# dialogue-сценарии, в scripted идут по рецепту; общий constraints.yaml НЕ трогаем ради легаси).
 DEFAULT_CONSTRAINTS = FIXTURES / "generation" / "screening_scenarios" / "constraints.yaml"
 DEFAULT_CHECKS = FIXTURES / "screening_split" / "scenario_checks.yaml"
 DEFAULT_INPUTS = FIXTURES / "screening_split" / "candidate_inputs.yaml"
@@ -95,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="screening_split QA runner (Аналитик + Интервьюер; local prompts).")
     p.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="CSV сценариев split (по умолч. отдельный от легаси).")
     p.add_argument("--sample", type=int, default=5, help="Случайная выборка N сценариев (0 = все).")
-    p.add_argument("--scenario-indices", default=None, help="Точечные номера строк CSV, напр. 1,7,65 (override --sample).")
+    p.add_argument("--scenario-indices", default=None, help="Точечные номера строк CSV, напр. 1,7,62 (override --sample).")
     p.add_argument("--max-examples", type=int, default=4, help="Сколько реплик кандидата брать из примеров на сценарий.")
     p.add_argument("--offline", action="store_true", help="Плумбинг: сценарии + реплики + санити чистого домена, без сети.")
     # --- вариативный режим (адаптивный LLM-кандидат вместо реплик из CSV) ---
