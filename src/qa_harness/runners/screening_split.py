@@ -201,14 +201,18 @@ def _eval_layer_b(res: Dict[str, Any], vinfo: Dict[str, Any], ijudge: Any) -> No
 
 def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interviewer_spec: Any, judge: Any, ijudge: Any,
                       gen_client: Any, gen_model: str, constraints_entries: list, sampler: Any, max_turns: int,
-                      gen_policy: Any, vacancies: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
-    """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ split-движок, затем судья+слои A/B."""
+                      gen_policy: Any, vacancies: Dict[int, Dict[str, Any]], constraints_override: Any = None,
+                      gate: str = "dialogue") -> Dict[str, Any]:
+    """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ split-движок, затем судья+слои A/B.
+
+    constraints_override — засеянные из рецепта констрейнты (Фаза 2: must_convey из вилки + сид);
+    gate — режим оценки ('dialogue' по умолч.; 'analyzer' — гейт трассой, для generated+инвариантов)."""
     scenario, variant = item
-    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "gate": "dialogue",
+    res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "gate": gate,
                            "turns": [], "verdict": None, "judge_usage": None, "leak": None, "iverdict": None,
                            "ijudge_usage": None, "call_error": None, "gen_sources": []}
     vinfo = vacancy_for(scenario, vacancies, DEFAULT_VACANCY_INFO)
-    constraints = constraints_for(scenario, constraints_entries)
+    constraints = constraints_override or constraints_for(scenario, constraints_entries)
     style = sampler.at(scenario.index * 1000 + variant)  # детерминированный стиль на (сценарий, вариант)
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = sp.SplitConversation(client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
@@ -227,9 +231,10 @@ def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interview
     if not res["turns"]:
         res["call_error"] = "empty_dialogue"
         return res
-    _judge_into(res, judge, scenario)
-    if res["call_error"]:
-        return res
+    if gate == "dialogue":
+        _judge_into(res, judge, scenario)
+        if res["call_error"]:
+            return res
     _eval_layer_b(res, vinfo, ijudge)
     return res
 
@@ -502,7 +507,13 @@ def run(args: argparse.Namespace) -> Any:
                                 "detail": iverdict["comment"] or "; ".join(iverdict["violations"][:4])})
 
         v_ord = variant or 0
-        input_mode = "scripted" if s.index in inputs_by_index else ("generate" if is_gen else "golden")
+        _rec = inputs_by_index.get(s.index)
+        if _rec and _rec.get("mode") == "generated":
+            input_mode = "generated"       # засеянный LLM-кандидат из рецепта (Фаза 2)
+        elif _rec:
+            input_mode = "scripted"
+        else:
+            input_mode = "generate" if is_gen else "golden"
         rb.add_case(CaseRecord(
             case_id=cid, source="suite", passed=passed,
             order=(s.index, v_ord),  # A2: детерминированная сортировка отчёта по (сценарий, вариант)
@@ -517,7 +528,7 @@ def run(args: argparse.Namespace) -> Any:
             a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else (" A:FAIL" if analyzer_gates else " A:flag"))
             b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
             fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
-            g = "scr" if s.index in inputs_by_index else ("gen" if is_gen else "gld")
+            g = {"generated": "gen*", "scripted": "scr", "generate": "gen", "golden": "gld"}[input_mode]
             print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:34]} [{g}] turns={len(res['turns'])} viol={len(dialogue_violations)}{a_tag}{b_tag}" + (f" fb={fb}" if fb else ""))
 
     def _gate_for(s: Scenario) -> str:
@@ -527,13 +538,26 @@ def run(args: argparse.Namespace) -> Any:
     def _work(item: Any) -> Dict[str, Any]:
         s, v = item
         vinfo = vacancy_for(s, vacancies, DEFAULT_VACANCY_INFO)
-        if s.index in inputs_by_index:  # C1: скриптовый детерминированный вход
-            turns = sp.build_scripted_turns(inputs_by_index[s.index], vinfo, variant=v,
-                                            seed=(args.seed or 0), index=s.index)
+        recipe = inputs_by_index.get(s.index)
+        # Фаза 2: сценарий с рецептом mode=generated → адаптивный LLM-кандидат, ЗАСЕЯННЫЙ из рецепта
+        # (must_convey из вилки по salary_category + сид/описание). Требует --generate (gen_setup).
+        if recipe and recipe.get("mode") == "generated" and args.generate:
+            c = constraints_for(s, gen_setup["constraints_entries"])
+            if recipe.get("salary_category"):
+                c.must_convey = sp.salary_directive(recipe["salary_category"], vinfo)
+            if recipe.get("seed"):
+                c.trigger_requirement = str(recipe["seed"])
+            elif not c.trigger_requirement:
+                c.trigger_requirement = s.description
+            return _process_generate(item, client=client, analyzer_client=analyzer_client,
+                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
+                                     constraints_override=c, **gen_setup)
+        if recipe:  # C1: скриптовый детерминированный вход (mode=scripted или без mode)
+            turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
             return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
                                     vinfo=vinfo, gate_mode=_gate_for(s))
-        if args.generate:  # LLM-адаптивный кандидат (сценарии без скриптового рецепта)
+        if args.generate:  # LLM-адаптивный кандидат (сценарии без рецепта)
             return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                      interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge, **gen_setup)
         turns = extract_candidate_examples(s.examples_raw, args.max_examples)  # golden: реплики из CSV

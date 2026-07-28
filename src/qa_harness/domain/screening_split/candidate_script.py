@@ -52,6 +52,31 @@ def _salary_values(vacancy_info: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+# Директивы генератору (Фаза 2): категория зарплаты → короткая инструкция «что сказать» с
+# точным значением из вилки. Идёт в CandidateConstraints.must_convey — LLM формулирует живо,
+# но НЕ меняет магнитуду/категорию (лечит «случайную сумму» генератора).
+_SALARY_DIRECTIVE = {
+    "above_max": "назови КОНКРЕТНУЮ зарплату {above_max} рублей на руки в месяц (это выше бюджета), держись уверенно",
+    "below_min": "назови конкретную зарплату {below_min} рублей на руки в месяц",
+    "in_band": "назови конкретную зарплату {in_band} рублей на руки в месяц",
+    "ambiguous": "назови сумму голым числом без единиц, например «260» — БЕЗ «тыс/руб» и без периода",
+    "currency": "назови зарплату в долларах, например «от 4000 до 5000 долларов в месяц»",
+    "hourly": "назови зарплату почасовой ставкой, например «800 рублей в час»",
+    "gross": "назови зарплату как gross (до вычета налога), например «{above_max} gross»",
+}
+
+
+def salary_directive(category: str, vacancy_info: Dict[str, Any]) -> List[str]:
+    """must_convey-директива по категории зарплаты со значением из вилки (пусто для неизвестной)."""
+    tmpl = _SALARY_DIRECTIVE.get(category or "")
+    if not tmpl:
+        return []
+    vals = _salary_values(vacancy_info)
+    for k, v in vals.items():
+        tmpl = tmpl.replace("{" + k + "}", str(v))
+    return [tmpl]
+
+
 def build_scripted_turns(recipe: Dict[str, Any], vacancy_info: Dict[str, Any],
                          *, variant: int, seed: int, index: int) -> List[str]:
     """Собрать список реплик кандидата из рецепта: подставить величины из вилки и gibberish."""
