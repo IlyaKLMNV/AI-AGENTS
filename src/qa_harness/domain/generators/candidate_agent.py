@@ -42,6 +42,11 @@ class CandidateConstraints:
     # руки в месяц»). Заполняется вызывающим (раннером), т.к. значение зависит от вакансии/вилки —
     # это лечит «случайную магнитуду» LLM-кандидата, оставляя формулировку живой. См. Фаза 1 плана.
     must_convey: List[str] = field(default_factory=list)
+    # ПЕР-ХОДОВЫЕ must-convey: turn_convey[i] — что кандидат обязан передать на ходе i (round i).
+    # Для хореографии chain-сценариев в generated (пауза→продолжить; ответ→«в резюме»→ответ):
+    # генератор отыгрывает заданную ПОСЛЕДОВАТЕЛЬНОСТЬ ходов, сохраняя вариативность формулировок
+    # (в отличие от жёсткого scripted). Если задан — имеет приоритет над must_convey на этом ходе.
+    turn_convey: List[List[str]] = field(default_factory=list)
 
 
 def _normalize(text: str) -> str:
@@ -105,7 +110,7 @@ class CandidateAgent:
         )
 
     def _payload(self, history: List[Tuple[str, str]], assistant_last_reply: Optional[str],
-                 attempt: Attempt) -> str:
+                 attempt: Attempt, turn_index: int = 0) -> str:
         ctx: dict = {
             "scenario_name": self._c.scenario_name,
             "scenario_description": self._c.scenario_description,
@@ -115,9 +120,13 @@ class CandidateAgent:
         }
         if self._c.trigger_requirement:
             ctx["trigger_requirement"] = self._c.trigger_requirement
-        if self._c.must_convey:
+        # пер-ходовой convey (turn_convey[i]) имеет приоритет над глобальным must_convey на этом ходе
+        convey = self._c.must_convey
+        if self._c.turn_convey:
+            convey = self._c.turn_convey[min(turn_index, len(self._c.turn_convey) - 1)]
+        if convey:
             ctx["must_convey"] = ("Обязательно естественно включи в реплику эти факты ДОСЛОВНО по смыслу "
-                                  "(число/сумму — как есть, не меняя величину): " + "; ".join(self._c.must_convey))
+                                  "(число/сумму — как есть, не меняя величину): " + "; ".join(convey))
         if self._c.guidelines:
             ctx["guidelines"] = self._c.guidelines
         if self._c.examples:
@@ -137,7 +146,7 @@ class CandidateAgent:
                   turn_index: int = 0) -> GenResult:
         def produce(attempt: Attempt) -> Tuple[str, Any]:
             text, usage = self._client.create(
-                self._instruction() + "\n\n" + self._payload(history, assistant_last_reply, attempt)
+                self._instruction() + "\n\n" + self._payload(history, assistant_last_reply, attempt, turn_index)
             )
             return _normalize(text), usage
 

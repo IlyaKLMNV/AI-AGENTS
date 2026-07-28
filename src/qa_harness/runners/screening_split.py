@@ -575,6 +575,11 @@ def run(args: argparse.Namespace) -> Any:
                     must += sp.resolve_convey(recipe["convey"], vinfo)
                 if must:
                     c.must_convey = must
+                # Пер-ходовые сиды (chain-хореография в generated): turn_convey[i] → факты хода i.
+                # Генератор отыгрывает последовательность (пауза→продолжить и т.п.), вариативность цела.
+                if recipe.get("turn_convey"):
+                    c.turn_convey = [sp.resolve_convey(tc if isinstance(tc, list) else [tc], vinfo)
+                                     for tc in recipe["turn_convey"]]
                 if recipe.get("seed"):
                     c.trigger_requirement = str(recipe["seed"])
                 elif not c.trigger_requirement:
@@ -582,9 +587,9 @@ def run(args: argparse.Namespace) -> Any:
                 rec_turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
                 if rec_turns and not c.examples:
                     c.examples = rec_turns
-                # Раунды ПЕР-СЦЕНАРНО: явный `rounds` рецепта, иначе число ходов рецепта. Столько же,
-                # сколько отыграет scripted-режим этого же сценария (симметрия scripted/generated).
-                rec_rounds = recipe.get("rounds") or len(rec_turns) or None
+                # Раунды ПЕР-СЦЕНАРНО: явный `rounds` рецепта, иначе длина turn_convey (chain), иначе
+                # число ходов рецепта. Столько же, сколько отыграет scripted этого сценария (симметрия).
+                rec_rounds = recipe.get("rounds") or len(recipe.get("turn_convey") or []) or len(rec_turns) or None
                 gen_gate = "analyzer" if s.index in checks_by_index else "dialogue"
                 return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                          interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
