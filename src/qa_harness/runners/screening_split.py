@@ -100,6 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offline", action="store_true", help="Плумбинг: сценарии + реплики + санити чистого домена, без сети.")
     # --- вариативный режим (адаптивный LLM-кандидат вместо реплик из CSV) ---
     p.add_argument("--generate", action="store_true", help="Вариативный режим: реплики кандидата генерит адаптивный LLM (разблокирует сценарии без примеров).")
+    p.add_argument("--input-mode", choices=["scripted", "generated"], default="scripted",
+                   help="Как подавать вход для РЕЦЕПТНЫХ сценариев: scripted (дословно, детерминированный "
+                        "CI-гейт, дефолт) | generated (LLM-генератор, засеянный из рецепта: сумма из вилки + "
+                        "триггер/примеры; Аналитик-инвариант → сигнал). generated включает генератор сам.")
     p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора кандидата (по умолч. {DEFAULT_GEN_MODEL}).")
     p.add_argument("--gen-seed", type=int, default=None, help="Seed разнообразия стилей (по умолч. = --seed).")
     p.add_argument("--variants", type=int, default=1, help="Сколько вариативных прогонов на сценарий (--generate).")
@@ -341,9 +345,11 @@ def run(args: argparse.Namespace) -> Any:
     checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
     inputs_by_index = sp.load_candidate_inputs(args.candidate_inputs or DEFAULT_INPUTS)  # C1: скриптовые входы
 
-    # golden гоняет сценарии с примерами ИЛИ со скриптовым входом; --generate разблокирует все.
+    # Нужен ли LLM-генератор: явный --generate ИЛИ --input-mode generated (он включает генератор сам).
+    use_generator = args.generate or args.input_mode == "generated"
+    # golden гоняет сценарии с примерами ИЛИ со скриптовым входом; генератор разблокирует все.
     selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
-                       runnable_only=not args.generate, max_examples=args.max_examples,
+                       runnable_only=not use_generator, max_examples=args.max_examples,
                        scripted_indices=set(inputs_by_index))
 
     n_variants = max(1, args.variants)
@@ -351,7 +357,7 @@ def run(args: argparse.Namespace) -> Any:
     n_scripted = sum(1 for s in selected if s.index in inputs_by_index)
 
     gen_setup: Dict[str, Any] = {}
-    if args.generate:
+    if use_generator:
         gen_seed = args.gen_seed if args.gen_seed is not None else (args.seed if args.seed is not None else 0)
         gen_setup = dict(
             gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
@@ -364,16 +370,18 @@ def run(args: argparse.Namespace) -> Any:
         )
         models = {"candidate_generator": args.gen_model, "analyzer": a_spec.model,
                   "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
-        run_args = {"mode": "generate", "scenarios": len(selected), "scripted": n_scripted, "variants": n_variants,
-                    "gen_model": args.gen_model, "gen_seed": gen_seed, "max_turns": args.max_turns,
-                    "eval_model": args.eval_model, "workers": args.workers}
+        run_args = {"mode": "generate", "input_mode": args.input_mode, "scenarios": len(selected),
+                    "scripted": n_scripted, "variants": n_variants, "gen_model": args.gen_model,
+                    "gen_seed": gen_seed, "max_turns": args.max_turns, "eval_model": args.eval_model,
+                    "workers": args.workers}
     else:
         models = {"analyzer": a_spec.model, "interviewer": interviewer_spec.model, "evaluator": args.eval_model}
-        run_args = {"mode": "golden", "scenarios": len(selected), "scripted": n_scripted, "variants": n_variants,
-                    "max_examples": args.max_examples, "workers": args.workers, "eval_model": args.eval_model}
+        run_args = {"mode": "golden", "input_mode": args.input_mode, "scenarios": len(selected),
+                    "scripted": n_scripted, "variants": n_variants, "max_examples": args.max_examples,
+                    "workers": args.workers, "eval_model": args.eval_model}
 
-    print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} (скриптовых: {n_scripted}) × {n_variants} = "
-          f"{len(work_items)} · режим: {run_args['mode']} · CSV: {args.csv}")
+    print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} (рецептных: {n_scripted}) × {n_variants} = "
+          f"{len(work_items)} · режим: {run_args['mode']}/{args.input_mode} · CSV: {args.csv}")
     print(f"Аналитик {a_spec.version}/{a_spec.model} · Интервьюер {interviewer_spec.version}/{interviewer_spec.model} · судья {args.eval_model}"
           + (f" · генератор {args.gen_model}" if args.generate else ""))
 
@@ -516,8 +524,8 @@ def run(args: argparse.Namespace) -> Any:
 
         v_ord = variant or 0
         _rec = inputs_by_index.get(s.index)
-        if _rec and _rec.get("mode") == "generated":
-            input_mode = "generated"       # засеянный LLM-кандидат из рецепта (Фаза 2)
+        if _rec and is_gen:
+            input_mode = "generated"       # рецептный сценарий прогнан через генератор (флаг/mode)
         elif _rec:
             input_mode = "scripted"
         else:
@@ -547,28 +555,31 @@ def run(args: argparse.Namespace) -> Any:
         s, v = item
         vinfo = vacancy_for(s, vacancies, DEFAULT_VACANCY_INFO)
         recipe = inputs_by_index.get(s.index)
-        # Фаза 2: сценарий с рецептом mode=generated → адаптивный LLM-кандидат, ЗАСЕЯННЫЙ из рецепта
-        # (must_convey из вилки по salary_category + сид/описание). Требует --generate (gen_setup).
-        if recipe and recipe.get("mode") == "generated" and args.generate:
-            c = constraints_for(s, gen_setup["constraints_entries"])
-            if recipe.get("salary_category"):
-                c.must_convey = sp.salary_directive(recipe["salary_category"], vinfo)
-            if recipe.get("seed"):
-                c.trigger_requirement = str(recipe["seed"])
-            elif not c.trigger_requirement:
-                c.trigger_requirement = s.description
-            # generated+инвариант → gate=signal (Аналитик сигнал, без судьи диалога);
-            # generated без инварианта → gate=dialogue (судья диалога, инвариантов нет).
-            gen_gate = "signal" if s.index in checks_by_index else "dialogue"
-            return _process_generate(item, client=client, analyzer_client=analyzer_client,
-                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
-                                     constraints_override=c, gate=gen_gate, **gen_setup)
-        if recipe:  # C1: скриптовый детерминированный вход (mode=scripted или без mode)
+        if recipe:
+            # Эффективный режим рецепта: per-сценарный `mode` (override) ИЛИ флаг --input-mode.
+            eff_mode = recipe.get("mode") or args.input_mode
+            if eff_mode == "generated" and use_generator:
+                # LLM-кандидат, ЗАСЕЯННЫЙ из рецепта: must_convey из вилки (salary_category),
+                # триггер/описание как сид, реплики рецепта — как конкретные примеры для вариации.
+                c = constraints_for(s, gen_setup["constraints_entries"])
+                if recipe.get("salary_category"):
+                    c.must_convey = sp.salary_directive(recipe["salary_category"], vinfo)
+                if recipe.get("seed"):
+                    c.trigger_requirement = str(recipe["seed"])
+                elif not c.trigger_requirement:
+                    c.trigger_requirement = s.description
+                rec_turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
+                if rec_turns and not c.examples:
+                    c.examples = rec_turns
+                gen_gate = "signal" if s.index in checks_by_index else "dialogue"
+                return _process_generate(item, client=client, analyzer_client=analyzer_client,
+                                         interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
+                                         constraints_override=c, gate=gen_gate, **gen_setup)
             turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
             return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
                                     vinfo=vinfo, gate_mode=_gate_for(s))
-        if args.generate:  # LLM-адаптивный кандидат (сценарии без рецепта)
+        if use_generator:  # нет рецепта → LLM-адаптивный кандидат
             return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                      interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge, **gen_setup)
         turns = extract_candidate_examples(s.examples_raw, args.max_examples)  # golden: реплики из CSV
