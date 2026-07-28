@@ -464,7 +464,15 @@ def run(args: argparse.Namespace) -> Any:
         analyzer_gates = (gate == "analyzer") and acheck.has_checks
         leak_ok = bool(leak["passed"])
         interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
-        core_ok = analyzer_ok if gate == "analyzer" else dialogue_passed
+        # gate: analyzer — инвариант ГЕЙТИТ (scripted, детерминизм); dialogue — судья диалога гейтит
+        # (нет инвариантов); signal — generated+инвариант: Аналитик лишь СИГНАЛ (вход варьируется),
+        # гейтят только leak+Интервьюер (судью диалога не зовём, чтобы не тащить monolith-шум).
+        if gate == "analyzer":
+            core_ok = analyzer_ok
+        elif gate == "signal":
+            core_ok = True
+        else:
+            core_ok = dialogue_passed
         passed = core_ok and leak_ok and interviewer_ok
 
         if passed:
@@ -549,9 +557,12 @@ def run(args: argparse.Namespace) -> Any:
                 c.trigger_requirement = str(recipe["seed"])
             elif not c.trigger_requirement:
                 c.trigger_requirement = s.description
+            # generated+инвариант → gate=signal (Аналитик сигнал, без судьи диалога);
+            # generated без инварианта → gate=dialogue (судья диалога, инвариантов нет).
+            gen_gate = "signal" if s.index in checks_by_index else "dialogue"
             return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                      interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
-                                     constraints_override=c, **gen_setup)
+                                     constraints_override=c, gate=gen_gate, **gen_setup)
         if recipe:  # C1: скриптовый детерминированный вход (mode=scripted или без mode)
             turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
             return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
