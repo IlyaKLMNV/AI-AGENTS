@@ -121,6 +121,16 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         ok = ok and hit
         details.append(f"нет script_key {pref}*: {'OK' if hit else f'сработал {bad}'}")
 
+    if spec.get("expect_reply_contains"):
+        # Подстрока, которая ДОЛЖНА быть в тексте кандидату (регистронезависимо). Скрипт-ответы
+        # (next_action=script) код отдаёт верболтим из реестра — детерминированно. Пример: #40 источник
+        # контакта → «резюме HH» (конкретный источник, а не fallback «из базы»). Скан по всем ходам.
+        want = str(spec["expect_reply_contains"])
+        replies = " \n ".join(str(t.get("reply") or "") for t in turns)
+        hit = want.lower() in replies.lower()
+        ok = ok and hit
+        details.append(f"reply содержит «{want}»: {'OK' if hit else 'нет в ответах кандидату'}")
+
     if "expect_salary" in spec:
         want = spec["expect_salary"]
         got = fstate.get("salary")

@@ -66,15 +66,30 @@ _SALARY_DIRECTIVE = {
 }
 
 
+def _resolve(text: str, vacancy_info: Dict[str, Any]) -> str:
+    """Подставить плейсхолдеры вилки ({above_max}/{below_min}/{in_band}/{range_lo}/{range_hi})
+    и {location} (город вакансии). Общий резолвер для salary_directive и convey-директив."""
+    for k, v in _salary_values(vacancy_info).items():
+        text = text.replace("{" + k + "}", str(v))
+    return text.replace("{location}", str(vacancy_info.get("location") or ""))
+
+
 def salary_directive(category: str, vacancy_info: Dict[str, Any]) -> List[str]:
     """must_convey-директива по категории зарплаты со значением из вилки (пусто для неизвестной)."""
     tmpl = _SALARY_DIRECTIVE.get(category or "")
-    if not tmpl:
-        return []
-    vals = _salary_values(vacancy_info)
-    for k, v in vals.items():
-        tmpl = tmpl.replace("{" + k + "}", str(v))
-    return [tmpl]
+    return [_resolve(tmpl, vacancy_info)] if tmpl else []
+
+
+def resolve_convey(items: Any, vacancy_info: Dict[str, Any]) -> List[str]:
+    """Пер-сценарные `convey`-директивы генератору (что ОБЯЗАН передать кандидат) с подстановкой
+    вилки/{location}. Даёт контекст там, где категории зарплаты мало (формат/локация: город
+    кандидата относительно города вакансии; гео-готовность). Пустые строки отбрасываются."""
+    out: List[str] = []
+    for it in (items or []):
+        s = _resolve(str(it), vacancy_info)
+        if s.strip():
+            out.append(s)
+    return out
 
 
 def build_scripted_turns(recipe: Dict[str, Any], vacancy_info: Dict[str, Any],

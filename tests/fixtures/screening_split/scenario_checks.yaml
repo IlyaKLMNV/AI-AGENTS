@@ -113,11 +113,13 @@ scenarios:
     expect_end: false
 
   # ─────────── ИСТОЧНИК КОНТАКТА → скрипт, НЕ завершать ───────────
-  - index: 40          # contact_source заполнен
+  - index: 40          # источник ЗАПОЛНЕН (source_type: hh) → скрипт называет КОНКРЕТНЫЙ источник
     expect_script_key: REPLY_CONTACT_SOURCE
+    expect_reply_contains: "резюме HH"   # НЕ fallback «из базы»: подставлена метка аккаунта
     expect_end: false
-  - index: 41          # contact_source пустой (fallback про базу)
+  - index: 41          # источник ПУСТОЙ → тот же скрипт, но fallback-ветка «из базы кандидатов»
     expect_script_key: REPLY_CONTACT_SOURCE
+    expect_reply_contains: "из базы"     # пустой source_type → REPLY_CONTACT_SOURCE_EMPTY
     expect_end: false
 
   # ─────────── «ВСЁ В РЕЗЮМЕ» → переспросить ТОТ ЖЕ вопрос, не переходить дальше ───────────

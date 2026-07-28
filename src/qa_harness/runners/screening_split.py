@@ -206,11 +206,13 @@ def _eval_layer_b(res: Dict[str, Any], vinfo: Dict[str, Any], ijudge: Any) -> No
 def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interviewer_spec: Any, judge: Any, ijudge: Any,
                       gen_client: Any, gen_model: str, constraints_entries: list, sampler: Any, max_turns: int,
                       gen_policy: Any, vacancies: Dict[int, Dict[str, Any]], constraints_override: Any = None,
-                      gate: str = "dialogue") -> Dict[str, Any]:
+                      gate: str = "dialogue", max_rounds: int | None = None) -> Dict[str, Any]:
     """Один (сценарий, вариант): адаптивный LLM-кандидат ↔ split-движок, затем судья+слои A/B.
 
     constraints_override — засеянные из рецепта констрейнты (Фаза 2: must_convey из вилки + сид);
-    gate — режим оценки ('dialogue' по умолч.; 'analyzer' — гейт трассой, для generated+инвариантов)."""
+    gate — режим оценки ('dialogue' по умолч.; 'analyzer' — гейт трассой, для generated+инвариантов);
+    max_rounds — число раундов ЭТОГО сценария (из рецепта: `rounds` или len(turns)); задаёт длину
+    адаптивного диалога ПЕР-СЦЕНАРНО, а не глобальным --max-turns (одинаково для scripted/generated)."""
     scenario, variant = item
     res: Dict[str, Any] = {"scenario": scenario, "variant": variant, "mode": "generate", "gate": gate,
                            "turns": [], "verdict": None, "judge_usage": None, "leak": None, "iverdict": None,
@@ -221,7 +223,8 @@ def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interview
     agent = CandidateAgent(gen_client, gen_model, constraints, style, policy=gen_policy)
     conv = sp.SplitConversation(client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
                                 vacancy_info=vinfo, recruiter_name=DEFAULT_RECRUITER_NAME, candidate_name="Кандидат")
-    eff_turns = constraints.max_turns or max_turns
+    # Приоритет длины диалога: рецептные rounds (пер-сценарно) > constraints.max_turns > глобальный --max-turns.
+    eff_turns = max_rounds or constraints.max_turns or max_turns
     result = run_adaptive_conversation(conv, agent, max_turns=eff_turns)
     for t in result.turns:
         tr = t.tool_trace or {}
@@ -425,8 +428,9 @@ def run(args: argparse.Namespace) -> Any:
         accumulate_usage(usage_bucket, res.get("ijudge_usage"))
         for src in res.get("gen_sources", []):
             gen_sources[src] += 1
-        tag = f"{s.index}" + (f"/v{variant}" if is_gen else "")
-        cid = f"scenario:{s.index}:" + (f"v{variant}:" if is_gen else "") + s.name[:40]
+        v_disp = (variant or 0) + 1  # 1-based для отображения (вариантов нет «нулевого»)
+        tag = f"{s.index}" + (f"/v{v_disp}" if is_gen else "")
+        cid = f"scenario:{s.index}:" + (f"v{v_disp}:" if is_gen else "") + s.name  # полное имя, без обрезки
 
         if res["call_error"] == "no_candidate_examples":
             m["skipped_no_examples"] += 1
@@ -562,8 +566,13 @@ def run(args: argparse.Namespace) -> Any:
                 # LLM-кандидат, ЗАСЕЯННЫЙ из рецепта: must_convey из вилки (salary_category),
                 # триггер/описание как сид, реплики рецепта — как конкретные примеры для вариации.
                 c = constraints_for(s, gen_setup["constraints_entries"])
-                if recipe.get("salary_category"):
-                    c.must_convey = sp.salary_directive(recipe["salary_category"], vinfo)
+                # Контекст в генератор ПЕР-СЦЕНАРНО: вилка (salary_category) + произвольные факты
+                # (convey: город кандидата относительно вакансии, гео-готовность и пр., с {location}).
+                must = sp.salary_directive(recipe["salary_category"], vinfo) if recipe.get("salary_category") else []
+                if recipe.get("convey"):
+                    must += sp.resolve_convey(recipe["convey"], vinfo)
+                if must:
+                    c.must_convey = must
                 if recipe.get("seed"):
                     c.trigger_requirement = str(recipe["seed"])
                 elif not c.trigger_requirement:
@@ -571,10 +580,13 @@ def run(args: argparse.Namespace) -> Any:
                 rec_turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
                 if rec_turns and not c.examples:
                     c.examples = rec_turns
+                # Раунды ПЕР-СЦЕНАРНО: явный `rounds` рецепта, иначе число ходов рецепта. Столько же,
+                # сколько отыграет scripted-режим этого же сценария (симметрия scripted/generated).
+                rec_rounds = recipe.get("rounds") or len(rec_turns) or None
                 gen_gate = "signal" if s.index in checks_by_index else "dialogue"
                 return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                          interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
-                                         constraints_override=c, gate=gen_gate, **gen_setup)
+                                         constraints_override=c, gate=gen_gate, max_rounds=rec_rounds, **gen_setup)
             turns = sp.build_scripted_turns(recipe, vinfo, variant=v, seed=(args.seed or 0), index=s.index)
             return _run_fixed_turns(s, v, turns, client=client, analyzer_client=analyzer_client,
                                     interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
