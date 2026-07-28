@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input-mode", choices=["scripted", "generated"], default="scripted",
                    help="Как подавать вход для РЕЦЕПТНЫХ сценариев: scripted (дословно, детерминированный "
                         "CI-гейт, дефолт) | generated (LLM-генератор, засеянный из рецепта: сумма из вилки + "
-                        "триггер/примеры; Аналитик-инвариант → сигнал). generated включает генератор сам.")
+                        "триггер/примеры; Аналитик-инвариант ГЕЙТИТ так же, как в scripted). generated включает генератор сам.")
     p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help=f"Модель генератора кандидата (по умолч. {DEFAULT_GEN_MODEL}).")
     p.add_argument("--gen-seed", type=int, default=None, help="Seed разнообразия стилей (по умолч. = --seed).")
     p.add_argument("--variants", type=int, default=1, help="Сколько вариативных прогонов на сценарий (--generate).")
@@ -480,13 +480,12 @@ def run(args: argparse.Namespace) -> Any:
         analyzer_gates = (gate == "analyzer") and acheck.has_checks
         leak_ok = bool(leak["passed"])
         interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
-        # gate: analyzer — инвариант ГЕЙТИТ (scripted, детерминизм); dialogue — судья диалога гейтит
-        # (нет инвариантов); signal — generated+инвариант: Аналитик лишь СИГНАЛ (вход варьируется),
-        # гейтят только leak+Интервьюер (судью диалога не зовём, чтобы не тащить monolith-шум).
+        # gate: analyzer — инвариант Аналитика ГЕЙТИТ. И в scripted, И в generated: вход варьируется
+        # лишь ФОРМУЛИРОВКОЙ (факт закреплён must_convey/рецептом, раунды тугие) → инвариант валиден
+        # в обоих режимах, а провал Аналитика в generated НЕ маскируется под passed (кейс 6). dialogue —
+        # инвариантов нет, гейтит LLM-судья. Утечка и Интервьюер гейтят всегда.
         if gate == "analyzer":
             core_ok = analyzer_ok
-        elif gate == "signal":
-            core_ok = True
         else:
             core_ok = dialogue_passed
         passed = core_ok and leak_ok and interviewer_ok
@@ -495,10 +494,9 @@ def run(args: argparse.Namespace) -> Any:
             m["passed"] += 1
         else:
             m["failed"] += 1
-        if acheck.has_checks and not acheck.passed:
-            m["analyzer_fail" if analyzer_gates else "analyzer_flag_generate"] += 1
-            if analyzer_gates:
-                reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
+        if analyzer_gates and not acheck.passed:
+            m["analyzer_fail"] += 1
+            reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
         if not leak_ok:
             m[("analyzer_leak" if leak.get("culprit") == "analyzer" else "interviewer_leak")] += 1
         if iverdict is not None and not iverdict["passed"]:
@@ -521,7 +519,7 @@ def run(args: argparse.Namespace) -> Any:
 
         case_checks: List[Dict[str, Any]] = []
         if acheck.has_checks:
-            a_rule = "Аналитик: инварианты Decision" + ("" if analyzer_gates else " (сигнал)")
+            a_rule = "Аналитик: инварианты Decision"
             case_checks.append({"rule": a_rule, "passed": acheck.passed, "detail": "; ".join(acheck.details)})
         if had_ask or not leak_ok:  # A4: leak-канарейка осмысленна только если говорил Интервьюер
             case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
@@ -549,7 +547,7 @@ def run(args: argparse.Namespace) -> Any:
                      "passed": passed, "reason_codes": reason_codes[:12], "comment": dialogue_comment},
         ))
         if not args.quiet:
-            a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else (" A:FAIL" if analyzer_gates else " A:flag"))
+            a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else " A:FAIL")
             b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
             fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
             g = {"generated": "gen*", "scripted": "scr", "generate": "gen", "golden": "gld"}[input_mode]
@@ -587,7 +585,7 @@ def run(args: argparse.Namespace) -> Any:
                 # Раунды ПЕР-СЦЕНАРНО: явный `rounds` рецепта, иначе число ходов рецепта. Столько же,
                 # сколько отыграет scripted-режим этого же сценария (симметрия scripted/generated).
                 rec_rounds = recipe.get("rounds") or len(rec_turns) or None
-                gen_gate = "signal" if s.index in checks_by_index else "dialogue"
+                gen_gate = "analyzer" if s.index in checks_by_index else "dialogue"
                 return _process_generate(item, client=client, analyzer_client=analyzer_client,
                                          interviewer_spec=interviewer_spec, judge=judge, ijudge=ijudge,
                                          constraints_override=c, gate=gen_gate, max_rounds=rec_rounds, **gen_setup)
