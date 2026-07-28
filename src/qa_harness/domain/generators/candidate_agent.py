@@ -38,6 +38,10 @@ class CandidateConstraints:
     language: str = "ru"                   # "ru" | "foreign"
     forbid_digits: bool = False            # запретить числа (напр. «странный» кандидат не называет зарплату)
     max_turns: Optional[int] = None        # per-scenario лимит ходов адаптивного диалога (None → глобальный)
+    # Факты, которые реплика ОБЯЗАНА естественно передать (напр. точная сумма из вилки: «330000 на
+    # руки в месяц»). Заполняется вызывающим (раннером), т.к. значение зависит от вакансии/вилки —
+    # это лечит «случайную магнитуду» LLM-кандидата, оставляя формулировку живой. См. Фаза 1 плана.
+    must_convey: List[str] = field(default_factory=list)
 
 
 def _normalize(text: str) -> str:
@@ -108,6 +112,9 @@ class CandidateAgent:
         }
         if self._c.trigger_requirement:
             ctx["trigger_requirement"] = self._c.trigger_requirement
+        if self._c.must_convey:
+            ctx["must_convey"] = ("Обязательно естественно включи в реплику эти факты ДОСЛОВНО по смыслу "
+                                  "(число/сумму — как есть, не меняя величину): " + "; ".join(self._c.must_convey))
         if self._c.guidelines:
             ctx["guidelines"] = self._c.guidelines
         if self._c.examples:
