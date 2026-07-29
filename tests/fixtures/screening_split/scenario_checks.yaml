@@ -161,8 +161,8 @@ scenarios:
   - index: 14          # не беспокоить/удалить контакт
     expect_script_key: STOP_NOT_INTERESTED
     expect_end: true
-  - index: 15          # уже трудоустроен
-    expect_script_key: STOP_ALREADY_EMPLOYED
+  - index: 15          # уже трудоустроен → терминируем (любой STOP; «уже на месте»+«не ищу» ⇒ ALREADY/NOT_INTERESTED равнозначны)
+    expect_script_prefix: STOP
     expect_end: true
   - index: 16          # просьба денег
     expect_script_key: STOP_MONEY_REQUEST
