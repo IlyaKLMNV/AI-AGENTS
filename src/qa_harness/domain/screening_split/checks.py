@@ -80,6 +80,15 @@ def _last_asking(turns: List[Dict[str, Any]]) -> Any:
     return None
 
 
+def _last_instruction(turns: List[Dict[str, Any]]) -> Any:
+    """instruction Аналитика на последнем ходе, где она есть (None — если только скрипты)."""
+    for t in reversed(turns):
+        dec = t.get("decision") if isinstance(t, dict) else None
+        if isinstance(dec, dict) and dec.get("instruction"):
+            return dec.get("instruction")
+    return None
+
+
 def _final_state(turns: List[Dict[str, Any]]) -> Dict[str, Any]:
     for t in reversed(turns):
         st = t.get("state") if isinstance(t, dict) else None
@@ -158,6 +167,15 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         hit = got == want
         ok = ok and hit
         details.append(f"asking на последнем ходу={want}: {'OK' if hit else f'факт {got}'}")
+
+    if spec.get("expect_last_instruction_lacks"):
+        # instruction ПОСЛЕДНЕГО хода НЕ должна содержать подстроку (регистронезависимо). Для 29 (F4):
+        # на повторном salary_info Аналитик переспрашивает БЕЗ объяснения → в instruction нет «раскрыва».
+        want = str(spec["expect_last_instruction_lacks"]).lower()
+        instr = (_last_instruction(turns) or "").lower()
+        hit = want not in instr
+        ok = ok and hit
+        details.append(f"instruction последнего хода без «{want}»: {'OK' if hit else 'присутствует (лишнее объяснение)'}")
 
     if spec.get("expect_event"):
         want = spec["expect_event"]

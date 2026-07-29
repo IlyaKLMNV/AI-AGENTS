@@ -196,6 +196,12 @@ scenarios:
     expect_asking: salary
     expect_no_script_prefix: STOP
     expect_end: false
+  - index: 29          # 2-й раз про нашу вилку → salary_info; на повторе переспрос БЕЗ объяснения (F4), не STOP/END
+    expect_event: salary_info
+    expect_asking: salary
+    expect_no_script_prefix: STOP
+    expect_last_instruction_lacks: "раскрыва"   # F4: на 2-м salary_info instruction без «вилку не раскрываем»
+    expect_end: false
   - index: 20          # исправление источника резюме → REPLY_CONTACT_SOURCE, не END
     expect_script_key: REPLY_CONTACT_SOURCE
     expect_end: false
