@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ancor.ai/qa-harness/report.metrics.schema.json",
+  "title": "QA Harness — Metrics report",
+  "description": "Lightweight, diffable per-run metrics. Pairs with report.cases.schema.json via meta.run_id / case_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "meta", "summary", "metrics"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "kind": { "const": "metrics" },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "started_at", "runner", "prompt_under_test"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "started_at": { "type": "string" },
+        "finished_at": { "type": "string" },
+        "duration_s": { "type": "number" },
+        "runner": {
+          "type": "string",
+          "enum": [
+            "screening_scenarios", "screening_scenarios_hh", "screening_guardrails",
+            "message_classifier", "verdict_classifier", "screening_autofill",
+            "first_touch", "first_touch_hh", "first_touch_event",
+            "extractor_agent", "one_line_search_query_builder",
+            "responsibilities_parser", "sourcing_assistant"
+          ]
+        },
+        "prompt_under_test": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "prompt_id"],
+          "properties": {
+            "component": { "type": "string" },
+            "prompt_id": { "type": "string" },
+            "prompt_version": { "type": ["string", "null"] }
+          }
+        },
+        "models": {
+          "type": "object",
+          "properties": {
+            "generator": { "type": ["string", "null"] },
+            "evaluator": { "type": ["string", "null"] }
+          }
+        },
+        "seed": { "type": ["integer", "null"] },
+        "git_commit": { "type": ["string", "null"] },
+        "args": { "type": "object" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "errors", "pass_rate", "token_usage"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "pass_rate": { "type": "number", "minimum": 0, "maximum": 100 },
+        "token_usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output", "total"],
+          "properties": {
+            "input": { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Extensible. A runner fills only the applicable sub-keys.",
+      "additionalProperties": true,
+      "properties": {
+        "judge": {
+          "type": "object",
+          "properties": {
+            "scale": { "type": "string" },
+            "score_total": { "type": "number" },
+            "score_max": { "type": "number" },
+            "turns_total": { "type": "integer" },
+            "reason_codes": { "type": "object", "additionalProperties": { "type": "integer" } }
+          }
+        },
+        "classification": {
+          "type": "object",
+          "properties": {
+            "labels": { "type": "array", "items": { "type": "string" } },
+            "accuracy": { "type": ["number", "null"] },
+            "per_class_accuracy": { "type": "object", "additionalProperties": { "type": ["number", "null"] } },
+            "confusion_matrix": {
+              "type": "object",
+              "description": "Sparse: only non-zero cells.",
+              "additionalProperties": { "type": "object", "additionalProperties": { "type": "integer" } }
+            },
+            "counts_target": { "type": "object", "additionalProperties": { "type": "integer" } },
+            "counts_predicted": { "type": "object", "additionalProperties": { "type": "integer" } },
+            "by_split": { "type": "object" }
+          }
+        },
+        "deterministic": {
+          "type": "object",
+          "description": "Histogram of rule/issue-code occurrences.",
+          "additionalProperties": { "type": "integer" }
+        },
+        "backend": {
+          "type": "object",
+          "properties": {
+            "step3_calls": { "type": "integer" },
+            "retrieval_ok": { "type": "integer" },
+            "insufficient": { "type": "integer" },
+            "step3_error": { "type": "integer" },
+            "avg_candidates": { "type": "number" }
+          }
+        },
+        "by_source": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "passed": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "failures_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "reason_codes", "severity"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "source": { "type": "string" },
+          "reason_codes": { "type": "array", "items": { "type": "string" } },
+          "severity": { "type": "string", "enum": ["high", "med", "low"] },
+          "one_line": { "type": "string" },
+          "evaluator": { "type": "string" }
+        }
+      }
+    },
+    "errors_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "message"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# Пер-сценарный контекст вакансии для screening_scenarios, компонент HH (screening_assistant_hh).
+# Мерджится поверх DEFAULT_VACANCY_INFO. Резолв по index = № строки CSV. Отдельный файл от base.
+
+scenarios:
+  # --- развёрнутое описание: иначе ассистенту нечем отвечать на вопросы о задачах/культуре ---
+  - index: 13
+    match: "Запрос общей информации об условиях"
+    responsibilities: "Backend на Python (FastAPI), проектирование API, PostgreSQL и очереди, интеграции с внутренними системами. Команда из 6 человек, code review, наставник на onboarding. Условия: ДМС, гибкий график, обучение за счёт компании."
+  - index: 14
+    match: "Общий вопрос о вакансии"
+    responsibilities: "Backend на Python (FastAPI/Django), PostgreSQL, Redis, Kafka, Docker, CI/CD в GitLab. Задачи: новые сервисы, оптимизация нагруженных эндпоинтов, интеграции с партнёрскими API."
+  - index: 21
+    match: "Открытая компания"
+    company_info:
+      firm_description: "Аккредитованная IT-компания, продуктовая разработка b2b-финтеха. Культура: автономные команды без микроменеджмента, ретро и 1:1, поддержка конференций и обучения, ДМС."
+
+  # --- форматы работы: дефолт remote, а сценарии требуют конкретный формат ---
+  - index: 26
+    match: "ON_SITE"
+    work_format: "ON_SITE"
+    location: "Москва"
+  - index: 27
+    match: "HYBRID"
+    work_format: "HYBRID"
+    location: "Москва"
+  - index: 47
+    match: "FIELD_WORK"
+    work_format: "FIELD_WORK"
+    location: "Москва"
+
+  # --- рекрутинговое агентство как нанимающая сторона (компания не раскрывается) ---
+  - index: 50
+    match: "Рекрутинговое агентство"
+    company_name: ""
+    hiring_company_name: "рекрутинговое агентство"
+    company_info:
+      vacancy_url: ""

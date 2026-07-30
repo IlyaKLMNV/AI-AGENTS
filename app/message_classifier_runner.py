@@ -1,86 +1,137 @@
+﻿# message_classifier_runner.py
 from __future__ import annotations
 
 import argparse
 import datetime
+import glob
 import json
 import os
 import pathlib
 import random
 import re
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from openai import OpenAI
 
-from messageLabelGenerator.classifierLLM import ClassifierAssistant
-
-# -----------------------
-# Константы и пути
-# -----------------------
-
+# Repo root: if this file is in app/, parents[1] is repo root.
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 CFG_PATH = ROOT / "tests" / "tools" / "model.yaml"
+DEFAULT_CDM_DIR = ROOT / "tests" / "fixtures" / "cdm" / "std"
+DEFAULT_REGRESSION_CASES_PATH = ROOT / "tests" / "fixtures" / "message_classifier" / "regression_cases.json"
 REPORTS_DIR = ROOT / "tests" / "reports" / "message_classifier"
+TEXT_FILE_ENCODING = "utf-8-sig"
 
-GEN_MODEL = "gpt-4.1-mini"   # генератор тестовых сообщений
-EVAL_MODEL = "gpt-4.1"       # опционально: QA-оценщик "сообщение реально соответствует классу"
+DEFAULT_MESSAGE_GEN_MODEL = "gpt-4.1-mini"
+MESSAGE_GEN_MAX_RETRIES = 1
 
-DEFAULT_N_PER_CLASS = 3
-DEFAULT_SEED = 42
+CLASSES = ("reason_farewell", "no_reason", "acceptance", "human_needed")
 
-LABELS = ["reason_farewell", "no_reason", "acceptance", "human_needed"]
 
-# -----------------------
-# Утилиты
-# -----------------------
+def _log(quiet: bool, msg: str) -> None:
+    if not quiet:
+        print(msg)
 
-def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 def ensure_dirs() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-def _component_cfg(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
-    return cfg.get(name) or {}
+
+def load_yaml(path: pathlib.Path) -> Dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding=TEXT_FILE_ENCODING))
+
+
+def load_json(path: pathlib.Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding=TEXT_FILE_ENCODING))
+
+
+def load_cdm_files(cdm_dir: pathlib.Path, cdm_count: Optional[int]) -> List[pathlib.Path]:
+    if not cdm_dir.exists():
+        raise FileNotFoundError(f"CDM dir not found: {cdm_dir}")
+
+    paths = [pathlib.Path(p) for p in sorted(glob.glob(str(cdm_dir / "cdm_*.json")))]
+    if not paths and (cdm_dir / "std").is_dir():
+        paths = [pathlib.Path(p) for p in sorted(glob.glob(str((cdm_dir / "std") / "cdm_*.json")))]
+    if not paths:
+        raise FileNotFoundError(f"No cdm_*.json found in: {cdm_dir}")
+
+    if cdm_count is not None:
+        if cdm_count <= 0:
+            raise ValueError("--cdm-count must be > 0")
+        paths = paths[:cdm_count]
+
+    return paths
+
+
+def load_regression_cases(path: pathlib.Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Regression cases file not found: {path}")
+
+    raw = json.loads(path.read_text(encoding=TEXT_FILE_ENCODING))
+    if not isinstance(raw, list):
+        raise ValueError("Regression cases JSON must be a list")
+
+    cases: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for idx, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Regression case #{idx} must be an object")
+
+        case_id = str(item.get("id") or "").strip()
+        target_class = str(item.get("target_class") or "").strip().lower()
+        message = str(item.get("message") or "").strip()
+
+        if not case_id:
+            raise ValueError(f"Regression case #{idx} is missing required field 'id'")
+        if case_id in seen_ids:
+            raise ValueError(f"Duplicate regression case id: {case_id}")
+        if target_class not in CLASSES:
+            raise ValueError(
+                f"Regression case '{case_id}' has invalid target_class={target_class!r}; "
+                f"expected one of {CLASSES}"
+            )
+        if not message:
+            raise ValueError(f"Regression case '{case_id}' is missing required field 'message'")
+
+        seen_ids.add(case_id)
+        cases.append(
+            {
+                "id": case_id,
+                "target_class": target_class,
+                "scenario": str(item.get("scenario") or "").strip(),
+                "description": str(item.get("description") or "").strip(),
+                "message": message,
+            }
+        )
+
+    return cases
+
 
 def _blank_usage() -> Dict[str, int]:
     return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
+
 def _extract_usage_numbers(usage: Any) -> Tuple[int, int, int]:
     if not usage:
         return 0, 0, 0
-    if isinstance(usage, Mapping):
-        input_tokens = (
-            usage.get("input_tokens")
-            or usage.get("prompt_tokens")
-            or usage.get("input_token_count")
-            or 0
-        )
-        output_tokens = (
-            usage.get("output_tokens")
-            or usage.get("completion_tokens")
-            or usage.get("output_token_count")
-            or 0
-        )
-        total_tokens = usage.get("total_tokens") or usage.get("token_count")
-    else:
-        input_tokens = (
-            getattr(usage, "input_tokens", None)
-            or getattr(usage, "prompt_tokens", None)
-            or getattr(usage, "input_token_count", None)
-            or 0
-        )
-        output_tokens = (
-            getattr(usage, "output_tokens", None)
-            or getattr(usage, "completion_tokens", None)
-            or getattr(usage, "output_token_count", None)
-            or 0
-        )
-        total_tokens = getattr(usage, "total_tokens", None) or getattr(usage, "token_count", None)
 
-    if total_tokens is None:
-        total_tokens = (input_tokens or 0) + (output_tokens or 0)
-    return int(input_tokens or 0), int(output_tokens or 0), int(total_tokens or 0)
+    if isinstance(usage, dict):
+        it = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("input_token_count") or 0
+        ot = usage.get("output_tokens") or usage.get("completion_tokens") or usage.get("output_token_count") or 0
+        tt = usage.get("total_tokens") or usage.get("token_count")
+    else:
+        it = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None) or getattr(usage, "input_token_count", None) or 0
+        ot = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None) or getattr(usage, "output_token_count", None) or 0
+        tt = getattr(usage, "total_tokens", None) or getattr(usage, "token_count", None)
+
+    if tt is None:
+        tt = (it or 0) + (ot or 0)
+
+    return int(it or 0), int(ot or 0), int(tt or 0)
+
 
 def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     it, ot, tt = _extract_usage_numbers(usage)
@@ -88,420 +139,834 @@ def _accumulate_usage(bucket: Dict[str, int], usage: Any) -> None:
     bucket["output_tokens"] += ot
     bucket["total_tokens"] += tt
 
-def _normalize_text(s: str) -> str:
-    s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
-    return s.strip()
 
-def _safe_json_loads(text: str) -> Any:
-    text = (text or "").strip()
+def _resolve_prompt_from_cfg(cfg: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    block = cfg.get("message_classifier") or {}
+    pid = block.get("prompt_id")
+    pver = block.get("prompt_version")
+    seed = block.get("seed")
+    return (str(pid) if pid else None, str(pver) if pver else None, int(seed) if seed is not None else None)
+
+
+def _resolve_message_gen_model_from_cfg(cfg: Dict[str, Any]) -> Optional[str]:
+    # Optional in tests/tools/model.yaml:
+    # message_classifier:
+    #   message_gen_model: gpt-4.1-mini
+    block = cfg.get("message_classifier") or {}
+    m = block.get("message_gen_model")
+    return str(m) if m else None
+
+
+def _extract_label(text: str) -> Optional[str]:
+    t = (text or "").strip().lower()
+    m = re.search(r"\b(reason_farewell|no_reason|acceptance|human_needed)\b", t)
+    return m.group(1) if m else None
+
+
+DECLINE_PATTERNS = (
+    r"\bне\s+интерес",
+    r"\bне\s+рассматрива",
+    r"\bне\s+подходит",
+    r"\bвынужден\s+отказ",
+    r"\bоткаж",
+    r"\bотказ",
+    r"\bне\s+готов",
+    r"\bне\s+смогу",
+    r"\bнет,\s*спасибо\b",
+)
+REASON_PATTERNS = (
+    r"\bпотому\s+что\b",
+    r"\bтак\s+как\b",
+    r"\bпоскольку\b",
+    r"\bуже\b",
+    r"\bоффер",
+    r"\bзарплат",
+    r"\bформат",
+    r"\bофис",
+    r"\bгибрид",
+    r"\bудален",
+    r"\bлокац",
+    r"\bпереезд",
+    r"\bстек",
+    r"\bсфера",
+    r"\bработаю\b",
+    r"\bвышел\s+на\s+работу\b",
+    r"\bпринял\s+оффер\b",
+)
+ACCEPTANCE_PATTERNS = (
+    r"\bинтерес",
+    r"\bваканси",
+    r"\bподскажите\b",
+    r"\bрасскажите\b",
+    r"\bможете\s+уточнить\b",
+    r"\bкакая\s+компания\b",
+    r"\bкак\s+ваша\s+компания\s+называется\b",
+    r"\bссылка\s+на\s+ваканси",
+    r"\bописани[ея]\b",
+    r"\bкоманд",
+    r"\bзадач",
+    r"\bстек",
+    r"\bформат",
+    r"\bзарплат",
+    r"\bсозвон",
+    r"\bготов\s+обсудить\b",
+)
+HUMAN_NEEDED_PATTERNS = (
+    r"\bстранн",
+    r"\bчто\s+за\s+ерунд",
+    r"\bмошенн",
+    r"\bразвод",
+    r"\bденьги\b",
+    r"\bскиньте\b",
+    r"\bоткуда\s+нашли\s+контакт\b",
+    r"\bзачем\s+мне\s+тратить\s+время\b",
+    r"\bне\s+совсем\s+понимаю\b",
+    r"\bбред\b",
+    r"\bхрень\b",
+    r"\bено[тт]\b",
+    r"[🦝😕🤨]",
+)
+
+
+def _has_any_pattern(text: str, patterns: Tuple[str, ...]) -> bool:
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _validate_generated_message(target_class: str, message: str) -> Optional[str]:
+    text = message.strip()
     if not text:
-        raise ValueError("empty json text")
-    try:
-        return json.loads(text)
-    except Exception:
-        # пытаемся вырезать JSON-массив/объект из мусора
-        start_obj = text.find("{")
-        end_obj = text.rfind("}")
-        if 0 <= start_obj < end_obj:
-            return json.loads(text[start_obj : end_obj + 1].strip())
-        start_arr = text.find("[")
-        end_arr = text.rfind("]")
-        if 0 <= start_arr < end_arr:
-            return json.loads(text[start_arr : end_arr + 1].strip())
-        raise
+        return "generated empty message"
 
-def _confusion_init(labels: List[str]) -> Dict[str, Dict[str, int]]:
-    return {a: {p: 0 for p in labels} for a in labels}
+    has_decline = _has_any_pattern(text, DECLINE_PATTERNS)
+    has_reason = _has_any_pattern(text, REASON_PATTERNS)
+    has_acceptance = _has_any_pattern(text, ACCEPTANCE_PATTERNS) or "?" in text
+    has_human_needed = _has_any_pattern(text, HUMAN_NEEDED_PATTERNS)
 
-# -----------------------
-# Простая валидация "сообщение реально похоже на класс"
-# (нужно, чтобы генератор не создавал спорные примеры и не портил тест)
-# -----------------------
+    if target_class == "reason_farewell":
+        if not has_decline:
+            return "reason_farewell message has no explicit refusal"
+        if not has_reason:
+            return "reason_farewell message has no clear reason"
+        return None
 
-KW_ACCEPT = [
-    "интерес", "готов", "да,", "да.", "да", "обсуд", "пообщ", "созвон",
-    "можно подробнее", "расскажите", "какая", "какие", "сколько", "вилка",
-    "зарплат", "график", "услов", "команда", "обязанност", "стек"
-]
-KW_REFUSE = ["не интересно", "неинтересно", "не подходит", "не подх", "нет, спасибо", "спасибо, нет", "не рассматриваю", "не буду", "откажусь"]
-KW_REASON = ["уже работ", "наш(е)л", "нашла", "принял", "приняла", "офер", "предложение", "в другой сфере", "не мой профиль", "не мой стек", "по локации", "по зарплате", "по графику", "в декрете", "в отпуске"]
-KW_UNCERTAIN = ["не уверен", "не уверена", "подумаю", "возможно", "посмотрим", "сомневаюсь", "не знаю", "надо уточнить", "пока рано"]
-KW_NEGATIVE = ["достали", "спам", "вы откуда", "что за", "опять", "жесть", "ужас", "какой бред", "идиот", "треш"]
+    if target_class == "no_reason":
+        if not has_decline:
+            return "no_reason message has no explicit refusal"
+        if has_reason:
+            return "no_reason message leaks a reason"
+        return None
 
-def _looks_like_reason_farewell(t: str) -> bool:
-    s = t.lower()
-    if not any(k in s for k in KW_REFUSE):
-        # допускаем мягкие отказы с причиной без явного "не интересно"
-        if not any(k in s for k in ["не рассматриваю", "не буду", "откажусь", "не актуально", "неактуально"]):
-            return False
-    return any(k in s for k in KW_REASON)
+    if target_class == "acceptance":
+        if has_decline:
+            return "acceptance message contains refusal markers"
+        if has_human_needed:
+            return "acceptance message contains human_needed markers"
+        if not has_acceptance:
+            return "acceptance message lacks clear interest or relevant vacancy question"
+        return None
 
-def _looks_like_no_reason(t: str) -> bool:
-    s = t.lower()
-    # отказ есть, причины нет
-    if not any(k in s for k in KW_REFUSE):
-        return False
-    return not any(k in s for k in KW_REASON)
+    if target_class == "human_needed":
+        if has_decline:
+            return "human_needed message looks like a refusal instead of escalation"
+        if has_acceptance and not has_human_needed:
+            return "human_needed message looks like a normal acceptance/clarification"
+        if not has_human_needed:
+            return "human_needed message lacks clear escalation markers"
+        return None
 
-def _looks_like_acceptance(t: str) -> bool:
-    s = t.lower()
-    # acceptance включает вопросы по вакансии
-    if any(k in s for k in KW_REFUSE):
-        return False
-    return any(k in s for k in KW_ACCEPT)
+    return None
 
-def _looks_like_human_needed(t: str) -> bool:
-    s = t.lower()
-    # неопределенность/жалобы/нерелевант
-    if _looks_like_acceptance(t) or _looks_like_no_reason(t) or _looks_like_reason_farewell(t):
-        return False
-    if any(k in s for k in KW_UNCERTAIN):
-        return True
-    if any(k in s for k in KW_NEGATIVE):
-        return True
-    # "непонятно что" - короткие, странные, набор символов
-    if len(re.sub(r"\s+", "", s)) <= 3:
-        return True
-    if re.search(r"[a-zA-Z]{6,}", s):
-        return True
-    return True
 
-def _validate_for_label(label: str, text: str) -> bool:
-    t = _normalize_text(text)
-    if not t:
-        return False
-    # по промпту: "one message in Russian"
-    # не делаем жесткую проверку, но отсечем чисто английские
-    if re.fullmatch(r"[a-zA-Z0-9\s\.\,\!\?\-]+", t):
-        return False
-
-    if label == "reason_farewell":
-        return _looks_like_reason_farewell(t)
-    if label == "no_reason":
-        return _looks_like_no_reason(t)
-    if label == "acceptance":
-        return _looks_like_acceptance(t)
-    if label == "human_needed":
-        return _looks_like_human_needed(t)
-    return False
-
-# -----------------------
-# Fallback пул сообщений (детерминированный, чтобы тест всегда можно было прогнать)
-# -----------------------
-
-FALLBACK: Dict[str, List[str]] = {
+SCENARIO_HINTS_BY_CLASS: Dict[str, List[str]] = {
     "reason_farewell": [
-        "Спасибо, но я уже устроился на работу и сейчас не рассматриваю предложения.",
-        "Благодарю, но я принял оффер и уже выхожу в новую компанию.",
-        "Спасибо, но мне сейчас не подходит по локации, переезд не рассматриваю.",
-        "Благодарю, но я не рассматриваю смену работы, так как уже работаю в другой сфере.",
+        "Вежливый отказ с причиной: уже вышел на работу/принял оффер.",
+        "Отказ с причиной: не рассматривает смену сферы/не тот стек.",
+        "Отказ с причиной: не подходит формат (офис/гибрид), не готов к переезду.",
+        "Отказ с причиной: ожидания по зарплате выше, чем обычно предлагают.",
+        "Отказ с причиной: сейчас не в поиске, вернется позже.",
     ],
     "no_reason": [
-        "Нет, спасибо.",
-        "Не подходит.",
-        "Неинтересно.",
-        "Спасибо, не буду рассматривать.",
+        "Короткий отказ без объяснений: 'не интересно/не подходит/нет, спасибо'.",
+        "Формальный отказ без причины: 'вынужден отказаться, спасибо'.",
+        "Очень кратко: 'нет'.",
     ],
     "acceptance": [
-        "Здравствуйте! Да, интересно, можно подробнее про задачи и стек?",
-        "Да, давайте обсудим. Какая зарплатная вилка и формат работы?",
-        "Интересно. Подскажите, пожалуйста, график и сколько людей в команде?",
-        "Да, готов пообщаться. Можете прислать описание обязанностей?",
+        "Кандидат согласен и готов созвониться: предлагает время.",
+        "Кандидат заинтересован и просит детали по вилке/графику/формату.",
+        "Кандидат задает релевантный вопрос по вакансии (обязанности/команда/стек) и выражает интерес.",
+        "Кандидат просит прислать описание и подтверждает интерес.",
+        "Кандидат просит ссылку на вакансию или название компании в нейтральной деловой форме.",
+        "Кандидат задает спокойные вопросы по вакансии (обязанности/команда/стек) без негатива и подозрений.",
+        "Кандидат вежливо спрашивает про формат работы и ориентир по компенсации.",
     ],
     "human_needed": [
-        "Я не уверен(а), мне нужно подумать и уточнить несколько моментов.",
-        "Вы откуда взяли мой контакт? Похоже на спам.",
-        "Странное предложение, непонятно что вы вообще хотите.",
-        "ммм ну хз, давайте потом",
+        "Раздражение/жалоба/негатив к рекрутеру или компании.",
+        "Странные или нерелевантные вопросы (не про вакансию), либо непонятный смысл.",
+        "Просьба денег/мошеннический оттенок/обвинения, без явного согласия или отказа.",
+        "Сообщение не по теме или набор слов/эмодзи так, что смысл неясен.",
+        "Резкий или подозрительный вопрос о том, откуда взяли контакт.",
+        "Нейтральные вопросы про вакансию здесь запрещены: нужен явный дискомфорт, подозрение или странность.",
     ],
 }
 
-# -----------------------
-# Генерация сообщений под конкретный класс
-# -----------------------
 
-def _gen_prompt_for_label(label: str, n: int) -> str:
-    # Важно: генерим только русские сообщения
-    common = (
-        "Ты генерируешь тестовые сообщения кандидатов на русском языке.\n"
-        "Верни строго JSON-массив строк (без markdown и без пояснений).\n"
-        "Каждая строка - одно сообщение кандидата.\n"
-        "Сообщения должны быть короткие, естественные, как в мессенджере.\n"
-        "Не используй слово END.\n"
+def _class_generation_requirements(target_class: str) -> str:
+    if target_class == "reason_farewell":
+        return (
+            "Hard requirements for reason_farewell:\n"
+            "- Include an explicit refusal.\n"
+            "- Use direct refusal wording such as 'не рассматриваю', 'вынужден отказаться', 'мне не подходит', 'не готов'.\n"
+            "- Add one short concrete reason: salary, format, location, stack, sphere, accepted offer, already working, not looking now.\n"
+            "- Do not ask questions.\n"
+            "- Do not sound ambiguous."
+        )
+    if target_class == "no_reason":
+        return (
+            "Hard requirements for no_reason:\n"
+            "- Include an explicit refusal.\n"
+            "- Do not include any reason or explanation.\n"
+            "- Do not mention salary, format, location, stack, current work, offers, or plans.\n"
+            "- Do not ask questions.\n"
+            "- Keep it short and final."
+        )
+    if target_class == "acceptance":
+        return (
+            "Hard requirements for acceptance:\n"
+            "- Show clear interest in the vacancy.\n"
+            "- You may ask 1-2 normal business questions.\n"
+            "- Allowed topics: company name, vacancy link, vacancy description, team, responsibilities, stack, format, schedule, salary range, next steps.\n"
+            "- Tone must be calm, constructive, and business-like.\n"
+            "- No irritation, suspicion, accusations, contact-source complaints, money requests, nonsense, or hostility.\n"
+            "- Do not make it mixed or borderline."
+        )
+    return (
+        "Hard requirements for human_needed:\n"
+        "- The message must require manual handling because it is suspicious, irritated, accusatory, confusing, scam-like, off-topic, or strange.\n"
+        "- It must not look like a normal vacancy clarification.\n"
+        "- Avoid ordinary neutral questions about company name, vacancy link, salary, format, team, stack, or responsibilities unless they are clearly framed with irritation or suspicion.\n"
+        "- If using contact-source theme, make it sharp or uncomfortable, not neutral.\n"
+        "- Do not turn it into a clean refusal."
     )
 
-    if label == "reason_farewell":
-        spec = (
-            "Класс: reason_farewell.\n"
-            "Сгенерируй сообщения, где кандидат ОТКАЗЫВАЕТСЯ и ЯВНО УКАЗЫВАЕТ ПРИЧИНУ.\n"
-            "Примеры причин: уже устроился, принял оффер, не подходит локация, не подходит сфера, не ищет работу.\n"
-            "Важно: это именно отказ, а не вопросы.\n"
+
+def _class_generation_examples(target_class: str) -> str:
+    if target_class == "reason_farewell":
+        return "Example: Спасибо за предложение, но мне не подходит офисный формат, поэтому вынужден отказаться."
+    if target_class == "no_reason":
+        return "Example: Спасибо, но вынужден отказаться."
+    if target_class == "acceptance":
+        return "Example: Здравствуйте! Вакансия выглядит интересно. Можете прислать ссылку на описание позиции и уточнить формат работы?"
+    return "Example: Откуда вы вообще взяли мой контакт и почему пишете без предупреждения?"
+
+
+def _pick_scenario_hint(
+    target_class: str,
+    rng: random.Random,
+    scenario_mode: str,
+    scenario_count_per_class: Optional[int],
+    cycle_state: Dict[str, int],
+) -> str:
+    pool = SCENARIO_HINTS_BY_CLASS.get(target_class) or ["Нейтральное сообщение."]
+    if scenario_count_per_class is not None and scenario_count_per_class > 0 and scenario_count_per_class < len(pool):
+        pool = pool[:scenario_count_per_class]
+
+    if scenario_mode == "random":
+        return rng.choice(pool)
+
+    idx = cycle_state.get(target_class, 0) % len(pool)
+    cycle_state[target_class] = idx + 1
+    return pool[idx]
+
+
+class CandidateMessageSynthesizer:
+    """
+    Generates ONE Russian candidate message with a known TARGET_CLASS.
+    This is the "ground truth label" used to test message_classifier prompt.
+
+    Important: message_classifier should NOT be used to build the dataset.
+    """
+
+    def __init__(self, model: str, seed: Optional[int]) -> None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("OPENAI_API_KEY is not set")
+        self.client = OpenAI(api_key=api_key)
+        self.model = model
+        self.seed = seed
+        self.last_usage: Any = None
+
+    def _instruction(self) -> str:
+        return (
+            "You generate exactly ONE candidate message in Russian after the recruiter's first outreach.\n"
+            "You will be given TARGET_CLASS: reason_farewell / no_reason / acceptance / human_needed.\n"
+            "Generate one message so that it is unambiguous and easy to classify into TARGET_CLASS.\n\n"
+            "Global rules:\n"
+            "- Return only the candidate message text.\n"
+            "- No JSON, no quotes, no markdown, no explanations.\n"
+            "- Keep the message realistic and concise.\n"
+            "- Avoid class ambiguity.\n"
+            "- Follow the class-specific hard requirements exactly.\n"
         )
-    elif label == "no_reason":
-        spec = (
-            "Класс: no_reason.\n"
-            "Сгенерируй сообщения, где кандидат ОТКАЗЫВАЕТСЯ БЕЗ ПРИЧИНЫ.\n"
-            "Фразы типа: 'нет, спасибо', 'не подходит', 'неинтересно'.\n"
-            "Не добавляй причин и деталей.\n"
+
+    def _payload(self, cdm: Dict[str, Any], target_class: str, scenario_hint: str, noise_level: int) -> str:
+        vacancy = cdm.get("vacancy") or {}
+        candidate = cdm.get("candidate") or {}
+
+        noise_desc = ["low", "medium", "high"][min(max(noise_level, 0), 2)]
+
+        ctx = {
+            "TARGET_CLASS": target_class,
+            "SCENARIO_HINT": scenario_hint,
+            "noise_level": noise_desc,
+            "vacancy": {
+                "title": vacancy.get("title"),
+                "company_name": vacancy.get("company_name"),
+                "company_description": vacancy.get("company_description") or vacancy.get("firm_description"),
+                "responsibilities": vacancy.get("responsibilities"),
+                "work_format": vacancy.get("work_format"),
+                "location": vacancy.get("location"),
+                "salary_range_from": vacancy.get("salary_range_from"),
+                "salary_range_to": vacancy.get("salary_range_to"),
+                "salary": vacancy.get("salary"),
+                "stack": vacancy.get("vacancy_stack") or vacancy.get("stack"),
+            },
+            "candidate": {
+                "candidate_name": candidate.get("candidate_name"),
+                "candidate_job_list": candidate.get("candidate_job_list"),
+                "candidate_skills": candidate.get("candidate_skills"),
+            },
+        }
+
+        return (
+            "CONTEXT_JSON:\n"
+            f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
+            "INSTRUCTIONS:\n"
+            f"1) TARGET_CLASS = {target_class}\n"
+            f"2) SCENARIO_HINT = {scenario_hint}\n"
+            "3) Use vacancy context only to make the message realistic.\n"
+            "4) Do not invent a different class than requested.\n"
+            f"5) {_class_generation_requirements(target_class)}\n"
+            f"6) {_class_generation_examples(target_class)}\n"
+            "7) Return exactly one message in Russian.\n"
         )
-    elif label == "acceptance":
-        spec = (
-            "Класс: acceptance.\n"
-            "Сгенерируй сообщения, где кандидат ЯВНО ИНТЕРЕСУЕТСЯ вакансией.\n"
-            "Допускается: согласие + вопросы по вакансии (зарплата, формат, задачи, команда).\n"
-            "Важно: не должно быть отказа или сомнений.\n"
+
+    def synthesize_one(self, cdm: Dict[str, Any], target_class: str, scenario_hint: str, noise_level: int) -> str:
+        instruction = self._instruction()
+        payload = self._payload(cdm=cdm, target_class=target_class, scenario_hint=scenario_hint, noise_level=noise_level)
+
+        resp = self.client.responses.create(
+            model=self.model,
+            input=instruction + "\n\n" + payload,
         )
-    else:
-        spec = (
-            "Класс: human_needed.\n"
-            "Сгенерируй сообщения, которые НЕ являются явным принятием и НЕ являются явным отказом.\n"
-            "Это может быть: сомнение, смешанное намерение, жалоба, раздражение, нерелевантный вопрос, непонятный смысл.\n"
-            "Важно: не делай явного 'да, интересно' и не делай явного 'нет, не подходит'.\n"
+        self.last_usage = getattr(resp, "usage", None)
+        text = (getattr(resp, "output_text", "") or "").strip()
+
+        if not text or len(text) < 1:
+            raise ValueError("message generator returned empty message")
+        if "\n" in text.strip():
+            text = " ".join(x.strip() for x in text.splitlines() if x.strip()).strip()
+        return text
+
+
+class MessageClassifierRunner:
+    def __init__(self, prompt_id: str, prompt_version: Optional[str]) -> None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("OPENAI_API_KEY is not set")
+
+        self.client = OpenAI(api_key=api_key)
+        self.prompt: Dict[str, Any] = {"id": prompt_id}
+        if prompt_version:
+            self.prompt["version"] = str(prompt_version)
+        self.last_usage: Any = None
+        self.last_raw_output: str = ""
+
+    def classify(self, message: str) -> str:
+        resp = self.client.responses.create(
+            prompt=self.prompt,
+            input=message.strip(),
         )
+        self.last_usage = getattr(resp, "usage", None)
+        raw = (getattr(resp, "output_text", "") or "").strip()
+        self.last_raw_output = raw
+        label = _extract_label(raw)
+        if label not in CLASSES:
+            raise ValueError(f"message_classifier returned invalid output: {raw!r}")
+        return label
 
-    return common + "\n" + spec + f"\nСгенерируй {n} вариантов."
 
-def generate_messages_for_label(
-    client: OpenAI,
-    label: str,
-    n: int,
-    usage_bucket: Dict[str, int],
-) -> List[str]:
-    prompt = _gen_prompt_for_label(label, n)
-    resp = client.responses.create(model=GEN_MODEL, input=prompt)
-    _accumulate_usage(usage_bucket, getattr(resp, "usage", None))
-    text = (getattr(resp, "output_text", "") or "").strip()
+def _confusion_matrix(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    m: Dict[str, Dict[str, int]] = {t: {p: 0 for p in CLASSES} for t in CLASSES}
+    for c in cases:
+        t = c.get("target_class")
+        p = c.get("predicted_class")
+        if t in CLASSES and p in CLASSES:
+            m[t][p] += 1
+    return m
 
-    msgs: List[str] = []
-    try:
-        data = _safe_json_loads(text)
-        if isinstance(data, list):
-            msgs = [_normalize_text(str(x)) for x in data if _normalize_text(str(x))]
-    except Exception:
-        msgs = []
 
-    # фильтруем валидностью под класс
-    msgs = [m for m in msgs if _validate_for_label(label, m)]
+def _accuracy(cases: List[Dict[str, Any]]) -> Optional[float]:
+    if not cases:
+        return None
+    ok = sum(1 for c in cases if c.get("target_class") == c.get("predicted_class"))
+    return round(ok / len(cases) * 100.0, 2)
 
-    # если мало - добиваем fallback
-    if len(msgs) < n:
-        pool = FALLBACK.get(label, [])
-        for m in pool:
-            if len(msgs) >= n:
-                break
-            if _validate_for_label(label, m):
-                msgs.append(m)
 
-    return msgs[:n]
+def _per_class_accuracy(cases: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    out: Dict[str, Optional[float]] = {}
+    for cls in CLASSES:
+        items = [c for c in cases if c.get("target_class") == cls]
+        if not items:
+            out[cls] = None
+            continue
+        ok = sum(1 for c in items if c.get("target_class") == c.get("predicted_class"))
+        out[cls] = round(ok / len(items) * 100.0, 2)
+    return out
 
-# -----------------------
-# Прогон message_classifier
-# -----------------------
 
-def classify_message(message_text: str, cfg: Dict[str, Any]) -> Tuple[str, Any]:
-    mc_cfg = _component_cfg(cfg, "message_classifier")
-    prompt_id = mc_cfg.get("prompt_id")
-    prompt_version = mc_cfg.get("prompt_version")
-    if not prompt_id:
-        raise ValueError("message_classifier.prompt_id is not set in model.yaml")
+def _counts_by_key(cases: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+    return dict(Counter(str(c.get(key)) for c in cases if c.get(key) in CLASSES))
 
-    assistant = ClassifierAssistant(prompt_id=prompt_id, prompt_version=prompt_version)
-    label = (assistant.run(message_text) or "").strip()
-    return label, getattr(assistant, "last_usage", None)
 
-# -----------------------
-# Опциональная QA-проверка генератора (чтобы отличать "плохой тест-кейс" от "ошибки классификатора")
-# -----------------------
+def _mismatches_from_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [c for c in cases if not c.get("match")]
 
-def judge_message_fits_expected_label(
-    client: OpenAI,
-    message_text: str,
-    expected_label: str,
-    usage_bucket: Dict[str, int],
-) -> Tuple[int, str]:
-    instruction = (
-        "Ты строгий QA-ревьюер.\n"
-        "Тебе дано ОДНО сообщение кандидата на русском и ожидаемая метка.\n"
-        "Проверь, действительно ли сообщение соответствует метке.\n"
-        "Верни JSON:\n"
-        "{\n"
-        '  "score": 0 или 1,\n'
-        '  "comment": "кратко"\n'
-        "}\n"
-        "Где score=1 только если соответствие однозначное.\n"
-        "Никакого текста вне JSON.\n"
-    )
-    payload = instruction + "\n\n" + json.dumps(
-        {"message": message_text, "expected_label": expected_label},
-        ensure_ascii=False,
-    )
-    resp = client.responses.create(model=EVAL_MODEL, input=payload)
-    _accumulate_usage(usage_bucket, getattr(resp, "usage", None))
-    text = (getattr(resp, "output_text", "") or "").strip()
 
-    try:
-        data = _safe_json_loads(text)
-        score = int(data.get("score", 0))
-        if score not in (0, 1):
-            score = 0
-        comment = str(data.get("comment", "")).strip() or "No comment."
-        return score, comment
-    except Exception:
-        return 0, f"Failed to parse judge output: {text[:200]}"
-
-# -----------------------
-# Основной раннер
-# -----------------------
-
-def run_message_classifier_tests(
-    n_per_class: int,
-    seed: int,
-    use_llm_generation: bool,
-    enable_judge: bool,
+def run_message_classifier_dataset(
+    cdm_dir: pathlib.Path,
+    cdm_count: Optional[int],
+    messages_per_class: int,
+    mode: str,
+    regression_cases_path: Optional[pathlib.Path],
+    prompt_id: Optional[str],
+    prompt_version: Optional[str],
+    message_gen_model: Optional[str],
+    noise_level: int,
+    seed: Optional[int],
+    scenario_mode: str,
+    scenario_count_per_class: Optional[int],
+    max_attempts_multiplier: int,
+    quiet: bool,
 ) -> pathlib.Path:
     ensure_dirs()
 
-    if not CFG_PATH.is_file():
-        raise FileNotFoundError(f"Config not found: {CFG_PATH}")
-    cfg = load_yaml(CFG_PATH)
-
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise EnvironmentError("OPENAI_API_KEY is not set")
-
-    rnd = random.Random(seed)
-    client = OpenAI(api_key=api_key)
+    if mode not in ("synthetic", "regression", "all"):
+        raise ValueError("--mode must be synthetic|regression|all")
+    if mode in ("synthetic", "all") and messages_per_class <= 0:
+        raise ValueError("--messages-per-class must be > 0 when mode includes synthetic")
+    if scenario_mode not in ("random", "cycle"):
+        raise ValueError("--scenario-mode must be random|cycle")
+    if max_attempts_multiplier <= 0:
+        raise ValueError("--max-attempts-multiplier must be > 0")
 
     started_at = datetime.datetime.now()
     run_id = started_at.strftime("%Y%m%d_%H%M%S")
 
-    usage = {
-        "generator": _blank_usage(),
-        "classifier": _blank_usage(),
-        "judge": _blank_usage(),
+    cfg: Dict[str, Any] = {}
+    if CFG_PATH.is_file():
+        cfg = load_yaml(CFG_PATH) or {}
+        _log(quiet, f"[init] loaded cfg: {CFG_PATH}")
+    else:
+        _log(quiet, f"[init] cfg not found: {CFG_PATH} (ok, will use env/cli)")
+
+    cfg_pid, cfg_pver, cfg_seed = _resolve_prompt_from_cfg(cfg)
+    cfg_gen_model = _resolve_message_gen_model_from_cfg(cfg)
+
+    env_pid = os.environ.get("MESSAGE_CLASSIFIER_PROMPT_ID")
+    env_pver = os.environ.get("MESSAGE_CLASSIFIER_PROMPT_VERSION")
+
+    final_pid = prompt_id or cfg_pid or env_pid
+    final_pver = prompt_version or cfg_pver or env_pver
+
+    if not final_pid:
+        raise EnvironmentError(
+            "No prompt_id found. Provide --prompt-id, or set MESSAGE_CLASSIFIER_PROMPT_ID, "
+            "or add tests/tools/model.yaml -> message_classifier.prompt_id"
+        )
+
+    final_seed = seed if seed is not None else cfg_seed
+    final_gen_model = message_gen_model or cfg_gen_model or DEFAULT_MESSAGE_GEN_MODEL
+
+    cdm_paths: List[pathlib.Path] = []
+    if mode in ("synthetic", "all"):
+        cdm_paths = load_cdm_files(cdm_dir, cdm_count=cdm_count)
+
+    final_regression_cases_path = regression_cases_path or DEFAULT_REGRESSION_CASES_PATH
+    regression_cases: List[Dict[str, Any]] = []
+    if mode in ("regression", "all"):
+        regression_cases = load_regression_cases(final_regression_cases_path)
+
+    _log(
+        quiet,
+        "[init] "
+        f"run_id={run_id} "
+        f"mode={mode} "
+        f"cdm_count={cdm_count} "
+        f"messages_per_class={messages_per_class} "
+        f"noise_level={noise_level} "
+        f"seed={final_seed} "
+        f"scenario_mode={scenario_mode} "
+        f"scenario_count_per_class={scenario_count_per_class} "
+        f"max_attempts_multiplier={max_attempts_multiplier}",
+    )
+    _log(
+        quiet,
+        "[init] "
+        f"prompt_id={final_pid} "
+        f"prompt_version={final_pver} "
+        f"message_gen_model={final_gen_model} "
+        f"message_gen_retries={MESSAGE_GEN_MAX_RETRIES}",
+    )
+
+    rng = random.Random(final_seed)
+    cycle_state: Dict[str, int] = {cls: 0 for cls in CLASSES}
+    synth = CandidateMessageSynthesizer(model=final_gen_model, seed=final_seed) if mode in ("synthetic", "all") else None
+    clf = MessageClassifierRunner(prompt_id=final_pid, prompt_version=final_pver)
+
+    token_usage_total = _blank_usage()
+    token_usage = {
+        "message_generator": _blank_usage(),
+        "message_classifier": _blank_usage(),
     }
-
     cases: List[Dict[str, Any]] = []
-    confusion = _confusion_init(LABELS)
+    errors: List[Dict[str, Any]] = []
 
-    total = 0
-    correct = 0
-    skipped_by_bad_case = 0
+    if mode in ("synthetic", "all"):
+        assert synth is not None
+        for target in CLASSES:
+            need = messages_per_class
+            attempts_limit = messages_per_class * max_attempts_multiplier
 
-    for expected_label in LABELS:
-        # 1) генерим/берем сообщения
-        if use_llm_generation:
-            messages = generate_messages_for_label(client, expected_label, n_per_class, usage["generator"])
-        else:
-            pool = FALLBACK.get(expected_label, [])
-            rnd.shuffle(pool)
-            messages = pool[:n_per_class]
+            _log(quiet, f"[target] {target}: need={need}")
 
-        for msg in messages:
-            msg = _normalize_text(msg)
+            got = 0
+            attempts = 0
 
-            # 1.1) дополнительная защита: если сообщение вообще не похоже на класс, считаем кейс "плохим"
-            if not _validate_for_label(expected_label, msg):
-                skipped_by_bad_case += 1
-                continue
+            while got < need and attempts < attempts_limit:
+                attempts += 1
 
-            judge_score = None
-            judge_comment = None
-            if enable_judge:
-                js, jc = judge_message_fits_expected_label(client, msg, expected_label, usage["judge"])
-                judge_score, judge_comment = js, jc
-                # если сам QA считает кейс спорным - можно пропустить, чтобы тест был "чистым"
-                if judge_score == 0:
-                    skipped_by_bad_case += 1
+                cdm_path = rng.choice(cdm_paths)
+                cdm = load_json(cdm_path)
+                vacancy = cdm.get("vacancy") or {}
+                v_title = vacancy.get("title")
+                v_company = vacancy.get("company_name")
+
+                scenario_hint = _pick_scenario_hint(
+                    target_class=target,
+                    rng=rng,
+                    scenario_mode=scenario_mode,
+                    scenario_count_per_class=scenario_count_per_class,
+                    cycle_state=cycle_state,
+                )
+
+                _log(quiet, f"  [gen] target={target} cdm={cdm_path.name} title={v_title} company={v_company}")
+                _log(quiet, f"    [hint] {scenario_hint}")
+
+                message = ""
+                predicted: Optional[str] = None
+                raw_error: Optional[str] = None
+
+                try:
+                    message = synth.synthesize_one(
+                        cdm=cdm,
+                        target_class=target,
+                        scenario_hint=scenario_hint,
+                        noise_level=noise_level,
+                    )
+                    validation_error = _validate_generated_message(target, message)
+                    if validation_error is not None:
+                        raise ValueError(validation_error)
+                    _accumulate_usage(token_usage_total, synth.last_usage)
+                    _accumulate_usage(token_usage["message_generator"], synth.last_usage)
+
+                    predicted = clf.classify(message)
+                    _accumulate_usage(token_usage_total, clf.last_usage)
+                    _accumulate_usage(token_usage["message_classifier"], clf.last_usage)
+
+                except Exception as e:
+                    raw_error = repr(e)
+
+                if raw_error is not None:
+                    errors.append(
+                        {
+                            "case_type": "synthetic",
+                            "target_class": target,
+                            "cdm_file": str(cdm_path),
+                            "scenario_hint": scenario_hint,
+                            "error": raw_error,
+                        }
+                    )
+                    _log(quiet, f"    [err] {raw_error}")
                     continue
 
-            # 2) классифицируем
-            predicted, cls_usage = classify_message(msg, cfg)
-            _accumulate_usage(usage["classifier"], cls_usage)
+                assert predicted is not None
 
-            if predicted not in LABELS:
-                predicted = "human_needed"  # безопасный fallback
-
-            confusion[expected_label][predicted] += 1
-
-            is_ok = int(predicted == expected_label)
-            total += 1
-            correct += is_ok
-
-            cases.append(
-                {
-                    "expected_label": expected_label,
-                    "predicted_label": predicted,
-                    "ok": bool(is_ok),
-                    "message": msg,
-                    "judge_score": judge_score,
-                    "judge_comment": judge_comment,
+                case = {
+                    "case_type": "synthetic",
+                    "target_class": target,
+                    "predicted_class": predicted,
+                    "match": bool(predicted == target),
+                    "scenario_hint": scenario_hint,
+                    "cdm_file": str(cdm_path),
+                    "vacancy_title": v_title,
+                    "vacancy_company": v_company,
+                    "message": message,
+                    "raw_classifier_output": clf.last_raw_output,
                 }
+                cases.append(case)
+
+                got += 1
+                _log(quiet, f"    [ok] case={got}/{need} predicted={predicted} match={case['match']}")
+
+            if got < need:
+                raise RuntimeError(
+                    f"Could not generate enough messages for target={target}: got {got}/{need} "
+                    f"within {attempts_limit} attempts. Consider increasing --max-attempts-multiplier "
+                    f"or adjusting scenario hints."
+                )
+
+    if mode in ("regression", "all"):
+        _log(quiet, f"[regression] cases={len(regression_cases)}")
+        for idx, regression_case in enumerate(regression_cases, start=1):
+            predicted: Optional[str] = None
+            raw_error: Optional[str] = None
+
+            try:
+                predicted = clf.classify(regression_case["message"])
+                _accumulate_usage(token_usage_total, clf.last_usage)
+                _accumulate_usage(token_usage["message_classifier"], clf.last_usage)
+            except Exception as e:
+                raw_error = repr(e)
+
+            if raw_error is not None:
+                errors.append(
+                    {
+                        "case_type": "regression",
+                        "id": regression_case["id"],
+                        "target_class": regression_case["target_class"],
+                        "scenario": regression_case["scenario"],
+                        "error": raw_error,
+                    }
+                )
+                _log(quiet, f"  [reg-err] id={regression_case['id']} error={raw_error}")
+                continue
+
+            assert predicted is not None
+
+            case = {
+                "case_type": "regression",
+                "id": regression_case["id"],
+                "description": regression_case["description"],
+                "scenario": regression_case["scenario"],
+                "target_class": regression_case["target_class"],
+                "predicted_class": predicted,
+                "match": bool(predicted == regression_case["target_class"]),
+                "message": regression_case["message"],
+                "raw_classifier_output": clf.last_raw_output,
+            }
+            cases.append(case)
+            _log(
+                quiet,
+                f"  [reg-ok] case={idx}/{len(regression_cases)} id={regression_case['id']} "
+                f"predicted={predicted} match={case['match']}",
             )
 
-    accuracy = (correct / total) if total else 0.0
+    synthetic_cases = [c for c in cases if c.get("case_type") == "synthetic"]
+    regression_result_cases = [c for c in cases if c.get("case_type") == "regression"]
 
-    # группируем ошибки
-    failed = [c for c in cases if not c.get("ok")]
-    failed_by_expected: Dict[str, List[Dict[str, Any]]] = {}
-    for c in failed:
-        failed_by_expected.setdefault(c["expected_label"], []).append(c)
+    accuracy = _accuracy(cases)
+    synthetic_accuracy = _accuracy(synthetic_cases)
+    regression_accuracy = _accuracy(regression_result_cases)
+    per_class_acc = _per_class_accuracy(cases)
+    synthetic_per_class_acc = _per_class_accuracy(synthetic_cases)
+    regression_per_class_acc = _per_class_accuracy(regression_result_cases)
+    cm = _confusion_matrix(cases)
+    synthetic_cm = _confusion_matrix(synthetic_cases)
+    regression_cm = _confusion_matrix(regression_result_cases)
 
-    report = {
+    counts_target = _counts_by_key(cases, "target_class")
+    counts_pred = _counts_by_key(cases, "predicted_class")
+    synthetic_counts_target = _counts_by_key(synthetic_cases, "target_class")
+    synthetic_counts_pred = _counts_by_key(synthetic_cases, "predicted_class")
+    regression_counts_target = _counts_by_key(regression_result_cases, "target_class")
+    regression_counts_pred = _counts_by_key(regression_result_cases, "predicted_class")
+
+    mismatches = _mismatches_from_cases(cases)
+    synthetic_mismatches = _mismatches_from_cases(synthetic_cases)
+    regression_mismatches = _mismatches_from_cases(regression_result_cases)
+
+    report: Dict[str, Any] = {
         "run_id": run_id,
         "started_at": started_at.isoformat(),
-        "n_per_class": n_per_class,
-        "seed": seed,
-        "use_llm_generation": use_llm_generation,
-        "enable_judge": enable_judge,
-        "total_cases_scored": total,
-        "correct": correct,
-        "accuracy": accuracy,
-        "skipped_by_bad_case": skipped_by_bad_case,
-        "labels": LABELS,
-        "confusion_matrix": confusion,
-        "failed_examples": failed[:50],  # ограничим
-        "failed_by_expected": {k: v[:20] for k, v in failed_by_expected.items()},
+        "mode": mode,
+        "cdm_count": cdm_count,
+        "regression_cases_path": str(final_regression_cases_path) if mode in ("regression", "all") else None,
+        "messages_per_class": messages_per_class,
+        "noise_level": noise_level,
+        "seed": final_seed,
+        "scenario_mode": scenario_mode,
+        "scenario_count_per_class": scenario_count_per_class,
+        "max_attempts_multiplier": max_attempts_multiplier,
+        "prompt": {"prompt_id": final_pid, "prompt_version": final_pver},
+        "message_gen_model": final_gen_model,
+        "message_gen_retries": MESSAGE_GEN_MAX_RETRIES,
+        "token_usage_total": token_usage_total,
+        "token_usage": token_usage,
+        "summary": {
+            "total_cases": len(cases),
+            "accuracy": accuracy,
+            "synthetic_accuracy": synthetic_accuracy,
+            "regression_accuracy": regression_accuracy,
+            "per_class_accuracy": per_class_acc,
+            "synthetic_per_class_accuracy": synthetic_per_class_acc,
+            "regression_per_class_accuracy": regression_per_class_acc,
+            "counts_target": counts_target,
+            "counts_predicted": counts_pred,
+            "synthetic_counts_target": synthetic_counts_target,
+            "synthetic_counts_predicted": synthetic_counts_pred,
+            "regression_counts_target": regression_counts_target,
+            "regression_counts_predicted": regression_counts_pred,
+            "confusion_matrix": cm,
+            "synthetic_confusion_matrix": synthetic_cm,
+            "regression_confusion_matrix": regression_cm,
+            "errors_count": len(errors),
+            "mismatches_count": len(mismatches),
+            "synthetic_mismatches_count": len(synthetic_mismatches),
+            "regression_mismatches_count": len(regression_mismatches),
+        },
         "cases": cases,
-        "token_usage": usage,
-        "models": {
-            "generator": GEN_MODEL if use_llm_generation else None,
-            "judge": EVAL_MODEL if enable_judge else None,
-        },
-        "prompts": {
-            "message_classifier": {
-                "prompt_id": _component_cfg(cfg, "message_classifier").get("prompt_id"),
-                "prompt_version": _component_cfg(cfg, "message_classifier").get("prompt_version"),
-            }
-        },
+        "mismatches": mismatches,
+        "synthetic_mismatches": synthetic_mismatches,
+        "regression_mismatches": regression_mismatches,
+        "errors": errors,
     }
 
     out_path = REPORTS_DIR / f"message_classifier_report_{run_id}.json"
-    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding=TEXT_FILE_ENCODING)
 
-    print(f"[done] Report saved to: {out_path}")
-    print(f"[summary] total={total} correct={correct} accuracy={accuracy:.3f} skipped={skipped_by_bad_case}")
+    _log(
+        quiet,
+        "[summary] "
+        f"total_cases={len(cases)} "
+        f"accuracy={(f'{accuracy:.2f}%' if accuracy is not None else 'n/a')} "
+        f"mismatches={len(mismatches)} "
+        f"errors={len(errors)} "
+        f"tokens_total={token_usage_total.get('total_tokens', 0)}",
+    )
+    _log(quiet, "[done] report saved: " + str(out_path))
+
     return out_path
 
-# -----------------------
-# CLI
-# -----------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Test message_classifier prompt (reason_farewell/no_reason/acceptance/human_needed).")
-    parser.add_argument("--n-per-class", type=int, default=DEFAULT_N_PER_CLASS, help="How many messages per class to test.")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed (used for fallback shuffle).")
-    parser.add_argument("--no-gen", action="store_true", help="Do not use LLM generation, only fixed fallback pool.")
-    parser.add_argument("--judge", action="store_true", help="Enable extra QA judge to filter ambiguous generated cases.")
+    parser = argparse.ArgumentParser(
+        description="Generate candidate messages with known TARGET classes and evaluate message_classifier prompt accuracy."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="synthetic",
+        choices=["synthetic", "regression", "all"],
+        help="Dataset mode: generate synthetic cases, run manual regression cases, or both.",
+    )
+    parser.add_argument(
+        "--cdm-dir",
+        type=str,
+        default=str(DEFAULT_CDM_DIR),
+        help=f"CDM fixtures dir (default: {DEFAULT_CDM_DIR})",
+    )
+    parser.add_argument(
+        "--cdm-count",
+        type=int,
+        default=None,
+        help="Use first N CDM fixtures (sorted by filename). Default: all.",
+    )
+    parser.add_argument(
+        "--messages-per-class",
+        type=int,
+        default=0,
+        help="How many messages to generate for EACH class in synthetic mode.",
+    )
+    parser.add_argument(
+        "--regression-cases",
+        type=str,
+        default=str(DEFAULT_REGRESSION_CASES_PATH),
+        help=f"Path to manual regression cases JSON (default: {DEFAULT_REGRESSION_CASES_PATH}).",
+    )
+    parser.add_argument(
+        "--noise-level",
+        type=int,
+        default=2,
+        help="0..2. Higher means more noise/indirectness (kept bounded to avoid ambiguity).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (overrides cfg seed if provided).",
+    )
+    parser.add_argument(
+        "--message-gen-model",
+        type=str,
+        default=None,
+        help=f"Message generation model override (default: {DEFAULT_MESSAGE_GEN_MODEL}).",
+    )
+    parser.add_argument(
+        "--prompt-id",
+        type=str,
+        default=None,
+        help="Override message_classifier prompt id (otherwise from cfg/env).",
+    )
+    parser.add_argument(
+        "--prompt-version",
+        type=str,
+        default=None,
+        help="Override message_classifier prompt version (otherwise from cfg/env).",
+    )
+    parser.add_argument(
+        "--scenario-mode",
+        type=str,
+        default="random",
+        choices=["random", "cycle"],
+        help="How to select scenario hints inside each class bucket.",
+    )
+    parser.add_argument(
+        "--scenario-count-per-class",
+        type=int,
+        default=None,
+        help="If set, restrict to first N scenario hints in each class pool.",
+    )
+    parser.add_argument(
+        "--max-attempts-multiplier",
+        type=int,
+        default=30,
+        help="Attempts limit per class = messages_per_class * multiplier.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Disable console progress output.",
+    )
+
     args = parser.parse_args()
 
-    report_path = run_message_classifier_tests(
-        n_per_class=max(1, args.n_per_class),
+    run_message_classifier_dataset(
+        cdm_dir=pathlib.Path(args.cdm_dir),
+        cdm_count=args.cdm_count,
+        messages_per_class=int(args.messages_per_class),
+        mode=str(args.mode),
+        regression_cases_path=pathlib.Path(args.regression_cases) if args.regression_cases else None,
+        prompt_id=args.prompt_id,
+        prompt_version=args.prompt_version,
+        message_gen_model=args.message_gen_model,
+        noise_level=int(args.noise_level),
         seed=args.seed,
-        use_llm_generation=not args.no_gen,
-        enable_judge=bool(args.judge),
+        scenario_mode=str(args.scenario_mode),
+        scenario_count_per_class=args.scenario_count_per_class,
+        max_attempts_multiplier=int(args.max_attempts_multiplier),
+        quiet=bool(args.quiet),
     )
-    print("message_classifier report ->", report_path)
+
 
 if __name__ == "__main__":
     main()

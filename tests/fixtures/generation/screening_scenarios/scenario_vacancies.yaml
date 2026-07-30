@@ -1,0 +1,51 @@
+# Пер-сценарный контекст вакансии для screening_scenarios, компонент base (screening_assistant v51).
+# Мерджится поверх DEFAULT_VACANCY_INFO. Резолв по index = № строки CSV. Свой файл на компонент.
+# Значения полей — строго по контекст-блоку и правилам промпта v51:
+#   work_format: "office" | "hybrid" | "remote"  (НЕ ON_SITE/FIELD_WORK — это словарь hh-промпта);
+#   скрытый поиск: company_name: "СКРЫТО"  (ровно это слово — см. ПРАВИЛО СКРЫТОСТИ КОМПАНИИ);
+#   contact_source: значение поля «Источник контакта кандидата» (триггер 7).
+
+scenarios:
+  # --- скрытый поиск: компания = СКРЫТО → промпт не раскрывает название/ссылки ---
+  - index: 23
+    match: "Вопрос о компании (при скрытом поиске)"
+    company_name: "СКРЫТО"
+    company_info:
+      vacancy_url: ""
+  - index: 24
+    match: "Повторный вопрос о компании (при скрытом поиске)"
+    company_name: "СКРЫТО"
+    company_info:
+      vacancy_url: ""
+
+  # --- локация/формат: вакансия office/hybrid (не remote), иначе про офис/переезд спрашивать не из чего ---
+  - index: 34
+    match: "в городе вакансии, но не подтвердил"
+    work_format: "office"
+    location: "Москва"
+  - index: 35
+    match: "ближнем пригороде Москвы"
+    work_format: "hybrid"
+    location: "Москва"
+  - index: 36
+    match: "рядом с городом вакансии"
+    work_format: "office"
+    location: "Казань"
+  - index: 37
+    match: "не готов к офису или гибриду"
+    work_format: "office"
+    location: "Москва"
+  - index: 39
+    match: "слишком далеко от города"
+    work_format: "office"
+    location: "Москва"
+
+  # --- источник контакта (поле «Источник контакта кандидата», триггер 7) ---
+  # #40: источник контакта ЗАПОЛНЕН. В проде источник выводится НЕ из вакансии, а из аккаунтов
+  #      кандидата (type → hh/ln/github/mk); движок читает `source_type` (см. conversation.py),
+  #      candidate_source() резолвит его в метку «резюме HH». Поэтому задаём source_type, а НЕ
+  #      contact_source (то поле движок игнорирует). Скрипт REPLY_CONTACT_SOURCE подставит «резюме HH».
+  # #41 (пустой) здесь НЕ задаём: дефолт без source_type = «пустой» случай → fallback «из базы кандидатов».
+  - index: 40
+    match: "источник контакта заполнен (аккаунт HH)"
+    source_type: hh

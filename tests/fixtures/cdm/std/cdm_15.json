@@ -1,0 +1,88 @@
+{
+  "vacancy": {
+    "title": "Ведущий инженер по тестированию на проникновение веб-приложений / Senior penetration tester (Web)",
+    "company_name": "BI.ZONE",
+    "company_description": "Компания создает IT-продукты для кибербезопасности и ищет опытного web-пентестера для сложных прикладных систем и сервисов.",
+    "company_industry": "Cybersecurity",
+    "location": "Россия",
+    "work_format": "hybrid",
+    "salary_range_from": null,
+    "salary_range_to": null,
+    "responsibilities": "Проведение web и mobile pentest, анализ защищенности API и кода, ручной поиск уязвимостей, моделирование атак, подготовка технических отчетов и консультация команд разработки.",
+    "vacancy_stack": "OWASP Top-10, Burp Suite, Nmap, ZAP, Metasploit, Nuclei, REST, Java, PHP, Golang, C#, Ruby, Python",
+    "vacancy_skills": "Пентест, Анализ защищённости веб-приложений, Black box testing, White box testing, JWT security, SQL Injection, XSS, CSRF, Тестирование на проникновение",
+    "questions": "1. Есть ли у вас опыт анализа защищенности веб-приложений и pentest от 3 лет?\n2. На каких языках вы читаете исходный код и какими инструментами пользуетесь в web pentest?\n3. Есть ли у вас опыт работы с OWASP Top-10, REST API и ручным поиском уязвимостей?",
+    "raw_vacancy": "Ведущий инженер по тестированию на проникновение веб-приложений / Senior penetration tester (Web)\nУровень дохода не указан\nОпыт работы: 3–6 лет\n\nПолная занятость\nГрафик: 5/2\n\nРабочие часы: 8\nФормат работы: на месте работодателя, удалённо или гибрид\n\nСейчас эту вакансию смотрят 2 человека\n\nBI.ZONE создает IT-продукты для обеспечения кибербезопасности: от мобильных приложений до сложных платформ, в основе которых лежат методы машинного обучения.\n\nНа данный момент мы ищем опытного web-пентестера!\n\nЧем предстоит заниматься:\nПроведением углубленного анализа защищенности веб-приложений различной степени сложности;\nИсследованием безопасности интерфейсов программирования приложений, в том числе REST;\nАнализом защищенности мобильных приложений (Android и iOS);\nПроведением внешнего и внутреннего тестирования на проникновение;\nПроведением ручного анализа уязвимостей, выходящего за рамки автоматизированных средств;\nАнализом исходного кода приложений для выявления первопричин уязвимостей;\nРазработкой и применением вспомогательных инструментов, скриптов и автоматизации;\nПодготовкой детализированных технических отчетов;\nКонсультированием команд разработки, архитектуры и информационной безопасности.\n\nЧто для нас важно:\nОпыт проведения анализа защищенности веб приложений от 3х лет;\nОтличное знание уязвимостей приложений, включая OWASP Top-10;\nУмение читать исходный код минимум на одном языке из набора: Java, PHP, Golang, C#, Ruby, Python;\nПонимание основных методологий анализа защищенности и тестирования на проникновение;\nПонимание устройства современных веб приложений;\nУмение автоматизировать задачи с помощью какого-либо скриптового языка программирования.\n\nКлючевые навыки:\nПентест;\nАнализ защищённости веб-приложений;\nBlack box testing;\nWhite box testing;\nBurp Suite;\nNmap;\nZAP;\nMetasploit;\nNuclei;\nJWT security;\nSQL Injection / XSS / CSRF;\nТестирование на проникновение.\n",
+    "key_requirements": [
+      "OWASP Top-10",
+      "Java/PHP/Golang/Python",
+      "Burp Suite",
+      "SQL Injection/XSS/CSRF",
+      "пентест"
+    ],
+    "extractor_entities": {
+      "skills": [
+        {
+          "raw_text": "penetration testing",
+          "operator": "AND"
+        },
+        {
+          "raw_text": "web application",
+          "operator": "AND"
+        }
+      ],
+      "positions": [
+        {
+          "raw_text": "инженер по тестированию на проникновение веб-приложений",
+          "operator": "OR"
+        },
+        {
+          "raw_text": "penetration tester (Web)",
+          "operator": "OR"
+        }
+      ],
+      "level": [
+        "senior"
+      ]
+    },
+    "vacancy_url": "https://careers.example/cdm_15"
+  },
+  "candidate": {
+    "recruiter_name": "Варя",
+    "candidate_name": "Вадим",
+    "candidate_contacts": [
+      {
+        "type": "ln",
+        "url": "https://linkedin.com/in/example"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Senior Penetration Tester",
+        "company": "ExampleCorp",
+        "company_norm": {
+          "categories": [
+            {
+              "title": "Cybersecurity"
+            }
+          ]
+        }
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Burp Suite",
+        "quantile": 4.2
+      },
+      {
+        "skill": "OWASP Top-10",
+        "quantile": 4.1
+      },
+      {
+        "skill": "Web pentest",
+        "quantile": 4.1
+      }
+    ],
+    "contact_source": "LinkedIn"
+  }
+}

@@ -1,26 +1,78 @@
-first_touch:  
+# local_component — имя директории компонента в репозитории `prompts` (для --prompt-source local),
+# когда оно отличается от ключа в этом реестре. Где не задано — берётся сам ключ (identity).
+
+first_touch:
   prompt_id: pmpt_694a88c0ce708196ae2722f68b452760081b5f35879bbd4e
-  prompt_version: 9
+  prompt_version: 14
   seed: 1234
+  local_component: FIRST_TOUCH
+
+first_touch_hh:
+  prompt_id: pmpt_69b1c0e900988196bc62ef7809e7939c07e3907d5493ecc5
+  prompt_version: 3
+  seed: 1234
+  local_component: HH_FIRST_TOUCH
+
+first_touch_event_invite:
+  prompt_id: pmpt_69ce8e02fc4081958ec897a73fa07961066f8c3e46cdc060
+  prompt_version: 8
+  seed: 1234
+  local_component: event_first_touch
 
 message_classifier:
   prompt_id: pmpt_68e8b47991f0819094f05d51eb5780a10ff88c389be96726
-  prompt_version: 4
+  prompt_version: 11
   seed: 1234
 
 screening_assistant:
   prompt_id: pmpt_68e8c1edd5a4819681b4685832ce14b707a66b89fccacbaf
-  prompt_version: 31
+  prompt_version: 51
+  seed: 1234
+
+screening_assistant_hh:
+  prompt_id: pmpt_69fcfc0bced48193ba7d544092b466050a5817bedd826d40
+  prompt_version: 6
   seed: 1234
 
 screening_autofill:
   prompt_id: pmpt_68cbf36344948194ab74e4c48875b2510e0d6b5f0cbf6902
-  prompt_version: 16
+  prompt_version: 27
   seed: 1234
+  local_component: screening_autofill_prompt
+
+# --- split-скрининг (два промпта из пакета `prompts`). LOCAL-ONLY: stored-эквивалента
+# на platform.openai.com нет, поэтому prompt_id не задаём — раннер screening_split берёт
+# тела/схему из пакета prompts по local_component (см. docs/LOCAL_PROMPTS.md). ---
+screening_analyzer:
+  seed: 1234
+  local_component: screening_analyzer
+screening_interviewer:
+  seed: 1234
+  local_component: screening_interviewer
 
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1
-  prompt_version: 7
+  prompt_version: 9
+  seed: 1234
+
+extractor_agent:
+  prompt_id: pmpt_6900b53e32f081959ff5d5f453dfba5c072544829df5e45f
+  prompt_version: 30
+  seed: 1234
+
+one_line_search_query_builder:
+  prompt_id: pmpt_69b1d2d4b9b88190af8d87f47a7617480c7e69c59e9f656e
+  prompt_version: 9
+  seed: 1234
+
+responsibilities_parser:
+  prompt_id: pmpt_68e66b5d57c08194959b45d5b2acc0810ab2792039e4f59b
+  prompt_version: 6
+  seed: 1234
+
+sourcing_assistant:
+  prompt_id: pmpt_68e66be91c9c8193873259d4e8e6366504610f09662d6bed
+  prompt_version: 10
   seed: 1234
 
 candidate_simulator:
@@ -32,3 +84,4 @@ candidate_simulator:
     display_name: "Мария"
     prompt_id: pmpt_6915e984ed688195b3cadd0240baea95049b4ba49bfd5df4
     prompt_version: 2
+    

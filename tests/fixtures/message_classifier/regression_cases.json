@@ -1,0 +1,58 @@
+[
+  {
+    "id": "reason_farewell_ivi_not_interesting",
+    "target_class": "reason_farewell",
+    "scenario": "candidate_declines_specific_company",
+    "description": "Кандидат рассматривает предложения в целом, но прямо отказывается от текущей компании, потому что Иви ему не интересны.",
+    "message": "Предложения рассматриваю, но Иви не интересны."
+  },
+  {
+    "id": "acceptance_team_scope_question",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_about_team_scope",
+    "description": "Кандидат задает нейтральный вопрос по вакансии о масштабе управленческой зоны ответственности.",
+    "message": "Добрый день! Одной или несколькими функциональными командами предстоит управлять? С уважением, Давид Мартиросян +7 905 7160829"
+  },
+  {
+    "id": "reason_farewell_not_my_profile_other_roles",
+    "target_class": "reason_farewell",
+    "scenario": "candidate_declines_current_profile_asks_about_other_roles",
+    "description": "Кандидат пишет, что текущая вакансия не по его профилю, и спрашивает про другие, более подходящие компании и роли.",
+    "message": "Соня добрый день. Судя по техническому стеку в компании сейчас обльше требуеться специалист по продуктам microsoft чем linux. это не по моему профилю Соня а подскажите есть ли компании которые находяться в поиске системного администратора linux / SRE или DEVOPS, но поменьше чем ИВИ, что то ближе к среднему и малому бизнесу?"
+  },
+  {
+    "id": "acceptance_company_and_process_questions",
+    "target_class": "acceptance",
+    "scenario": "candidate_interested_asks_about_company_and_process",
+    "description": "Кандидат явно проявляет интерес к вакансии и задает нейтральные вопросы про компанию, условия и собеседование.",
+    "message": "Здравствуйте! Спасибо за интерес к моей кандидатуре!\nДа, вакансия интересная.\nА Вы не от ИВИ мне пишете?\nЕще хотел узнать какие условия и как устроено собеседование? И как долго действует Ваше предложение?"
+  },
+  {
+    "id": "reason_farewell_salary_not_specified",
+    "target_class": "reason_farewell",
+    "scenario": "candidate_declines_without_salary_range",
+    "description": "Кандидат отказывается обсуждать вакансию по конкретной причине: в ней не указана зарплата или вилка.",
+    "message": "Светлана, здравствуйте!\nСпасибо за интерес, но вакансии без указанной зарплаты не обсуждаю. =)"
+  },
+  {
+    "id": "reason_farewell_other_specialization_java",
+    "target_class": "reason_farewell",
+    "scenario": "candidate_declines_current_role_prefers_java",
+    "description": "Кандидат отказывается от текущей вакансии, потому что ищет другую специализацию, но готов обсуждать иные подходящие роли.",
+    "message": "Добрый день Аурика!\nСпасибо вам за уделённое внимание, но в данный момент я ищу работу на позицию Java-разработчик. Если у вас есть вакансии такого рода, то буду рад дальнейшему общению."
+  },
+  {
+    "id": "acceptance_company_name_question",
+    "target_class": "acceptance",
+    "scenario": "candidate_asks_company_name",
+    "description": "Кандидат проявляет интерес и задает нейтральный вопрос о названии компании.",
+    "message": "Добрый день, интересует, подскажите, пожалуйста, как ваша компания называется?"
+  },
+  {
+    "id": "human_needed_contact_source_question",
+    "target_class": "human_needed",
+    "scenario": "candidate_asks_about_contact_source",
+    "description": "Кандидат проявляет интерес, но задает вопрос об источнике контактов, который по текущей логике должен идти в human_needed.",
+    "message": "Интересна компания, откуда у вас мои контакты?"
+  }
+]

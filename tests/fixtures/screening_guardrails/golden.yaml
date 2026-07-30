@@ -1,0 +1,35 @@
+# Курируемые golden-разговоры для screening_guardrails.
+# candidate_turns — реплики кандидата для ЖИВОГО мультитёрна со screening_assistant (онлайн).
+# offline_turns — replay (candidate + assistant_reply) для --offline: на ответах ассистента гоняются
+#   эвристики-детекторы (self_answer / repeated_questions / premature_end). Набор показывает и pass, и fail.
+
+- name: clean_dialog
+  candidate_name: "Иван"
+  candidate_turns:
+    - "Здравствуйте"
+    - "Москва, ожидаю 250000 на руки"
+    - "5 лет на Python и Django"
+  offline_turns:
+    - candidate: "Здравствуйте"
+      assistant_reply: "Иван, здравствуйте! Какие у вас зарплатные ожидания и в каком городе вы находитесь?"
+    - candidate: "Москва, ожидаю 250000 на руки"
+      assistant_reply: "Отлично! Расскажите про ваш опыт с Python и фреймворками?"
+    - candidate: "5 лет на Python и Django"
+      assistant_reply: "Спасибо, этого достаточно. Я передам информацию внутреннему рекрутеру. END"
+      conversation_end: true
+
+- name: self_answer_violation
+  candidate_name: "Мария"
+  candidate_turns:
+    - "Здравствуйте"
+  offline_turns:
+    - candidate: "Здравствуйте"
+      assistant_reply: "Мария, здравствуйте! Подскажите зарплатные ожидания? 250 000, Москва. Спасибо!"
+
+- name: repeated_questions_violation
+  candidate_name: "Пётр"
+  candidate_turns:
+    - "Здравствуйте"
+  offline_turns:
+    - candidate: "Здравствуйте"
+      assistant_reply: "Пётр, здравствуйте! Какие у вас зарплатные ожидания? Уточните, пожалуйста, желаемый доход?"

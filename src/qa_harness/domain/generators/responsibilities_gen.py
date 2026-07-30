@@ -1,0 +1,104 @@
+"""Seeded-генератор текста вакансии с ИЗВЕСТНЫМИ терминами для responsibilities_parser / one_line.
+
+Чтобы ground truth был детерминирован, генерацию ЗАСЕВАЕМ и РАЗДЕЛЯЕМ секции:
+- core_terms — ОБЯЗАТЕЛЬНЫЕ требования (промпт обязан вернуть как требования → expect);
+- nice_to_have — «будет плюсом» (НЕ должны попасть в обязательные → forbid);
+- conditions — условия (ДМС/график — НЕ требования → forbid);
+- soft_terms — личные качества (НЕ технические требования → forbid).
+Валидация в parse: все core-термины присутствуют в тексте (иначе expect недостижим). Приём «контролируем
+метку через засев», как у autofill. nice_to_have/conditions опциональны (one_line переиспользует генератор).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, List
+
+from .base import Generator
+
+
+def _phrase_present(phrase: str, text_low: str) -> bool:
+    """Фраза «присутствует», если ≥половины её значимых слов найдены в тексте по 6-символьному стем-префиксу
+    (терпимо к перефразировке/склонению LLM-генератора). Для коротких слов — точная подстрока."""
+    words = [w for w in re.findall(r"[a-zа-я0-9]+", phrase.lower()) if len(w) >= 4]
+    if not words:
+        return phrase.lower() in text_low
+    hits = sum(1 for w in words if w[:6] in text_low)
+    return hits >= max(1, (len(words) + 1) // 2)
+
+# Технологический словарь по доменам — источник core/nice-to-have терминов (засев).
+TECH_VOCAB = {
+    "backend": ["Python", "FastAPI", "Django", "PostgreSQL", "Redis", "Kafka", "gRPC", "SQLAlchemy"],
+    "frontend": ["React", "TypeScript", "Redux", "Webpack", "Next.js", "GraphQL"],
+    "devops": ["Docker", "Kubernetes", "Terraform", "Ansible", "Prometheus", "GitLab CI", "Helm"],
+    "data": ["Spark", "Airflow", "ClickHouse", "dbt", "Kafka", "Hadoop"],
+    "ml": ["PyTorch", "TensorFlow", "scikit-learn", "MLflow", "pandas", "NumPy"],
+}
+# Личные качества — НЕ технические требования (forbid).
+SOFT_NOISE = ["коммуникабельность", "ответственность", "работа в команде", "стрессоустойчивость", "инициативность"]
+# Условия найма — НЕ требования к кандидату (forbid).
+CONDITIONS_NOISE = ["ДМС", "гибкий график", "удалённая работа", "корпоративный спорт", "обучение за счёт компании"]
+# СИЛЬНЫЕ фильтры отбора — это и есть «лучшие требования» (засев → expect). Не голый стек, а области/ядро роли.
+STRONG_FILTERS = [
+    "production RAG / agent / workflow-систем",
+    "интеграции AI-пайплайнов с корпоративными источниками данных",
+    "построения высоконагруженных сервисов",
+    "проектирования микросервисной архитектуры",
+    "production ML-пайплайнов",
+    "технического лидерства и код-ревью",
+]
+# Обязательные ПРОВЕРЯЕМЫЕ ограничения (засев → expect): не бенефиты, а условия для выполнения работы.
+REQUIRED_CONSTRAINTS = [
+    "редким командировкам",
+    "наличие смартфона с Android или iOS",
+    "стабильный интернет от 20 Мбит/с",
+    "готовность к релокации",
+]
+
+
+@dataclass
+class ResponsibilitiesSpec:
+    domain: str
+    core_terms: List[str]                              # СИЛЬНЫЕ обязательные критерии/ограничения (засев → expect)
+    soft_terms: List[str] = field(default_factory=list)        # личные качества (засев → forbid)
+    nice_to_have: List[str] = field(default_factory=list)      # «будет плюсом» (засев → forbid)
+    conditions: List[str] = field(default_factory=list)        # условия найма / бенефиты (засев → forbid)
+    weak_stack: List[str] = field(default_factory=list)        # слабый стек в «Стек:» — НЕ обязательное требование
+    noise_level: int = 1
+
+
+class ResponsibilitiesGenerator(Generator):
+    """Генерит текст вакансии с РАЗДЕЛЁННЫМИ секциями (обязательное / плюс / условия / soft)."""
+
+    def instruction(self, spec: ResponsibilitiesSpec) -> str:
+        return (
+            "Ты пишешь текст вакансии на русском (обычный текст, без markdown и пояснений вне текста).\n"
+            "ЯВНО раздели секции (заголовками внутри текста):\n"
+            "- «Требования:» — ОБЯЗАТЕЛЬНЫЕ пункты из списка core (именно как обязательные требования).\n"
+            "- «Стек:» — технологии из списка weak_stack ПРОСТО перечисли как стек проекта (НЕ как обязательные требования).\n"
+            "- «Будет плюсом:» — пункты из nice_to_have как ЖЕЛАТЕЛЬНЫЕ, НЕ обязательные.\n"
+            "- «Условия:» — пункты из conditions (бенефиты/график).\n"
+            "- Личные качества из soft упомяни вскользь.\n"
+            "Не добавляй пунктов сверх перечисленных."
+        )
+
+    def payload(self, spec: ResponsibilitiesSpec) -> str:
+        noise = ["лаконично", "обычно", "подробно"][min(max(spec.noise_level, 0), 2)]
+        ctx = {"domain": spec.domain, "core_обязательные": spec.core_terms, "weak_stack_стек": spec.weak_stack,
+               "nice_to_have_будет_плюсом": spec.nice_to_have, "conditions_условия": spec.conditions,
+               "soft_личные_качества": spec.soft_terms, "style": noise}
+        return "CONTEXT_JSON:\n" + json.dumps(ctx, ensure_ascii=False) + "\n\nВерни только текст вакансии:"
+
+    def parse(self, text: str, spec: ResponsibilitiesSpec) -> str:
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("пустой текст вакансии")
+        low = text.lower()
+        # core может быть фразой; LLM перефразирует/склоняет → проверяем по стем-оверлапу значимых слов,
+        # а не дословно (иначе «production RAG, agent и workflow» ≠ «… / workflow-систем» ложно валит).
+        missing = [t for t in spec.core_terms if not _phrase_present(t, low)]
+        if missing:
+            raise ValueError(f"в тексте отсутствуют core-термины: {missing}")
+        return text

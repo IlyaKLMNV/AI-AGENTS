@@ -1,0 +1,37 @@
+# Офлайн-кейсы для `--offline` (replay) раннера sourcing_assistant.
+# Каждый кейс — вакансия (имя + требования) и кандидаты с КАННЫМ выводом промпта (`output` —
+# массив объектов, как должен вернуть sourcing_assistant). Реплей прогоняет контракт-чекер без
+# сети: subject.passed = вывод 1:1 к требованиям и каждый элемент по форме {requirement,comment,passed}.
+# Кейс passed = все кандидаты прошли контракт. Набор подобран так, чтобы показать и pass, и fail.
+
+- name: python_backend_ok          # все кандидаты валидны -> case passed
+  requirements: ["Python", "Django", "PostgreSQL"]
+  candidates:
+    - id: cand_1
+      output:
+        - {requirement: "Python", comment: "5 лет коммерческого Python", passed: 1}
+        - {requirement: "Django", comment: "Несколько проектов на Django", passed: 1}
+        - {requirement: "PostgreSQL", comment: "Проектирование схем в PostgreSQL", passed: 1}
+    - id: cand_2
+      output:
+        - {requirement: "Python", comment: "Python как основной язык", passed: 1}
+        - {requirement: "Django", comment: "Опыт с Django не указан", passed: 0}
+        - {requirement: "PostgreSQL", comment: "MySQL, не PostgreSQL", passed: 0}
+
+- name: qa_engineer_violations     # есть нарушения контракта -> case failed
+  requirements: ["Selenium", "Python", "pytest"]
+  candidates:
+    - id: cand_ok
+      output:
+        - {requirement: "Selenium", comment: "Автотесты на Selenium", passed: 1}
+        - {requirement: "Python", comment: "Python для автоматизации", passed: 1}
+        - {requirement: "pytest", comment: "pytest не упомянут", passed: 0}
+    - id: cand_length_mismatch     # 2 элемента вместо 3 -> length_mismatch
+      output:
+        - {requirement: "Selenium", comment: "Selenium есть", passed: 1}
+        - {requirement: "Python", comment: "Python есть", passed: 1}
+    - id: cand_shape_and_echo      # лишний ключ + неточный echo требования
+      output:
+        - {requirement: "Selenium", comment: "ок", passed: 1}
+        - {requirement: "Питон", comment: "неточный echo (ожидался Python)", passed: 1}
+        - {requirement: "pytest", comment: "лишний ключ score", passed: 1, score: 9}

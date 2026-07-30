@@ -1,0 +1,136 @@
+"""Мультитёрн-разговор со screening_assistant через OpenAI Conversations API.
+
+Переписано из легаси screeningAssistant/screeningAss.py (БЕЗ импорта легаси): разговор сидируется
+сообщением с деталями вакансии и инструкциями квалификации, затем реплики кандидата шлются
+ассистенту с conversation=<id>. Общая инфра для screening_guardrails и screening_scenarios.
+Сеть только здесь; детекторы/судья — отдельно.
+
+Источник промпта переключаемый (см. core.prompt_source):
+- stored (дефолт): prompt={id, version} — тело/модель/параметры на platform.openai.com;
+- local: spec из пакета `prompts` — system-текст идёт параметром instructions=, модель и
+  параметры — из config.yaml нужной версии. spec принимается duck-typed (домен не импортирует
+  `prompts` — spec грузит раннер через core.load_local_spec).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+MATERNITY_RE = re.compile(r"\bдекрет\w*\b", re.IGNORECASE)
+_OFFTOPIC_END = "мне нужно будет уточнить этот момент у коллег"
+
+
+def _salary_phrase(vacancy_info: Dict[str, Any]) -> str:
+    lo, hi = vacancy_info.get("min_salary"), vacancy_info.get("max_salary")
+    if lo and hi:
+        return f"от {lo} до {hi} рублей"
+    if lo:
+        return f"от {lo} рублей"
+    if hi:
+        return f"до {hi} рублей"
+    return ""
+
+
+def build_seed_message(vacancy_info: Dict[str, Any], recruiter_name: str, candidate_name: str) -> str:
+    """Первое assistant-сообщение разговора: детали вакансии + инструкции квалификации (как в легаси)."""
+    ci = vacancy_info.get("company_info") or {}
+    # Опц. поля попадают в seed только если заданы (per-scenario контекст вакансии): нанимающая
+    # сторона (рекрутинговое агентство) и источник контакта. Дефолт без них — поведение неизменно.
+    _hiring = vacancy_info.get("hiring_company_name")
+    _contact = vacancy_info.get("contact_source")
+    extra_company = f"- Нанимающая сторона: {_hiring}\n" if _hiring else ""
+    extra_contact = f"Источник контакта кандидата: {_contact}\n" if _contact else ""
+    return (
+        f"Ваше имя: {recruiter_name}\n"
+        f"Имя кандидата: {candidate_name}\n"
+        f"{extra_contact}"
+        "\n**Детали вакансии**:\n"
+        f"- Должность: {vacancy_info.get('title', '')}\n"
+        f"- Название компании: {vacancy_info.get('company_name', '')}\n"
+        f"{extra_company}"
+        f"- Обязанности: {vacancy_info.get('responsibilities', '')}\n"
+        f"- Формат работы: {vacancy_info.get('work_format', '')}\n"
+        f"- Локация: {vacancy_info.get('location', '')}\n"
+        f"- Описание компании: {ci.get('firm_description', '')}\n"
+        f"- Ссылка на вакансию: {ci.get('vacancy_url', '')}\n"
+        f"- Зарплатная вилка: {_salary_phrase(vacancy_info)}\n\n"
+        "## Вопросы для квалификации:\n\n"
+        "### ПРИОРИТЕТНЫЕ ВОПРОСЫ (задавать ПЕРВЫМИ ВСЕГДА):\n\n"
+        "1. **Зарплатные ожидания** - для проверки соответствия бюджету\n"
+        "2. **Локация/город проживания** - для проверки соответствия формату работы\n\n"
+        "### ДОПОЛНИТЕЛЬНЫЕ ВОПРОСЫ (только если кандидат прошел первичный отбор):\n\n"
+        f"{vacancy_info.get('questions', '')}\n\n"
+        "**Контекст диалога**:\n"
+        "Кандидат уже ознакомлен с базовой информацией о вакансии из первичного контакта. Ваша задача — провести "
+        "квалифицирующее интервью и собрать необходимую информацию для передачи внутреннему рекрутеру.\n\n"
+        "**ОБЯЗАТЕЛЬНО начните диалог с приветствия и сразу же задайте приоритетные вопросы**\n\n"
+        "**КРИТИЧЕСКИ ВАЖНО:** После получения ответов на приоритетные вопросы — ОБЯЗАТЕЛЬНО проверьте "
+        "соответствие требованиям перед продолжением диалога!"
+    )
+
+
+@dataclass
+class TurnResult:
+    response: Optional[str]
+    conversation_end: bool
+    usage: Any = None
+
+
+class ScreeningConversation:
+    """Stateful-разговор со screening_assistant. start() сидирует тред, respond() — один ход кандидата."""
+
+    def __init__(self, client: Any, prompt_id: str, prompt_version: Optional[str],
+                 vacancy_info: Dict[str, Any], recruiter_name: str, candidate_name: str,
+                 *, spec: Any = None) -> None:
+        self._client = client
+        self._spec = spec  # не None -> local-режим (тело/параметры из пакета prompts)
+        self._prompt: Dict[str, Any] = {"id": prompt_id}
+        if prompt_version:
+            self._prompt["version"] = str(prompt_version)
+        self._seed = build_seed_message(vacancy_info, recruiter_name, candidate_name)
+        self._conversation_id: Optional[str] = None
+
+    def start(self) -> str:
+        conv = self._client.conversations.create(
+            items=[{"type": "message", "role": "assistant", "content": self._seed}]
+        )
+        self._conversation_id = conv.id
+        return self._conversation_id
+
+    def _local_kwargs(self, candidate_message: str) -> Dict[str, Any]:
+        """responses.create-параметры для local-источника: system → instructions, + модель/параметры."""
+        s = self._spec
+        kwargs: Dict[str, Any] = {
+            "model": s.model,
+            "conversation": self._conversation_id,
+            "input": candidate_message,
+            "instructions": s.system_text,  # системный промпт применяется на каждом ходу (как stored-промпт)
+            "text": {"format": s.text_format},
+        }
+        for attr in ("temperature", "top_p", "max_output_tokens", "store"):
+            val = getattr(s, attr, None)
+            if val is not None:
+                kwargs[attr] = val
+        return kwargs
+
+    def respond(self, candidate_message: str) -> TurnResult:
+        if MATERNITY_RE.search(candidate_message or ""):
+            return TurnResult("Извините за беспокойство!", True, None)
+        if self._spec is not None:
+            resp = self._client.responses.create(**self._local_kwargs(candidate_message))
+        else:
+            resp = self._client.responses.create(
+                prompt=self._prompt, conversation=self._conversation_id, input=candidate_message
+            )
+        usage = getattr(resp, "usage", None)
+        text = getattr(resp, "output_text", "") or ""
+        if not text:
+            return TurnResult(None, True, usage)
+        if _OFFTOPIC_END in text.lower():
+            return TurnResult(None, True, usage)
+        end = "END" in text
+        if end:
+            text = text.replace("END", "").strip()
+        return TurnResult(text, end, usage)

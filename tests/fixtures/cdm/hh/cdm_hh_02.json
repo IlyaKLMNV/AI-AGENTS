@@ -1,0 +1,41 @@
+{
+  "vacancy": {
+    "title": "Product Analyst",
+    "company_name": "InsightLab",
+    "company_description": "Продуктовая аналитическая команда в e-commerce.",
+    "location": "Москва",
+    "work_format": "HYBRID",
+    "salary_range_from": 200000,
+    "salary_range_to": 300000,
+    "responsibilities": "Анализ продуктовых метрик, построение BI-отчетности и работа с экспериментами.",
+    "vacancy_description": "Гибридный формат. Важно находиться в Москве или быть готовым приезжать в офис несколько дней в неделю.\nАнализ продуктовых метрик, построение BI-отчетности и работа с экспериментами.\nПродуктовая аналитическая команда в e-commerce.\nhttps://careers.example/cdm_hh_02",
+    "questions": "1. Есть ли у вас опыт продуктовой аналитики и SQL?\n2. Работали ли вы с BI-инструментами и A/B-тестами?"
+  },
+  "candidate": {
+    "recruiter_name": "Ольга",
+    "candidate_name": "Мария",
+    "contact_source": "HH.ru",
+    "candidate_contacts": [
+      {
+        "type": "hh",
+        "url": "https://hh.ru/resume/example-analyst"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Product Analyst",
+        "company": "MetricFlow"
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "SQL",
+        "quantile": 4.3
+      },
+      {
+        "skill": "A/B testing",
+        "quantile": 4.0
+      }
+    ]
+  }
+}

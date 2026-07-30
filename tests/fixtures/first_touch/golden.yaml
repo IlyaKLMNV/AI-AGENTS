@@ -1,0 +1,165 @@
+# Курируемые golden-кейсы для теста промпта first_touch.
+# input — payload генерации; expected_facts — что сообщение ДОЛЖНО содержать (судит LLM-судья);
+# allowed_context_facts — источник/причина (не галлюцинации); optional_facts — необязательные (не валят passed);
+# company_hidden — название компании НЕ упоминать; require_question — нужен CTA-вопрос;
+# offline_message — каннное сообщение для --offline (содержит факты + вопрос, без утечек/лишних чисел).
+
+- name: backend_visible_with_salary
+  input:
+    candidate_name: "Иван"
+    recruiter_name: "Анна"
+    candidate_source: "ваш профиль на GitHub"
+    reason_of_communication: "интересный проект в финтехе"
+    hiring_company_name: "Акме"
+    vacancy_name: "Python Backend разработчик"
+    vacancy_responsibilities: "разработка бэкенда и REST API"
+    message_formality: "formal"
+    company_description: "финтех-компания"
+    vacancy_stack: "Python, Django, PostgreSQL"
+    salary_range: "200000-300000"
+  expected_facts:
+    company_name: "Акме"
+    vacancy_name: "Python Backend разработчик"
+    vacancy_stack: "Python, Django, PostgreSQL"
+    salary_range: "200000-300000"
+  allowed_context_facts:
+    candidate_source: "ваш профиль на GitHub"
+  optional_facts: [salary_range]
+  company_hidden: false
+  require_question: true
+  offline_message: |
+    Здравствуйте, Иван! Меня зовут Анна. Нашла ваш профиль на GitHub.
+    В компании Акме открыта вакансия Python Backend разработчик: разработка бэкенда и REST API
+    на стеке Python, Django, PostgreSQL, вилка 200000-300000. Откликнетесь обсудить детали?
+
+- name: frontend_hidden_company
+  input:
+    candidate_name: "Мария"
+    recruiter_name: "Олег"
+    candidate_source: "ваше резюме на hh"
+    reason_of_communication: "сильный фронтенд-опыт"
+    hiring_company_name: "СекретКорп"
+    vacancy_name: "Frontend разработчик"
+    vacancy_responsibilities: "разработка интерфейсов"
+    message_formality: "formal"
+    company_description: "крупная продуктовая компания"
+    vacancy_stack: "React, TypeScript"
+    salary_range: ""
+  expected_facts:
+    vacancy_name: "Frontend разработчик"
+    vacancy_stack: "React, TypeScript"
+  allowed_context_facts:
+    candidate_source: "ваше резюме на hh"
+    company_description: "крупная продуктовая компания"
+  company_hidden: true
+  require_question: true
+  offline_message: |
+    Здравствуйте, Мария! Меня зовут Олег, обратил внимание на ваше резюме на hh.
+    Крупная продуктовая компания ищет Frontend разработчика, стек React, TypeScript.
+    Интересно пообщаться о деталях?
+
+- name: devops_no_salary
+  input:
+    candidate_name: "Пётр"
+    recruiter_name: "Светлана"
+    candidate_source: "ваш профиль в LinkedIn"
+    reason_of_communication: "релевантный опыт в инфраструктуре"
+    hiring_company_name: "Облако"
+    vacancy_name: "DevOps инженер"
+    vacancy_responsibilities: "эксплуатация кластеров и CI/CD"
+    message_formality: "formal"
+    company_description: "облачный провайдер"
+    vacancy_stack: "Kubernetes, Terraform"
+    salary_range: ""
+  expected_facts:
+    company_name: "Облако"
+    vacancy_name: "DevOps инженер"
+    vacancy_stack: "Kubernetes, Terraform"
+  allowed_context_facts:
+    candidate_source: "ваш профиль в LinkedIn"
+  company_hidden: false
+  require_question: true
+  offline_message: |
+    Здравствуйте, Пётр! Меня зовут Светлана. Нашла ваш профиль в LinkedIn.
+    В компании Облако открыта вакансия DevOps инженер: эксплуатация кластеров и CI/CD,
+    стек Kubernetes, Terraform. Готовы обсудить?
+
+- name: data_scientist_informal
+  input:
+    candidate_name: "Алексей"
+    recruiter_name: "Дарья"
+    candidate_source: "ваш Kaggle"
+    reason_of_communication: "крутые соревнования в профиле"
+    hiring_company_name: "ДатаЛаб"
+    vacancy_name: "Data Scientist"
+    vacancy_responsibilities: "ML-модели и эксперименты"
+    message_formality: "informal"
+    company_description: "ML-команда"
+    vacancy_stack: "Python, PyTorch"
+    salary_range: ""
+  expected_facts:
+    company_name: "ДатаЛаб"
+    vacancy_name: "Data Scientist"
+    vacancy_stack: "Python, PyTorch"
+  allowed_context_facts:
+    candidate_source: "ваш Kaggle"
+  company_hidden: false
+  require_question: true
+  offline_message: |
+    Привет, Алексей! Я Дарья. Заметила ваш Kaggle с крутыми соревнованиями.
+    В ДатаЛаб ищем Data Scientist: ML-модели и эксперименты, стек Python, PyTorch.
+    Обсудим?
+
+- name: qa_with_salary
+  input:
+    candidate_name: "Нина"
+    recruiter_name: "Игорь"
+    candidate_source: "ваше резюме"
+    reason_of_communication: "опыт в автоматизации"
+    hiring_company_name: "ТестПро"
+    vacancy_name: "QA Automation инженер"
+    vacancy_responsibilities: "автотесты и API-тестирование"
+    message_formality: "formal"
+    company_description: "QA-аутсорс"
+    vacancy_stack: "Selenium, pytest"
+    salary_range: "150000-200000"
+  expected_facts:
+    company_name: "ТестПро"
+    vacancy_name: "QA Automation инженер"
+    vacancy_stack: "Selenium, pytest"
+    salary_range: "150000-200000"
+  allowed_context_facts:
+    candidate_source: "ваше резюме"
+  optional_facts: [salary_range]
+  company_hidden: false
+  require_question: true
+  offline_message: |
+    Здравствуйте, Нина! Меня зовут Игорь, посмотрел ваше резюме.
+    В компании ТестПро открыта вакансия QA Automation инженер: автотесты и API-тестирование,
+    стек Selenium, pytest, вилка 150000-200000. Готовы обсудить?
+
+- name: golang_hidden_no_salary
+  input:
+    candidate_name: "Сергей"
+    recruiter_name: "Юлия"
+    candidate_source: "ваш GitHub"
+    reason_of_communication: "сильный Go-опыт"
+    hiring_company_name: "Стелс"
+    vacancy_name: "Go разработчик"
+    vacancy_responsibilities: "высоконагруженные сервисы"
+    message_formality: "formal"
+    company_description: "перспективная продуктовая компания"
+    vacancy_stack: "Golang, gRPC"
+    salary_range: ""
+  expected_facts:
+    vacancy_name: "Go разработчик"
+    vacancy_stack: "Golang, gRPC"
+  allowed_context_facts:
+    candidate_source: "ваш GitHub"
+    company_description: "перспективная продуктовая компания"
+  company_hidden: true
+  require_question: true
+  offline_message: |
+    Здравствуйте, Сергей! Меня зовут Юлия, нашла ваш GitHub с сильным Go-опытом.
+    Перспективная продуктовая компания ищет Go разработчика для высоконагруженных сервисов,
+    стек Golang, gRPC. Интересно обсудить?

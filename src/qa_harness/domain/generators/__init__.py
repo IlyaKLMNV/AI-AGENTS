@@ -1,0 +1,65 @@
+"""Генераторы синтетических тестовых данных (сообщения, диалоги)."""
+
+from .base import Generator
+from .engine import Attempt, GenResult, GenerationPolicy, generate_valid
+from .candidate_agent import CandidateAgent, CandidateConstraints, validate_candidate_turn
+from .autofill_gen import AutofillDialogueGenerator, AutofillSpec, WORK_FORMATS, validate_autofill_dialogue
+from .vacancy_gen import DOMAINS, SENIORITIES, VacancyGenerator, VacancySpec
+from .responsibilities_gen import (
+    CONDITIONS_NOISE,
+    REQUIRED_CONSTRAINTS,
+    SOFT_NOISE,
+    STRONG_FILTERS,
+    TECH_VOCAB,
+    ResponsibilitiesGenerator,
+    ResponsibilitiesSpec,
+)
+from .profile_gen import CandidateProfileGenerator, CandidateProfileSpec
+from .resume_gen import ResumeGenerator, ResumeSpec
+from .variety import VariantSampler, VariantStyle
+from .dialogue_gen import DialogueGenerator, DialogueSpec, validate_generated_dialogue
+from .dialogue_specs import SCENARIO_HINTS_BY_VERDICT, pick_verdict_hint
+from .message_gen import CandidateMessageGenerator, MessageSpec, validate_candidate_message
+from .message_specs import SCENARIO_HINTS_BY_CLASS, pick_scenario_hint
+
+__all__ = [
+    "Generator",
+    "generate_valid",
+    "GenerationPolicy",
+    "GenResult",
+    "Attempt",
+    "CandidateAgent",
+    "CandidateConstraints",
+    "validate_candidate_turn",
+    "AutofillDialogueGenerator",
+    "AutofillSpec",
+    "WORK_FORMATS",
+    "validate_autofill_dialogue",
+    "VacancyGenerator",
+    "VacancySpec",
+    "DOMAINS",
+    "SENIORITIES",
+    "ResponsibilitiesGenerator",
+    "ResponsibilitiesSpec",
+    "TECH_VOCAB",
+    "SOFT_NOISE",
+    "CONDITIONS_NOISE",
+    "STRONG_FILTERS",
+    "REQUIRED_CONSTRAINTS",
+    "CandidateProfileGenerator",
+    "CandidateProfileSpec",
+    "ResumeGenerator",
+    "ResumeSpec",
+    "VariantSampler",
+    "VariantStyle",
+    "CandidateMessageGenerator",
+    "MessageSpec",
+    "validate_candidate_message",
+    "SCENARIO_HINTS_BY_CLASS",
+    "pick_scenario_hint",
+    "DialogueGenerator",
+    "DialogueSpec",
+    "validate_generated_dialogue",
+    "SCENARIO_HINTS_BY_VERDICT",
+    "pick_verdict_hint",
+]

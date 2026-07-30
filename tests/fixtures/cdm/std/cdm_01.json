@@ -1,0 +1,71 @@
+{
+  "vacancy": {
+    "title": "QA Automation Lead",
+    "company_name": "Indigosoft",
+    "company_description": "Международный Fintech-провайдер с головным офисом в Дубае. Уже 10 лет компания создает решения для внебиржевого финансового рынка, флагманский продукт — Brokerpilot.",
+    "company_industry": "FinTech",
+    "location": "Удаленно",
+    "work_format": "remote",
+    "salary_range_from": 2500,
+    "salary_range_to": 3000,
+    "responsibilities": "Проектирование и поддержка архитектуры автотестов для front- и back-направлений, настройка GitLab CI/CD, выстраивание стратегии качества, менторство команды и участие в обсуждении архитектуры продукта.",
+    "vacancy_stack": "TypeScript, JavaScript, Playwright, C#, Docker, GitLab CI",
+    "vacancy_skills": "QA automation, Playwright, C#, Team leadership, CI/CD",
+    "questions": "1. Есть ли у вас опыт проектирования автотестов на Playwright и API-автотестов на C#?\n2. Был ли у вас опыт выстраивания QA-стратегии и менторства команды?\n3. Насколько комфортен для вас полностью удалённый формат и английский на уровне B1+?",
+    "raw_vacancy": "Senior QA Automation Engineer\nот 2 500 до 3 000 $ за месяц, до вычета налогов\nОпыт работы: 3–6 лет\n\nПолная занятость\nГрафик: 5/2\n\nРабочие часы: 8\nФормат работы: удалённо\n\nСейчас эту вакансию смотрят 9 человек\n\nIndigosoft — международный Fintech-провайдер с головным офисом в Дубае. Уже 10 лет мы создаем «мозги» для внебиржевого финансового рынка. Наш флагман — Brokerpilot: умная экосистема риск-менеджмента, работающая в реальном времени.\n\nЭто роль для эксперта в автоматизации, который готов возглавить QA-направление, внедрить современные стандарты тестирования и лично спроектировать архитектуру автотестов.\n\nЧто мы предлагаем (условия):\n\nПолный Remote: работайте из любой точки мира.\n\nПрокачка: компенсируем профильное обучение до 100%.\n\nСтабильность: ЗП в валюте, бонусы за KPI и 28 дней отпуска.\n\nКлючевые задачи (обязанности):\n\nAutomation (70%): Проектирование и поддержка архитектуры автотестов (Front: Playwright; Back: C#). Настройка CI/CD пайплайнов в GitLab.\n\nManagement (30%): Выстраивание стратегии качества, менторство команды, внедрение метрик (покрытие, скорость релизов) и контроль процессов.\n\nQuality Culture: Участие в обсуждении архитектуры продукта вместе с Product Owner и разработка технической документации.\n\nОжидания от вас (требования):\n\nExpertise: Глубокие знания TypeScript/JS и опыт с Playwright.\n\nBackend Skill: Уверенное владение C# (для тестов API).\n\nLeadership: Опыт управления командой или менторства, понимание процессов тестирования «от и до».\n\nInfrastructure: Умение готовить окружение (Docker) и настраивать GitLab CI.\n\nEnglish: Уровень B1+ (чтение и написание техдокументации).\n\nБудет плюсом: Опыт в Fintech или знание специфики торговых платформ (MetaTrader cTrader).\n\n\nЕсли вы готовы к сложным и амбициозным задачам, которые могут быть для вас вызовом, ждем ваш отклик!\n\nВ ответ придет анкета – заполните ее, пожалуйста.\n\nКлючевые навыки\nGoogle Chrome\nFigma\nTestOps\nТестирование\nАналитическое мышление\nАналитический склад ума\nMetaTrader4 Manager\nMetaTrader5 Manager\nТехническая документация\nПроведение тестирований\nAgile\nС#\nGit\nQA\nDocker\nTypeScript\nTeamleading\nUnit Testing",
+    "key_requirements": [
+      "TypeScript/JS",
+      "Playwright",
+      "C#",
+      "GitLab CI",
+      "Docker"
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "QA Automation Lead",
+          "operator": "AND"
+        }
+      ]
+    },
+    "vacancy_url": "https://careers.example/cdm_01"
+  },
+  "candidate": {
+    "recruiter_name": "Варя",
+    "candidate_name": "Вадим",
+    "candidate_contacts": [
+      {
+        "type": "ln",
+        "url": "https://linkedin.com/in/example"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Senior Engineer",
+        "company": "ExampleCorp",
+        "company_norm": {
+          "categories": [
+            {
+              "title": "Healthcare"
+            }
+          ]
+        }
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Python QA",
+        "quantile": 4.1
+      },
+      {
+        "skill": "Playwright",
+        "quantile": 4.1
+      },
+      {
+        "skill": "Communication",
+        "quantile": 2.0
+      }
+    ],
+    "contact_source": "LinkedIn"
+  }
+}

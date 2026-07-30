@@ -1,0 +1,70 @@
+{
+  "vacancy": {
+    "title": "QA Automation Lead",
+    "company_name": "ExampleSoft",
+    "company_description": "Продуктовая IT-компания, развивающая платформенные B2B-сервисы.",
+    "company_industry": "Software",
+    "location": "Москва",
+    "work_format": "remote",
+    "salary_range_from": 250000,
+    "salary_range_to": 350000,
+    "responsibilities": "Развитие автоматизации тестирования, проектирование QA-архитектуры, mentoring QA-команды, поддержка CI/CD.",
+    "vacancy_stack": "Playwright, C#, API testing, CI/CD",
+    "vacancy_skills": "QA automation, Playwright, C#, mentoring, API testing",
+    "questions": "1. Есть ли у вас опыт с Playwright и API-автотестами на C#?\n2. Был ли у вас опыт менторства QA-команды?",
+    "raw_vacancy": "QA Automation Lead, remote, 250000-350000 RUB net per month",
+    "key_requirements": [
+      "Playwright",
+      "C#",
+      "API testing",
+      "Mentoring"
+    ],
+    "extractor_entities": {
+      "positions": [
+        {
+          "raw_text": "QA Automation Lead",
+          "operator": "AND"
+        }
+      ]
+    },
+    "vacancy_url": "https://careers.example/cdm_16"
+  },
+  "candidate": {
+    "recruiter_name": "Майя",
+    "candidate_name": "Алексей",
+    "contact_source": "LinkedIn",
+    "candidate_contacts": [
+      {
+        "type": "ln",
+        "url": "https://linkedin.com/in/example"
+      }
+    ],
+    "candidate_job_list": [
+      {
+        "title": "Senior QA Automation Engineer",
+        "company": "ExampleCorp",
+        "company_norm": {
+          "categories": [
+            {
+              "title": "Software"
+            }
+          ]
+        }
+      }
+    ],
+    "candidate_skills": [
+      {
+        "skill": "Playwright",
+        "quantile": 4.2
+      },
+      {
+        "skill": "C#",
+        "quantile": 4.0
+      },
+      {
+        "skill": "QA leadership",
+        "quantile": 3.1
+      }
+    ]
+  }
+}
