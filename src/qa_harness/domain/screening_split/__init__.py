@@ -22,7 +22,7 @@ from .errors import AssistantError
 from .interviewer import ScreeningInterviewer
 from .interviewer_judge import InterviewerJudge, InterviewerVerdict
 from .scripts import is_known, is_terminal, render_script
-from .state import apply_updates, init_state, is_complete
+from .state import apply_updates, init_state, is_complete, progress_signature
 from .store import InMemoryStateStore
 
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "init_state",
     "apply_updates",
     "is_complete",
+    "progress_signature",
     "render_script",
     "is_terminal",
     "is_known",

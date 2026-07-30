@@ -34,6 +34,19 @@ _EVENT_STOP = {
     "pause": (3, "STOP_PAUSE"),
 }
 
+# Универсальный стоп-кран: N ходов подряд без прогресса state → форс завершения (порт tgApi).
+# Ловит любое зацикливание независимо от темы/распознавания Аналитиком. 4 не задевает здоровые диалоги.
+NO_PROGRESS_CAP = 4
+
+
+def _is_terminal_decision(decision: dict) -> bool:
+    """Аналитик уже завершает диалог этим решением (KO_*/STOP_*/FINISH) — код-форсы его НЕ затирают.
+    script_key при next_action="ask" равен None, поэтому проверяем тип (is_terminal(None) упал бы)."""
+    script_key = decision.get("script_key")
+    return (decision.get("next_action") == "script"
+            and isinstance(script_key, str)
+            and scripts.is_terminal(script_key))
+
 
 @dataclass
 class ConversationResult:
@@ -98,6 +111,7 @@ class ScreeningSplitEngine:
             return ConversationResult(None, True)
 
         state = doc["state"]
+        progress_before = state_model.progress_signature(state)
         context = doc.get("context", "")
         location = doc.get("location", "")
         contact_source = doc.get("contact_source", "")
@@ -112,9 +126,10 @@ class ScreeningSplitEngine:
         new_state = state_model.apply_updates(state, decision.get("updates"), decision.get("event"))
 
         # --- порог событийных счётчиков: STOP форсит КОД (Аналитик лишь эмитит event) ---
+        # Терминальное решение Аналитика (FINISH+pause, KO_SALARY+demand) НЕ затираем счётчик-форсом.
         _ev = decision.get("event")
         _forced = False
-        if _ev in _EVENT_STOP:
+        if _ev in _EVENT_STOP and not _is_terminal_decision(decision):
             _thr, _sk = _EVENT_STOP[_ev]
             if new_state.get("counters", {}).get(_ev, 0) >= _thr:
                 decision = {"next_action": "script", "script_key": _sk, "source": "counter_cap"}
@@ -151,6 +166,16 @@ class ScreeningSplitEngine:
                         new_state = state_model.apply_updates(new_state, decision.get("updates"), decision.get("event"))
                     else:
                         new_state = state_model.apply_updates(new_state, [{"key": asking, "value": "reasked"}])
+
+        # --- универсальный стоп-кран: N ходов подряд без прогресса state → форс завершения ---
+        # Считаем ЗДЕСЬ, после ветки refused-перерешивания (она заново применяет updates, до неё рано).
+        if state_model.progress_signature(new_state) == progress_before:
+            new_state["no_progress"] = new_state.get("no_progress", 0) + 1
+        else:
+            new_state["no_progress"] = 0
+        if not _is_terminal_decision(decision) and new_state["no_progress"] >= NO_PROGRESS_CAP:
+            key = "FINISH" if state_model.is_complete(new_state) else "STOP_PERSISTENT"
+            decision = {"next_action": "script", "script_key": key, "source": "no_progress_cap"}
 
         self.last_decision = decision
 

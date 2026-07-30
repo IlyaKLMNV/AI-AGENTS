@@ -68,6 +68,7 @@ def init_state(work_format: str, questions_text: str) -> dict:
         "last_asking": None,    # что спрашивали в прошлый ход: 'salary'|'format'|'qN'|None (код-лимит переспросов)
         "salary_reasks": 0,     # сколько раз переспросили зарплату (код форсит STOP после 2)
         "format_reasks": 0,     # сколько раз переспросили формат/локацию
+        "no_progress": 0,       # ходов подряд без нового собранного факта (код форсит завершение, см. engine)
     }
 
 
@@ -110,6 +111,21 @@ def apply_updates(state: dict, updates: list[dict] | None, event: str | None = N
         new["counters"][event] += 1
 
     return new
+
+
+def progress_signature(state: dict) -> tuple:
+    """Снимок «что уже собрано» — по нему код видит, продвинулся ли диалог за ход.
+
+    Меняется ТОЛЬКО когда появился новый факт: закрылась зарплата или формат, узнали город,
+    доп-вопрос стал closed/refused. `reask_count` сюда НЕ входит — переспрос это не прогресс.
+    Сравнение безопасно: apply_updates монотонен, сигнатура не может отыграть назад. Признак не
+    зависит от темы/распознавания Аналитиком — ловит любое зацикливание. Порт tgApi 1:1."""
+    return (
+        state.get("salary"),
+        state.get("format_check"),
+        bool(state.get("candidate_city")),
+        tuple(q.get("status") for q in state.get("questions", [])),
+    )
 
 
 def pending_questions(state: dict) -> list[dict]:

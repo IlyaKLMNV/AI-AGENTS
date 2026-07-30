@@ -28,6 +28,38 @@
 - extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
   (step1/step2/step3); конкурентность + fail-fast + чекпоинты. См. `docs/EXTRACTOR_REDESIGN.md`.
 
+## Split-скрининг (`screening_split` + `screening_counters`)
+Раздельный скрининг: вместо монолита — **Аналитик** (`screening_analyzer`, строгий JSON `Decision`) +
+**Интервьюер** (`screening_interviewer`, одно сообщение) + КОД-оркестратор, портированный 1:1 из tgApi
+(HEAD e733095) в `domain/screening_split/` (engine/state/scripts/context/decision/conversation; порт НЕ
+импортирует `app`). **LOCAL-only** (stored-эквивалента нет) — тела промптов из репо `prompts`, гоняем `--prompts-path ../prompts`.
+
+**Раннер `screening_split`** — отчёт как у всех (review.md у split отключён). Три слоя оценки с атрибуцией
+ошибки (какая роль):
+- **A (Аналитик):** детерминированные инварианты `Decision`/state по трассе (`scenario_checks.yaml`:
+  `expect_script_key/prefix`, `salary/format`, `asking`, `event`, `end`, `last_instruction_lacks`, `reply_contains`). LLM-судьи нет.
+- **B (Интервьюер):** `leak_scan` (скрипт: нет утечки вилки/ссылки) + `InterviewerJudge` (LLM: верно ли передал
+  СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
+- **C:** `ScenarioJudge` (LLM) — только для сценариев БЕЗ инварианта.
+Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
+**Как читать отчёт — `docs/screening_split_report_analysis.md`** (что значит `passed`, атрибуция, реальный баг
+vs дрейф генератора). Разбор находок — `docs/screening_split_review_20260728.md`; бэклог — `docs/screening_split_backlog.md`.
+
+**Режимы входа** (`--input-mode scripted|generated`): scripted — реплики из `candidate_inputs.yaml`
+(детерминированный CI-гейт); generated — адаптивный LLM-кандидат, засеянный из рецепта (`salary_category`/
+`convey`/`turn_convey` — пер-ходовые сиды для chain-хореографии), Аналитик-инвариант гейтит так же.
+
+**Счётчики завершения — в КОДЕ движка, не LLM:** событийные пороги `_EVENT_STOP` (gibberish/bot 2,
+demand/contact_source 3, pause 3) + reask-cap (2 переспроса одного `asking` → STOP/`refused`) + универсальный
+**`no_progress`-cap** (4 хода без прогресса `progress_signature` → `STOP_PERSISTENT`/`FINISH`; порт tgApi).
+NB: no_progress-cap ВЖИВУЮ практически недостижим — reask-cap (`refused` = прогресс, сбрасывает счётчик) и
+gibberish-счётчик перехватывают лупы за 2–4 хода; кап — страховка, его код проверяется офлайн.
+
+**Раннер `screening_counters`** — боевой анти-луп-тест (`tests/fixtures/screening_split/counter_loops.yaml`):
+настойчивый переспрашиватель обязан завершиться в пределах кап, кооперативный → `FINISH` без ложного капа
+(`max_no_progress ≤ 2`). Реальный Аналитик + ФЕЙКОВЫЕ Интервьюер/стор (токены тратит только Аналитик — по
+вызову на ход). Отчёт с `token_usage` (per-case + итого) и `turns_total`.
+
 ## Источник промптов: platform.openai.com ↔ репозиторий `prompts` (переключатель)
 Промпт-под-тестом берётся из одного из двух источников, переключение — одним ключом (см.
 `docs/LOCAL_PROMPTS.md`, ядро — `src/qa_harness/core/prompt_source.py`):
