@@ -253,3 +253,8 @@ scenarios:
   - index: 33
     expect_no_script_prefix: KO
     expect_end: false
+
+  # ─────────── Вопросы о задачах вакансии → НЕ STOP_TASK_REQUEST, продолжить (C6) ───────────
+  - index: 63          # интерес к сути задач проекта ≠ «реши задачу за ИИ» → ни одного STOP_*, не завершать
+    expect_no_script_prefix: STOP
+    expect_end: false
