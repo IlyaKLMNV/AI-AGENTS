@@ -49,6 +49,14 @@ screening_analyzer:
 screening_interviewer:
   seed: 1234
   local_component: screening_interviewer
+# hh-канал split-скрининга (потребитель — eggplant-api). Отличия тел — docs/SPLIT_TG_VS_HH.md;
+# оркестратор в харнессе — domain/screening_split_hh (эталон механики — prompts/docs/EGGPLANT_SPLIT_TASK.md).
+screening_analyzer_hh:
+  seed: 1234
+  local_component: screening_analyzer_hh
+screening_interviewer_hh:
+  seed: 1234
+  local_component: screening_interviewer_hh
 
 verdict_classifier:
   prompt_id: pmpt_68e8b88526f4819396be91ca2ca0eeb907bf75b775700bf1

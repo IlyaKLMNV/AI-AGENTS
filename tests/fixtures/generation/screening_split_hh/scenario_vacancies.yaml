@@ -1,0 +1,48 @@
+# Пер-сценарный контекст вакансии для screening_split_hh (Аналитик screening_analyzer_hh).
+# Мерджится поверх DEFAULT_VACANCY_INFO_HH. Резолв по index = № строки scenarios.csv.
+# ВАЖНО (hh): формат — список id `allowed_formats` из {ON_SITE, REMOTE, HYBRID, FIELD_WORK}
+# (НЕ строка office/remote — это словарь tg-промпта); скрытого поиска/СКРЫТО нет;
+# company_name может быть литералом «рекрутинговое агентство»; гео-ограничение — в «Описание вакансии».
+# Индексы 1–6 используют дефолт ([ON_SITE, HYBRID], Москва) — оверрайд не нужен.
+
+scenarios:
+  - index: 7          # REMOTE среди допустимых → формат не спрашиваем
+    allowed_formats: ["REMOTE", "HYBRID"]
+  - index: 8          # офис + разъездной: field_work спрашиваем явно
+    allowed_formats: ["ON_SITE", "FIELD_WORK"]
+  - index: 9          # офис + разъездной: «нет» на разъезд ≠ KO
+    allowed_formats: ["ON_SITE", "FIELD_WORK"]
+  - index: 10         # разъездной единственный → отказ = KO_FORMAT
+    allowed_formats: ["FIELD_WORK"]
+  - index: 11         # REMOTE + кандидат в другом городе → про переезд не спрашиваем
+    allowed_formats: ["REMOTE"]
+    location: "Москва"
+  - index: 12         # гео-ограничение вакансии (только РФ) + кандидат за границей → KO_LOCATION_GEO
+    allowed_formats: ["REMOTE"]
+    location: "Москва"
+    vacancy_description: "Продуктовая b2b-платформа, поддержка и развитие микросервисов. ВАЖНО: рассматриваем только кандидатов, находящихся на территории РФ."
+  - index: 13         # без гео-ограничения (REMOTE) → «за границей» не терминально
+    allowed_formats: ["REMOTE"]
+    location: ""
+    vacancy_description: "Продуктовая b2b-платформа. Поддержка и развитие микросервисов, интеграции с продуктами."
+  - index: 14         # office, вне радиуса, не готов к переезду → KO_LOCATION
+    allowed_formats: ["ON_SITE"]
+    location: "Москва"
+  - index: 15         # работодатель неизвестен → литерал «рекрутинговое агентство»
+    company_name: "рекрутинговое агентство"
+  - index: 44         # полный флоу → FINISH: ОДИН доп-вопрос (короче флоу, меньше токенов)
+    questions: "- Опыт с Python и фреймворками?"
+
+  # ─────────── Формат/локация (MODIFY/ADD): allowed_formats под каждый кейс ───────────
+  # Индексы 16–54 без записи используют дефолт ([ON_SITE, HYBRID], Москва) — оверрайд не нужен:
+  # триггеры/зарплата/бот/пауза от формата не зависят, а 53/54 специально нуждаются в дефолте
+  # (ON_SITE+HYBRID без REMOTE → format_check=pending → вопрос про формат задаётся).
+  - index: 55         # далеко, не отказывался (только офис) → спросить переезд/формат, не KO
+    allowed_formats: ["ON_SITE"]
+    location: "Москва"
+  - index: 56         # REMOTE + разъездной: отказ от разъездов ≠ KO (REMOTE подходит)
+    allowed_formats: ["REMOTE", "FIELD_WORK"]
+    location: "Москва"
+  - index: 57         # офис + разъездной: вопрос про формат → канарейка сырого id (leak_scan)
+    allowed_formats: ["ON_SITE", "FIELD_WORK"]
+    location: "Москва"

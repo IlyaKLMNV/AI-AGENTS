@@ -1,0 +1,229 @@
+# Детерминированные инварианты Decision/state Аналитика (слой A) по трассе HH-split-хода.
+# index = номер строки в scenarios.csv (screening_split_hh). Гейт — analyzer (ScenarioJudge не зовём).
+# Поля как в TG + hh-специфичный expect_field_work (state.field_work_check).
+# Реестр hh: KO_SALARY/KO_FORMAT/KO_LOCATION/KO_LOCATION_GEO, STOP_* (без STOP_ABROAD),
+# REPLY_CONTACT_SOURCE отсутствует; asking может быть field_work.
+
+scenarios:
+  # ─────────── Зарплата (KO-1 перенесён из TG дословно) ───────────
+  - index: 1          # в вилке → close, без KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 2          # выше вилки → KO_SALARY + завершение
+    expect_script_key: KO_SALARY
+    expect_end: true
+
+  # ─────────── Терминальные триггеры-персоны (KEEP из TG) ───────────
+  - index: 3          # политика
+    expect_script_key: STOP_POLITICS
+    expect_end: true
+  - index: 4          # бессмыслица ×2 → repeat
+    expect_script_key: STOP_GIBBERISH_REPEAT
+    expect_end: true
+
+  # ─────────── Мультиформат (KO-2, HH-специфика) ───────────
+  - index: 5          # отказ от офиса при доступном гибриде → спросить формат, не KO
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 6          # ни офис, ни гибрид → KO_FORMAT
+    expect_script_key: KO_FORMAT
+    expect_end: true
+  - index: 7          # REMOTE среди допустимых → формат n/a, вопрос не задаём
+    expect_format: n/a
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 8          # подтверждён офис, но есть FIELD_WORK → спросить разъездной
+    expect_asking: field_work
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 9          # «разъезды не готов» при другом подходящем формате → field_work closed, не KO
+    expect_field_work: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 10         # FIELD_WORK единственный, отказ → KO_FORMAT
+    expect_script_key: KO_FORMAT
+    expect_end: true
+
+  # ─────────── Локация / гео (KO-3, HH-специфика; STOP_ABROAD удалён) ───────────
+  - index: 11         # REMOTE + другой город → про переезд не спрашиваем, не KO
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 12         # гео-ограничение вакансии + за границей → KO_LOCATION_GEO
+    expect_script_key: KO_LOCATION_GEO
+    expect_end: true
+  - index: 13         # «за границей» без гео-ограничения (REMOTE) → не терминально
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 14         # вне радиуса, не готов к переезду (ON_SITE) → KO_LOCATION
+    expect_script_key: KO_LOCATION
+    expect_end: true
+
+  # ─────────── Компания = «рекрутинговое агентство» ───────────
+  - index: 15         # вопрос о компании → нейтрально, не завершать
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Терминальные триггеры-персоны (KEEP из TG; STOP_ABROAD/contact_source удалены) ───────────
+  - index: 16         # агрессия/оскорбления → STOP_ABUSE
+    expect_script_key: STOP_ABUSE
+    expect_end: true
+  - index: 17         # иностранный язык → STOP_FOREIGN_LANG
+    expect_script_key: STOP_FOREIGN_LANG
+    expect_end: true
+  - index: 18         # флирт → STOP_FLIRT
+    expect_script_key: STOP_FLIRT
+    expect_end: true
+  - index: 19         # мошенничество/легитимность → STOP_FRAUD_CHECK
+    expect_script_key: STOP_FRAUD_CHECK
+    expect_end: true
+  - index: 20         # смерть/утрата → STOP_GRIEF
+    expect_script_key: STOP_GRIEF
+    expect_end: true
+  - index: 21         # просьба денег → STOP_MONEY_REQUEST
+    expect_script_key: STOP_MONEY_REQUEST
+    expect_end: true
+  - index: 22         # глобальное несоответствие → терминальный STOP (NO_EXPERIENCE/NOT_INTERESTED равнозначны, как TG #15)
+    expect_script_prefix: STOP
+    expect_end: true
+  - index: 23         # прямой отказ/нет интереса → STOP_NOT_INTERESTED
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 24         # не беспокоить/удалить контакт → STOP_NOT_INTERESTED
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 25         # написали не тому/ошибка в имени → STOP_NOT_INTERESTED
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 26         # написали в выходной → STOP_NOT_INTERESTED
+    expect_script_key: STOP_NOT_INTERESTED
+    expect_end: true
+  - index: 27         # уже трудоустроен → терминируем (ALREADY/NOT_INTERESTED равнозначны)
+    expect_script_prefix: STOP
+    expect_end: true
+  - index: 28         # декрет → STOP_MATERNITY
+    expect_script_key: STOP_MATERNITY
+    expect_end: true
+  - index: 29         # критика вакансии/компании → STOP_CRITICISM
+    expect_script_key: STOP_CRITICISM
+    expect_end: true
+  - index: 30         # «реши задачу за меня» → STOP_TASK_REQUEST
+    expect_script_key: STOP_TASK_REQUEST
+    expect_end: true
+
+  # ─────────── Зарплата (KO-1; in_band-close и above→KO уже в 1/2) ───────────
+  - index: 31         # ниже вилки → closed молча, не отказ, продолжить
+    expect_salary: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 32         # без единиц: двузначное число → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 33         # без единиц: двузначный диапазон → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 34         # «от 260» голым числом без единиц → уточнить
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 35         # валюта → уточнить (не конвертировать грубо)
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 36         # почасовая ставка → уточнить (не сравнивать с месячной вилкой)
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 37         # gross/процент сверху → уточнить net, не KO по gross
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 38         # диапазон в вилке → close по верхней, без KO
+    expect_salary: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 39         # спрашивает нашу вилку (1-й раз) → спросить его ожидания, не STOP
+    expect_asking: salary
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 40         # 2-й раз про нашу вилку → salary_info; переспрос БЕЗ объяснения (F4), не STOP
+    expect_event: salary_info
+    expect_asking: salary
+    expect_no_script_prefix: STOP
+    expect_last_instruction_lacks: "раскрыва"
+    expect_end: false
+  - index: 41         # упорно требует нашу вилку → STOP_SALARY_DEMAND
+    expect_script_key: STOP_SALARY_DEMAND
+    expect_end: true
+
+  # ─────────── Пауза / бот / доп-вопросы (пороги в коде движка) ───────────
+  - index: 42         # пауза до приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
+  - index: 43         # пауза после приоритетов → event=pause, не END
+    expect_event: pause
+    expect_end: false
+  - index: 44         # всё закрыто → FINISH + END
+    expect_script_key: FINISH
+    expect_end: true
+  - index: 45         # chain: возобновление после паузы → снова спрашиваем приоритет (salary), не END
+    expect_last_asking: salary
+    expect_end: false
+  - index: 46         # 1-й раз «вы бот?» → bot_check, представиться, не END
+    expect_event: bot_check
+    expect_end: false
+  - index: 47         # 2-й раз «вы бот?» → STOP_BOT_REPEAT
+    expect_script_key: STOP_BOT_REPEAT
+    expect_end: true
+  - index: 48         # «всё в резюме» на доп-вопрос → reask того же q1, не END
+    expect_last_asking: q1
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 49         # ответ по сути после переспроса → перейти к q2, не END
+    expect_last_asking: q2
+    expect_end: false
+  - index: 50         # аудио/голосовые → отказать и продолжить, не END
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Компания / ссылка (MODIFY под hh; #53 удалён, объединено в 52) ───────────
+  - index: 52         # открытый поиск → назвать реальную компанию фактами, не завершать
+    expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Формат / локация «не подтвердил» (MODIFY: allowed без REMOTE, иначе n/a) ───────────
+  - index: 53         # в городе вакансии, формат не подтверждён → спросить формат, не KO
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 54         # ближний пригород → спросить формат, не KO
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+  - index: 55         # далеко, не отказывался → спросить переезд/формат, не KO сразу
+    expect_asking: format
+    expect_no_script_prefix: KO
+    expect_end: false
+
+  # ─────────── HH-специфика (ADD) ───────────
+  - index: 56         # REMOTE+FIELD_WORK, «к разъездам не готов» → field_work closed, не KO
+    expect_field_work: closed
+    expect_no_script_prefix: KO
+    expect_end: false
+  # index 57 (канарейка сырого id) — БЕЗ инварианта: leak_scan (слой B) сработает сам, gate=dialogue.
+  - index: 58         # старт-отклик без приветствия → сразу asking=salary, не завершать
+    expect_asking: salary
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 59         # вопрос не в контексте → «уточню у коллег», не завершать
+    expect_no_script_prefix: STOP
+    expect_end: false

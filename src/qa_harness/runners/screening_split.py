@@ -93,11 +93,27 @@ DEFAULT_VACANCY_INFO: Dict[str, Any] = {
                      "vacancy_url": "https://example.com/vacancies/python-backend"},
     "questions": "- Опыт с Python и фреймворками?\n- Сервисы под нагрузкой?\n- Как используете SQL?",
 }
+# HH-канал: нет company_info/responsibilities/vacancy_url; формат — список id (allowed_formats);
+# факты о вакансии — в свободном «Описание вакансии»; company может быть «рекрутинговое агентство».
+DEFAULT_VACANCY_INFO_HH: Dict[str, Any] = {
+    "title": "Python Backend Developer",
+    "company_name": "ExampleSoft",
+    "allowed_formats": ["ON_SITE", "HYBRID"],
+    "location": "Москва",
+    "min_salary": 200000,
+    "max_salary": 280000,
+    "vacancy_description": "Продуктовая b2b-платформа. Поддержка и развитие микросервисов, интеграции с продуктами.",
+    "questions": "- Опыт с Python и фреймворками?\n- Сервисы под нагрузкой?\n- Как используете SQL?",
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="screening_split QA runner (Аналитик + Интервьюер; local prompts).")
-    p.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="CSV сценариев split (по умолч. отдельный от легаси).")
+    p.add_argument("--channel", choices=["tg", "hh"], default="tg",
+                   help="Канал split-скрининга: tg (screening_analyzer/interviewer + fixtures/screening_split) "
+                        "| hh (screening_analyzer_hh/interviewer_hh + fixtures/screening_split_hh). Переключает "
+                        "движок (domain/screening_split[_hh]), компоненты промптов и набор фикстур.")
+    p.add_argument("--csv", type=Path, default=None, help="CSV сценариев (по умолч. — по каналу: fixtures/screening_split[_hh]/scenarios.csv).")
     p.add_argument("--sample", type=int, default=5, help="Случайная выборка N сценариев (0 = все).")
     p.add_argument("--scenario-indices", default=None, help="Точечные номера строк CSV, напр. 1,7,62 (override --sample).")
     p.add_argument("--max-examples", type=int, default=4, help="Сколько реплик кандидата брать из примеров на сценарий.")
@@ -269,7 +285,7 @@ def _judge_into(res: Dict[str, Any], judge: Any, scenario: Scenario) -> None:
         res["call_error"] = f"judge:{type(e).__name__}:{e}"
 
 
-def _run_offline(args: argparse.Namespace, scenarios: List[Scenario]) -> None:
+def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: str = "tg") -> None:
     with_ex = turns = 0
     for s in scenarios:
         ct = extract_candidate_examples(s.examples_raw, args.max_examples)
@@ -280,8 +296,8 @@ def _run_offline(args: argparse.Namespace, scenarios: List[Scenario]) -> None:
         if not args.quiet:
             print(f"  {s.index:>2} {s.name[:60]:<60} {mark}")
     print(f"\n[offline] сценариев={len(scenarios)} с_примерами={with_ex} реплик_всего={turns} (плумбинг, без судьи)")
-    print("[offline] санити чистого домена (порт tgApi):")
-    for line in _domain_sanity():
+    print(f"[offline] санити чистого домена (канал {channel}):")
+    for line in (_domain_sanity_hh() if channel == "hh" else _domain_sanity()):
         print(f"  · {line}")
     print("[offline] сеть и пакет prompts не дёргались.")
 
@@ -301,6 +317,22 @@ def _domain_sanity() -> List[str]:
     return out
 
 
+def _domain_sanity_hh() -> List[str]:
+    """Санити hh-домена: реестр §5, мультиформат init_state, ветка field_work, hh-валидатор."""
+    out: List[str] = []
+    ko = sp.render_script("KO_LOCATION", city="Москва")
+    out.append(f"render KO_LOCATION(city=Москва): city={'локация Москва' in (ko or '')} · terminal={sp.is_terminal('KO_LOCATION')} · KO_GEO_removed={not sp.is_known('KO_GEO')}")
+    st_office = sp.init_state(["ON_SITE", "FIELD_WORK"], "1. Опыт с Python?\n2. SQL?")
+    st_remote = sp.init_state(["REMOTE"], "")
+    out.append(f"init_state [ON_SITE,FIELD_WORK] format={st_office['format_check']} field_work={st_office['field_work_check']} · [REMOTE] format={st_remote['format_check']} field_work={st_remote['field_work_check']}")
+    st2 = sp.apply_updates(st_office, [{"key": "salary", "value": "closed"}, {"key": "field_work_check", "value": "closed"}])
+    st3 = sp.apply_updates(st2, [], event="pause")
+    out.append(f"apply_updates salary={st2['salary']} field_work={st2['field_work_check']} pause_counter={st3['counters']['pause']} · contact_source_removed={'contact_source' not in st3['counters']}")
+    dec, err = sp.parse_and_validate('{"next_action":"ask","script_key":null,"instruction":"Спроси про разъездной формат","updates":[],"event":null,"asking":"field_work"}')
+    out.append(f"Decision-валидатор (asking=field_work): valid={dec is not None} err={err or '—'}")
+    return out
+
+
 def _resolve_version(cfg: Dict[str, Any], component: str, cli_version: str | None) -> str | None:
     """CLI > model.yaml[component].local_version > None (pointer.yaml active в пакете)."""
     if cli_version:
@@ -309,13 +341,36 @@ def _resolve_version(cfg: Dict[str, Any], component: str, cli_version: str | Non
 
 
 def run(args: argparse.Namespace) -> Any:
-    scenarios = load_scenarios(args.csv)
+    # --- разрешение канала: движок (sp), компоненты промптов, набор фикстур и дефолт-вакансия ---
+    global sp, DEFAULT_VACANCY_INFO
+    channel = getattr(args, "channel", "tg") or "tg"
+    if channel == "hh":
+        from qa_harness.domain import screening_split_hh as _sp
+        DEFAULT_VACANCY_INFO = DEFAULT_VACANCY_INFO_HH
+        analyzer_component, interviewer_component = "screening_analyzer_hh", "screening_interviewer_hh"
+        fix_dir = FIXTURES / "screening_split_hh"
+        gen_vacancies = FIXTURES / "generation" / "screening_split_hh" / "scenario_vacancies.yaml"
+        gen_constraints = FIXTURES / "generation" / "screening_split_hh" / "constraints.yaml"
+    else:
+        from qa_harness.domain import screening_split as _sp
+        analyzer_component, interviewer_component = ANALYZER_COMPONENT, INTERVIEWER_COMPONENT
+        fix_dir = FIXTURES / "screening_split"
+        gen_vacancies, gen_constraints = DEFAULT_VACANCIES, DEFAULT_CONSTRAINTS
+    sp = _sp
+    runner_name = "screening_split_hh" if channel == "hh" else RUNNER
+    csv_path = args.csv or fix_dir / "scenarios.csv"
+    checks_path = args.checks or fix_dir / "scenario_checks.yaml"
+    inputs_path = args.candidate_inputs or fix_dir / "candidate_inputs.yaml"
+    vacancies_path = args.vacancies or gen_vacancies
+    constraints_path = args.constraints or gen_constraints
+
+    scenarios = load_scenarios(csv_path)
 
     if args.offline:
         selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
                            runnable_only=False, max_examples=args.max_examples)
-        print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} · CSV: {args.csv}")
-        _run_offline(args, selected)
+        print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} · канал: {channel} · CSV: {csv_path}")
+        _run_offline(args, selected, channel)
         return None
 
     # --- онлайн golden: split — LOCAL-only (stored-эквивалента нет), потому local по умолчанию ---
@@ -335,22 +390,22 @@ def run(args: argparse.Namespace) -> Any:
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
     cfg = load_cfg(args.cfg)
-    a_ver = _resolve_version(cfg, ANALYZER_COMPONENT, args.analyzer_version)
-    i_ver = _resolve_version(cfg, INTERVIEWER_COMPONENT, args.interviewer_version)
+    a_ver = _resolve_version(cfg, analyzer_component, args.analyzer_version)
+    i_ver = _resolve_version(cfg, interviewer_component, args.interviewer_version)
 
     # пакет prompts (дев-путь --prompts-path / env PROMPTS_REPO_PATH, иначе установленный релиз)
     ensure_prompts_importable(args.prompts_path)
     client = get_client(timeout=args.step1_timeout)
     # общие (read-only) части — строим один раз, шарим по потокам; mutable движок — per-scenario
-    analyzer_client = LocalPromptClient(ANALYZER_COMPONENT, a_ver, client=client)
-    interviewer_spec = load_local_spec(INTERVIEWER_COMPONENT, i_ver)
+    analyzer_client = LocalPromptClient(analyzer_component, a_ver, client=client)
+    interviewer_spec = load_local_spec(interviewer_component, i_ver)
     a_spec = analyzer_client.spec
     judge = ScenarioJudge(ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
     ijudge = None if args.no_interviewer_judge else sp.InterviewerJudge(
         ModelClient(args.eval_model, timeout=args.step1_timeout, temperature=0))
-    vacancies = load_vacancies(args.vacancies or DEFAULT_VACANCIES)
-    checks_by_index = sp.load_checks(args.checks or DEFAULT_CHECKS)  # слой A: инварианты Decision
-    inputs_by_index = sp.load_candidate_inputs(args.candidate_inputs or DEFAULT_INPUTS)  # C1: скриптовые входы
+    vacancies = load_vacancies(vacancies_path)
+    checks_by_index = sp.load_checks(checks_path)  # слой A: инварианты Decision
+    inputs_by_index = sp.load_candidate_inputs(inputs_path)  # C1: скриптовые входы
 
     # Нужен ли LLM-генератор: явный --generate ИЛИ --input-mode generated (он включает генератор сам).
     use_generator = args.generate or args.input_mode == "generated"
@@ -369,7 +424,7 @@ def run(args: argparse.Namespace) -> Any:
         gen_setup = dict(
             gen_client=ModelClient(args.gen_model, timeout=args.step1_timeout, temperature=args.temperature),
             gen_model=args.gen_model,
-            constraints_entries=load_constraints(args.constraints or DEFAULT_CONSTRAINTS),
+            constraints_entries=load_constraints(constraints_path),
             sampler=VariantSampler(gen_seed),
             max_turns=args.max_turns,
             gen_policy=GenerationPolicy(max_retries=args.gen_retries, temperature=args.temperature, seed=gen_seed),
@@ -388,18 +443,18 @@ def run(args: argparse.Namespace) -> Any:
                     "workers": args.workers, "eval_model": args.eval_model}
 
     print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} (рецептных: {n_scripted}) × {n_variants} = "
-          f"{len(work_items)} · режим: {run_args['mode']}/{args.input_mode} · CSV: {args.csv}")
+          f"{len(work_items)} · канал: {channel} · режим: {run_args['mode']}/{args.input_mode} · CSV: {csv_path}")
     print(f"Аналитик {a_spec.version}/{a_spec.model} · Интервьюер {interviewer_spec.version}/{interviewer_spec.model} · судья {args.eval_model}"
           + (f" · генератор {args.gen_model}" if args.generate else ""))
 
     put = {
-        "component": "screening_split", "source": "local", "prompt_id": None, "prompt_version": None,
-        "local_component": f"{ANALYZER_COMPONENT} + {INTERVIEWER_COMPONENT}",
+        "component": runner_name, "source": "local", "prompt_id": None, "prompt_version": None,
+        "local_component": f"{analyzer_component} + {interviewer_component}",
         "local_version": f"A:{a_spec.version} · I:{interviewer_spec.version}",
         "model": f"A:{a_spec.model} · I:{interviewer_spec.model}",
     }
     rb = ReportBuilder(
-        runner=RUNNER, prompt_under_test=put, run_id=run_id,
+        runner=runner_name, prompt_under_test=put, run_id=run_id,
         started_at=started.isoformat(timespec="seconds"),
         models=models, seed=args.seed, args=run_args,
     )
@@ -418,7 +473,7 @@ def run(args: argparse.Namespace) -> Any:
         finished = datetime.datetime.now()
         md, cd = rb.finalize(extra, finished_at=finished.isoformat(timespec="seconds"),
                              duration_s=round((finished - started).total_seconds(), 3))
-        return write_reports(args.out_dir, RUNNER, run_id, md, cd, write_review=False)  # A1: без review.md
+        return write_reports(args.out_dir, runner_name, run_id, md, cd, write_review=False)  # A1: без review.md
 
     def _fold(res: Dict[str, Any]) -> None:
         s: Scenario = res["scenario"]
@@ -528,7 +583,7 @@ def run(args: argparse.Namespace) -> Any:
             case_checks.append({"rule": "Интервьюер: верность инструкции (LLM)", "passed": bool(iverdict["passed"]),
                                 "detail": iverdict["comment"] or "; ".join(iverdict["violations"][:4])})
 
-        v_ord = variant or 0
+        v_ord = (variant or 0) + 1  # 1-based: в отчёте вариант нумеруется с 1 (как в консоли v_disp)
         _rec = inputs_by_index.get(s.index)
         if _rec and is_gen:
             input_mode = "generated"       # рецептный сценарий прогнан через генератор (флаг/mode)

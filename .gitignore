@@ -39,11 +39,15 @@ tests/fixtures/*
 !tests/fixtures/screening_guardrails/golden.yaml
 !tests/fixtures/screening_split/
 !tests/fixtures/screening_split/**
+!tests/fixtures/screening_split_hh/
+!tests/fixtures/screening_split_hh/**
 !tests/fixtures/generation/
 !tests/fixtures/generation/screening_scenarios/
 !tests/fixtures/generation/screening_scenarios/constraints.yaml
 !tests/fixtures/generation/screening_guardrails/
 !tests/fixtures/generation/screening_guardrails/personas.yaml
+!tests/fixtures/generation/screening_split_hh/
+!tests/fixtures/generation/screening_split_hh/**
 tests/fixtures/dialogs_parsed/
 tests/fixtures/messages_single/
 tests/reports/
