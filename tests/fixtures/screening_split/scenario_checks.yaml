@@ -152,8 +152,8 @@ scenarios:
   - index: 10          # за пределами РФ
     expect_script_key: STOP_ABROAD
     expect_end: true
-  - index: 11          # глобальное несоответствие профиля
-    expect_script_key: STOP_NO_EXPERIENCE
+  - index: 11          # глобальное несоответствие профиля → терминальный STOP (NO_EXPERIENCE/NOT_INTERESTED равнозначны, как #15)
+    expect_script_prefix: STOP
     expect_end: true
   - index: 13          # прямой отказ/нет интереса
     expect_script_key: STOP_NOT_INTERESTED
