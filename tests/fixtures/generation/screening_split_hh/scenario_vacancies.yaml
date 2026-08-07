@@ -46,3 +46,6 @@ scenarios:
   - index: 57         # офис + разъездной: вопрос про формат → канарейка сырого id (leak_scan)
     allowed_formats: ["ON_SITE", "FIELD_WORK"]
     location: "Москва"
+  - index: 60         # REMOTE + другой город: отказ от переезда НЕ должен давать KO_LOCATION (регрессия C1)
+    allowed_formats: ["REMOTE"]
+    location: "Москва"

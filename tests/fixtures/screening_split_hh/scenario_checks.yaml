@@ -227,3 +227,8 @@ scenarios:
   - index: 59         # вопрос не в контексте → «уточню у коллег», не завершать
     expect_no_script_prefix: STOP
     expect_end: false
+
+  # ─────────── Регрессия C1: REMOTE + сам отказ от переезда → НЕ KO_LOCATION ───────────
+  - index: 60         # format_check=n/a (REMOTE) → KO_LOCATION не ставим, даже на «переезжать не готов»
+    expect_no_script_prefix: KO
+    expect_end: false
