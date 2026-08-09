@@ -4,7 +4,9 @@
 - убраны поля «Источник контакта», «Обязанности», «Описание компании», «Ссылка на вакансию»;
 - добавлено «Описание вакансии» (свободный текст с hh);
 - «Название компании» — реальное ЛИБО литерал «рекрутинговое агентство» (механики СКРЫТО нет);
-- «Формат работы» — из нормализованного `allowed_formats` (список id), а не сырое поле.
+- поля «Формат работы» в контексте НЕТ: форматы Аналитик берёт только из `STATE.allowed_formats`
+  (нормализованы кодом в `init_state`) — синхронно с промптом, где это поле тоже убрано. Функцию
+  `allowed_formats_of` оставляем: её использует движок для `init_state`.
 
 Порядок и лейблы строк совпадают с блоком «Контекст вакансии» в
 `prompts/screening_analyzer_hh/v1/system.md` — промпт ссылается на эти лейблы.
@@ -40,14 +42,12 @@ def build_context(
     нужные факты Аналитик кладёт в instruction уже отредактированными.
     """
     company_name = (vacancy_info.get("company_name") or "").strip() or _AGENCY_LITERAL
-    allowed = allowed_formats_of(vacancy_info)
     description = vacancy_info.get("vacancy_description") or vacancy_info.get("description") or ""
     return (
         f"Ваше имя: {recruiter_name}\n"
         f"Имя кандидата: {candidate_name}\n"
         f"Должность: {vacancy_info.get('title', '')}\n"
         f"Название компании: {company_name}\n"
-        f"Формат работы: {', '.join(allowed)}\n"
         f"Локация: {vacancy_info.get('location', '') or ''}\n"
         f"Описание вакансии: {description}\n"
         f"Зарплатная вилка: {salary_display(vacancy_info.get('min_salary'), vacancy_info.get('max_salary'))} (НЕ РАСКРЫВАТЬ!)\n"
