@@ -176,6 +176,10 @@ scenarios:
       - "А какая у вас вилка по зарплате?"
       - "Нет, всё же назовите вашу вилку, сколько вы платите."
   - index: 41         # упорно требует НАШУ вилку → STOP_SALARY_DEMAND (форс кода по reask)
+    # TODO(hh, парный к tg #30): когда порог salary_reasks в screening_split_hh/engine.py поднимут 2→3
+    # (в tg уже 3), луп на 4-м ходу перехватит no_progress-cap → придёт STOP_PERSISTENT вместо
+    # STOP_SALARY_DEMAND. Тогда у #41 в scenario_checks.yaml заменить expect_script_key на
+    # expect_script_prefix: STOP — как уже сделано у tg #30.
     turns:
       - "А какая зарплата по этой вакансии?"
       - "Нет, назовите вашу вилку, сколько платите."

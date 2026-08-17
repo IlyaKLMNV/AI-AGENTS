@@ -188,6 +188,8 @@ scenarios:
     expect_script_key: STOP_BOT_REPEAT
     expect_end: true
   - index: 30          # упорно требует нашу вилку → STOP_SALARY_DEMAND
+    # NB: завершает САМ Аналитик по своему счётчику salary_info (прогон 203237: next_action=script,
+    # source отсутствует), а не код-кап — поэтому порог salary_reasks в движке здесь ни при чём.
     expect_script_key: STOP_SALARY_DEMAND
     expect_end: true
 
@@ -257,4 +259,17 @@ scenarios:
   # ─────────── Вопросы о задачах вакансии → НЕ STOP_TASK_REQUEST, продолжить (C6) ───────────
   - index: 63          # интерес к сути задач проекта ≠ «реши задачу за ИИ» → ни одного STOP_*, не завершать
     expect_no_script_prefix: STOP
+    expect_end: false
+
+  # ─────────── Инцидент 2026-08-17 (прод, tg): Баг A (выдуманный URL) + Баг B (ложное завершение) ───────────
+  # Разведены по правкам: 64 → код (порог salary_reasks) · 65, 66 → промпт Аналитика (v2).
+  - index: 64          # вопросы кандидата не должны сжигать reask-cap → диалог жив
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 65          # «400000-500000 net» + город → salary закрыт, идём дальше (без STOP и без переспроса)
+    expect_salary: closed
+    expect_no_script_prefix: STOP
+    expect_end: false
+  - index: 66          # поручил упомянуть ссылку → в instruction стоит сам URL (иначе Интервьюер выдумает)
+    expect_instruction_url_valued: true
     expect_end: false

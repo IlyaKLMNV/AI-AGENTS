@@ -139,7 +139,12 @@ class ScreeningSplitEngine:
         asking = decision.get("asking")
         if not _forced and decision.get("next_action") == "ask" and asking and state.get("last_asking") == asking:
             if asking == "salary" and new_state.get("salary") == "pending":
-                if new_state.get("salary_reasks", 0) >= 2:
+                # Порог 3 (был 2) — инцидент 2026-08-17 (Баг B, сценарий 64): счётчик тикал на КАЖДОМ
+                # ходу с asking=salary, включая ходы со своими вопросами кандидата, и кап срабатывал
+                # на валидном ответе «Москва, 400000-500000 net». Лишний переспрос даёт запас.
+                # NB: расхождение с портом tgApi (HEAD e733095) — занести в прод-движок; у hh-движка
+                # свой счётчик (screening_split_hh/engine.py), порог там ещё 2.
+                if new_state.get("salary_reasks", 0) >= 3:
                     decision = {"next_action": "script", "script_key": "STOP_SALARY_DEMAND", "source": "reask_cap"}
                 else:
                     new_state["salary_reasks"] = new_state.get("salary_reasks", 0) + 1

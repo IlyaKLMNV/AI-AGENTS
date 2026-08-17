@@ -5,20 +5,25 @@
   из трассы (salary closed/pending, наличие/отсутствие KO_*, asking, script_key/end). Семантические
   якоря: ассертим ТОЛЬКО то, что правило реально фиксирует (не весь объект) — устойчиво к
   легитимной вариативности. Провал → ошибка Аналитика.
-- **Слой B (Интервьюер, детерминированная часть):** leak_scan — в тексте кандидату нет числа вилки
-  и нет ссылки при скрытой компании. Атрибуция утечки: число в instruction (из трассы) → вина
-  Аналитика; только в тексте Интервьюера → вина Интервьюера.
+- **Слой B (Интервьюер, детерминированная часть):** leak_scan — в тексте кандидату нет числа вилки,
+  нет ссылки при скрытой компании и нет ВЫДУМАННОЙ ссылки при открытом поиске. Атрибуция утечки:
+  число/URL в instruction (из трассы) → вина Аналитика; только в тексте Интервьюера → вина Интервьюера.
 
 Порт QA-checks tgApi (scripts/screening_qa/checks.py) + расширение под salary/state-инварианты.
 Читает `turns` в форме драйвера: [{candidate, reply, end, decision, state}], где decision — Decision
 Аналитика (или форс-словарь кода), state — компактный снимок ({salary, format_check, city, questions, counters}).
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+# Любая ссылка в тексте/инструкции. Нужна двум канарейкам инцидента 2026-08-17 (Баг A, выдуманный URL):
+# слой A — директива «ссылку укажи» БЕЗ значения; слой B — в тексте кандидату ссылка ≠ канонической.
+_URL_RE = re.compile(r"https?://[^\s<>\"'»)\],]+")
 
 
 def load_checks(path: Path) -> Dict[int, Dict[str, Any]]:
@@ -177,6 +182,21 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         ok = ok and hit
         details.append(f"instruction последнего хода без «{want}»: {'OK' if hit else 'присутствует (лишнее объяснение)'}")
 
+    if spec.get("expect_instruction_url_valued"):
+        # Правило Аналитика: поручил упомянуть ссылку — вставь её ЗНАЧЕНИЕ дословно, иначе не поручай
+        # (инцидент 2026-08-17, Баг A: директива без URL → Интервьюер подставил фейк). Сканим ВСЕ ходы.
+        # Чек opt-in: при скрытом поиске Аналитик пишет «ссылку не давай», и это норма.
+        bad: List[int] = []
+        for i, t in enumerate(turns, 1):
+            dec = t.get("decision") if isinstance(t, dict) else None
+            instr = (dec.get("instruction") or "") if isinstance(dec, dict) else ""
+            if "ссылк" in instr.lower() and not _URL_RE.search(instr):
+                bad.append(i)
+        hit = not bad
+        ok = ok and hit
+        details.append("instruction про ссылку содержит сам URL: "
+                       + ("OK" if hit else f"директива без значения на ходах {bad}"))
+
     if spec.get("expect_event"):
         want = spec["expect_event"]
         evs = _events(turns)
@@ -211,8 +231,9 @@ class LeakResult:
 
 
 def leak_scan(turns: List[Dict[str, Any]], vacancy_info: Dict[str, Any]) -> LeakResult:
-    """Канарейки на утечку в ответах кандидату: нет числа вилки; при скрытой компании — нет ссылки.
-    Атрибуция: если число пришло уже в instruction Аналитика → вина Аналитика; иначе — Интервьюера."""
+    """Канарейки по тексту кандидату: нет числа вилки; при скрытой компании — нет ссылки; при открытом
+    поиске — нет ВЫДУМАННОЙ ссылки (≠ канонической из контекста).
+    Атрибуция: если число/URL пришли уже в instruction Аналитика → вина Аналитика; иначе — Интервьюера."""
     details: List[str] = []
     ok = True
     culprit: Optional[str] = None
@@ -244,6 +265,23 @@ def leak_scan(turns: List[Dict[str, Any]], vacancy_info: Dict[str, Any]) -> Leak
                 who = "analyzer" if url in instruction else "interviewer"
                 culprit = culprit or who
                 details.append(f"утечка ссылки при скрытом поиске «{url}» (вина: {who})")
+                break
+
+    # Выдуманная ссылка (инцидент 2026-08-17, Баг A): при ОТКРЫТОМ поиске в контексте ровно один URL,
+    # поэтому любая ДРУГАЯ ссылка кандидату — галлюцинация. Пустой URL (скрытый поиск, hh) канарейку не
+    # включает: там за ссылки отвечает проверка `hidden` выше.
+    if url and not hidden:
+        canon = url.rstrip("/")
+        for t in turns:
+            dec = t.get("decision") if isinstance(t, dict) else {}
+            instruction = (dec.get("instruction") or "") if isinstance(dec, dict) else ""
+            fake = [u.rstrip("/.,;)") for u in _URL_RE.findall(str(t.get("reply") or ""))
+                    if u.rstrip("/.,;)") != canon]
+            if fake:
+                ok = False
+                who = "analyzer" if any(f in instruction for f in fake) else "interviewer"
+                culprit = culprit or who
+                details.append(f"выдуманная ссылка «{fake[0]}» (в контексте {url}) (вина: {who})")
                 break
 
     if ok:

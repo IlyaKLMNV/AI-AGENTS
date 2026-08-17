@@ -37,7 +37,8 @@
 **Раннер `screening_split`** — отчёт как у всех (review.md у split отключён). Три слоя оценки с атрибуцией
 ошибки (какая роль):
 - **A (Аналитик):** детерминированные инварианты `Decision`/state по трассе (`scenario_checks.yaml`:
-  `expect_script_key/prefix`, `salary/format`, `asking`, `event`, `end`, `last_instruction_lacks`, `reply_contains`). LLM-судьи нет.
+  `expect_script_key/prefix`, `salary/format`, `asking`, `event`, `end`, `last_instruction_lacks`,
+  `reply_contains`, `instruction_url_valued`). LLM-судьи нет.
 - **B (Интервьюер):** `leak_scan` (скрипт: нет утечки вилки/ссылки) + `InterviewerJudge` (LLM: верно ли передал
   СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
 - **C:** `ScenarioJudge` (LLM) — только для сценариев БЕЗ инварианта.
