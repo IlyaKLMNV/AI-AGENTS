@@ -135,6 +135,12 @@ Backend на `searchBool` возвращает JSON **`{count, profiles: [...]}`
 
 ## Грабли (важно!)
 - **Большинство раннеров НЕ читают `.env`** — экспортируй в окружение (`set -a; source .env; set +a`).
+- **`store=False` во всех вызовах харнесса** (`core.llm_client.STORE_RESPONSES`): в Responses API
+  `store` по умолчанию **`true`**, поэтому прогоны засоряли `platform.openai.com/logs`, где смотрят
+  ПРОД. `store: true` из `config.yaml` пакета `prompts` намеренно НЕ прокидываем — это ретеншн, на
+  вывод модели не влияет. **Исключение — мультитёрн через `conversation=`** (`domain/screening`,
+  `domain/screening_split/interviewer.py`): при `store=false` ответ приходит, но новые input/output
+  НЕ дописываются в conversation → история ходов теряется. Там store остаётся продовым (логи будут).
 - `prompt_id`/`version` — **только из `model.yaml`** (источник правды); env/CLI-override опционально,
   а `screening_scenarios_runner`/`screening_guardrails_runner` override игнорируют.
 - **extractor step3: по умолчанию `limit=0` (только count).** Backend отдаёт `count` за ~11с, но

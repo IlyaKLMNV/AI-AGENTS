@@ -11,6 +11,14 @@
 Все принимают опциональный `client=` для подмены в offline/replay/тестах
 (никакой сети). openai импортируется лениво, чтобы `import qa_harness.core`
 не требовал установленного openai в чисто-юнит-окружении.
+
+`store=False` во ВСЕХ вызовах: прогоны QA-стенда не должны засорять
+platform.openai.com/logs — там смотрят логи ПРОДА. store — параметр ретеншна, на вывод
+модели он не влияет, поэтому прод-паритет промпта-под-тестом не страдает (и `store: true`
+из config.yaml пакета `prompts` мы намеренно НЕ прокидываем). Единственное исключение —
+мультитёрн через `conversation=` (domain/screening, domain/screening_split): при
+`store=false` ответ отдаётся, но новые input/output НЕ дописываются в conversation, то есть
+история теряется — там store остаётся продовым (см. комментарии на местах).
 """
 
 from __future__ import annotations
@@ -19,6 +27,9 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 _CLIENTS: Dict[Tuple[Optional[str], Optional[float]], Any] = {}
+
+# Не хранить ответы на стороне OpenAI (см. докстринг модуля).
+STORE_RESPONSES = False
 
 
 def get_client(*, base_url: Optional[str] = None, timeout: Optional[float] = None) -> Any:
@@ -29,6 +40,13 @@ def get_client(*, base_url: Optional[str] = None, timeout: Optional[float] = Non
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY is not set")
         from openai import OpenAI  # ленивый импорт
+
+        # Готча: `OPENAI_BASE_URL=` (пусто) в .env экспортится как "" — а SDK проверяет `is None`
+        # (openai/_client.py), поэтому берёт "" за base_url и любой вызов падает с
+        # «Request URL is missing an http:// or https:// protocol». Пустое = не задано: убираем из
+        # окружения, иначе SDK подхватит его сам, даже если мы base_url не передаём.
+        if not (os.environ.get("OPENAI_BASE_URL") or "").strip():
+            os.environ.pop("OPENAI_BASE_URL", None)
 
         kwargs: Dict[str, Any] = {"api_key": api_key}
         if base_url or os.environ.get("OPENAI_BASE_URL"):
@@ -63,7 +81,8 @@ class StoredPromptClient:
     def run(self, input_text: str) -> Tuple[str, Any]:
         """Вернуть (output_text, usage)."""
         client = self._client or get_client()
-        kwargs: Dict[str, Any] = {"prompt": self._prompt, "input": input_text}
+        kwargs: Dict[str, Any] = {"prompt": self._prompt, "input": input_text,
+                                  "store": STORE_RESPONSES}
         if self._text_format is not None:
             kwargs["text"] = self._text_format
         return _text_and_usage(client.responses.create(**kwargs))
@@ -102,9 +121,12 @@ class LocalPromptClient:
         """Вернуть (output_text, usage)."""
         client = self._client or get_client()
         messages = self._spec.build_input(user_input=input_text)
-        kwargs: Dict[str, Any] = {"model": self._spec.model, "input": messages}
+        # store из spec НЕ прокидываем (в пакете он `true` — прод-настройка ретеншна): QA-прогоны
+        # не должны попадать в platform.openai.com/logs, на вывод модели это не влияет.
+        kwargs: Dict[str, Any] = {"model": self._spec.model, "input": messages,
+                                  "store": STORE_RESPONSES}
         # None означает «не задано в config.yaml» — параметр не передаём (как у потребителя пакета).
-        for attr in ("temperature", "top_p", "max_output_tokens", "store"):
+        for attr in ("temperature", "top_p", "max_output_tokens"):
             val = getattr(self._spec, attr, None)
             if val is not None:
                 kwargs[attr] = val
@@ -133,7 +155,8 @@ class ModelClient:
     def create(self, input_text: str) -> Tuple[str, Any]:
         """Вернуть (output_text, usage)."""
         client = self._client or get_client(base_url=self._base_url, timeout=self._timeout)
-        kwargs: Dict[str, Any] = {"model": self._model, "input": input_text}
+        kwargs: Dict[str, Any] = {"model": self._model, "input": input_text,
+                                  "store": STORE_RESPONSES}
         if self._temperature is not None:  # вариативность генерации (судья — без temperature)
             kwargs["temperature"] = self._temperature
         return _text_and_usage(client.responses.create(**kwargs))

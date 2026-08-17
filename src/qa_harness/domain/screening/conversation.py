@@ -109,6 +109,9 @@ class ScreeningConversation:
             "instructions": s.system_text,  # системный промпт применяется на каждом ходу (как stored-промпт)
             "text": {"format": s.text_format},
         }
+        # `store` прокидываем из spec (в пакете = true) и НЕ гасим, в отличие от остальных вызовов
+        # харнесса (core.llm_client.STORE_RESPONSES): при store=false новые input/output НЕ
+        # дописываются в conversation и мультитёрн-история теряется (проверено вживую).
         for attr in ("temperature", "top_p", "max_output_tokens", "store"):
             val = getattr(s, attr, None)
             if val is not None:

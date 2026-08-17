@@ -31,6 +31,10 @@ class ScreeningInterviewer:
             "text": {"format": self._spec.text_format},
         }
         # None => «не задано в config.yaml» — параметр не передаём (как у потребителя пакета).
+        # ВНИМАНИЕ: `store` здесь прокидывается из spec (в пакете `prompts` = true) и НЕ гасится,
+        # в отличие от остальных вызовов харнесса (core.llm_client.STORE_RESPONSES): при store=false
+        # ответ приходит, но новые input/output НЕ дописываются в conversation — история ходов
+        # теряется (проверено вживую). Интервьюер stateful, поэтому платим логами в platform.
         for attr in ("temperature", "top_p", "max_output_tokens", "store"):
             val = getattr(self._spec, attr, None)
             if val is not None:
