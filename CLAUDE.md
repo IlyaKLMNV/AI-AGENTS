@@ -44,7 +44,8 @@
 - **C:** `ScenarioJudge` (LLM) — только для сценариев БЕЗ инварианта.
 Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
 **Как читать отчёт — `docs/screening_split_report_analysis.md`** (что значит `passed`, атрибуция, реальный баг
-vs дрейф генератора). Разбор находок — `docs/screening_split_review_20260728.md`; бэклог — `docs/screening_split_backlog.md`.
+vs дрейф генератора). Разборы прогонов — `docs/screening_split_review_<дата>.md` (последний — `20260817`,
+прод-инцидент: выдуманная ссылка + ложное завершение); ОТКРЫТЫЕ пункты — `docs/screening_split_backlog.md`.
 
 **Режимы входа** (`--input-mode scripted|generated`): scripted — реплики из `candidate_inputs.yaml`
 (детерминированный CI-гейт); generated — адаптивный LLM-кандидат, засеянный из рецепта (`salary_category`/
