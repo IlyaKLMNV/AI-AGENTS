@@ -1,6 +1,14 @@
 
 # Assistants OpenAI
 
+> **ЛЕГАСИ, до cutover.** Обёртка над OpenAI **Assistants API** (треды/раны). Единственный потребитель —
+> `app/screening_guardrails_runner.py`; новая архитектура её НЕ использует (`qa_harness` работает через
+> Responses API, мультитёрн — `domain/screening/conversation.py`, переписанный отсюда без импорта
+> легаси). Новый код сюда не добавляем. См. [../docs/legacy_runners.md](../docs/legacy_runners.md).
+>
+> Ниже описаны `ThreadManager`, `RunManager`, `Assistants`; в модуле есть также `MessageFilter`,
+> `ConversationResult` и `AssistantError`.
+
 ## Логика к помощнику
 
 https://confluence.ancor.ru/pages/viewpage.action?pageId=3152708765

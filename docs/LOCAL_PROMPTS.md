@@ -161,7 +161,7 @@ pip install "git+ssh://git@github.com/podbor/prompts.git"   # @<тег> для �
 | `screening_autofill`       | `screening_autofill_prompt`   |
 | остальные                  | одноимённая директория        |
 
-## Как это устроено (2 точки интеграции)
+## Как это устроено (3 точки интеграции)
 
 - **Одношотовые раннеры** (`message_classifier`, `verdict_classifier`, `extractor_agent`,
   `first_touch`(+`_hh`), `first_touch_event`, `one_line_search_query_builder`,
@@ -177,6 +177,15 @@ pip install "git+ssh://git@github.com/podbor/prompts.git"   # @<тег> для �
   system-текст идёт параметром `instructions=spec.system_text` на каждом ходу (эквивалент
   серверного stored-промпта), а состояние диалога держит серверный `conversation=<id>` — как и в
   stored. Домен НЕ импортирует `prompts`: `spec` грузит раннер через `core.load_local_spec`.
+
+- **Split-скрининг** (`screening_split`, `screening_split --channel hh`, `screening_counters`) —
+  **LOCAL-only, переключателя нет**: stored-эквивалента у `screening_analyzer`/`screening_interviewer`
+  не существует, поэтому дефолт — `local`, а `--prompt-source stored` завершается с ошибкой. Два
+  промпта сразу: Аналитик через `LocalPromptClient` (одношотовый строгий JSON), Интервьюер через
+  `load_local_spec` + серверный `conversation=` (мультитёрн). Версии пинятся **раздельно**:
+  `--analyzer-version` / `--interviewer-version` (общий `--local-prompt-version` здесь формально есть,
+  но НЕ действует). В отчёте это видно как
+  `local_component: "screening_analyzer + screening_interviewer"`, `local_version: "A:v2 · I:v1"`.
 
 ## Отчёт
 

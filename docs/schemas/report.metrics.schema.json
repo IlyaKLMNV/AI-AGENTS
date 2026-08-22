@@ -22,6 +22,7 @@
           "type": "string",
           "enum": [
             "screening_scenarios", "screening_scenarios_hh", "screening_guardrails",
+            "screening_split", "screening_split_hh", "screening_counters",
             "message_classifier", "verdict_classifier", "screening_autofill",
             "first_touch", "first_touch_hh", "first_touch_event",
             "extractor_agent", "one_line_search_query_builder",
@@ -31,11 +32,15 @@
         "prompt_under_test": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["component", "prompt_id"],
+          "required": ["component"],
           "properties": {
             "component": { "type": "string" },
-            "prompt_id": { "type": "string" },
-            "prompt_version": { "type": ["string", "null"] }
+            "source": { "type": "string", "enum": ["stored", "local"] },
+            "prompt_id": { "type": ["string", "null"] },
+            "prompt_version": { "type": ["string", "null"] },
+            "local_component": { "type": ["string", "null"] },
+            "local_version": { "type": ["string", "null"] },
+            "model": { "type": ["string", "null"] }
           }
         },
         "models": {
@@ -154,7 +159,8 @@
         "required": ["case_id", "message"],
         "properties": {
           "case_id": { "type": "string" },
-          "message": { "type": "string" }
+          "message": { "type": "string" },
+          "data": { "type": "object" }
         }
       }
     }

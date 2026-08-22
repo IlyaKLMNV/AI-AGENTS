@@ -8,14 +8,17 @@
 
 ## Архитектура (идёт миграция — два дерева)
 - **`src/qa_harness/`** — НОВАЯ архитектура (целевая), устанавливается `pip install -e .`:
-  - `core/` — инфраструктура (llm_client, config, usage, jsonio, metrics, reporting, cdm);
-  - `domain/` — рекрутинг (judge, generators, classifiers, extractor, text);
+  - `core/` — инфраструктура (llm_client, prompt_source, config, usage, jsonio, metrics, reporting,
+    run_loop, cdm);
+  - `domain/` — рекрутинг (judge, generators, classifiers, extractor, screening*, sourcing, text);
   - `pipeline/` — AI-поиск (step1 parse → step2 payload → step3 backend);
   - `runners/` — тонкие раннеры (`python -m qa_harness.runners.<name>`).
 - **`app/`** — ЛЕГАСИ-раннеры (ещё рабочие, `python -m app.<runner>`). **НЕ удалять до cutover.**
+  Справочник — `docs/legacy_runners.md`.
 - `adapters/`, `screeningAssistant/screeningAss.py` — нужны легаси `screening_*`-раннерам.
-- `docs/` — `REPORT_SCHEMA.md`, `LOCAL_PROMPTS.md` (переключатель источника промптов),
-  `EXTRACTOR_REDESIGN.md`. `tests/tools/model.yaml` — источник правды по промптам.
+- `docs/` — индекс `docs/README.md`; `REPORT_SCHEMA.md` (контракт отчёта), `LOCAL_PROMPTS.md`
+  (переключатель источника промптов), `screening_split/` (плейбук + бэклог + журналы прогонов).
+  `tests/tools/model.yaml` — источник правды по промптам.
 
 Переведены на новую архитектуру: **message_classifier, verdict_classifier, extractor_agent, one_line_search_query_builder, sourcing_assistant, responsibilities_parser, screening_autofill, first_touch (base), first_touch_hh, first_touch_event, screening_guardrails, screening_scenarios (+`--component screening_assistant_hh`)**.
 Миграция раннеров завершена — все на `qa_harness`; легаси `app/` остаётся до cutover.
@@ -26,7 +29,8 @@
 **качество промпта**; инфра-сбои → `summary.errors` (не в `failed`).
 - классификаторы (message/verdict): `LabelJudge` (метка), accuracy + confusion + by_split; `--offline` без сети.
 - extractor: контракт + **семантика по golden** (`anchors.yaml`), без LLM-судьи; поэтапные вердикты
-  (step1/step2/step3); конкурентность + fail-fast + чекпоинты. См. `docs/EXTRACTOR_REDESIGN.md`.
+  (step1/step2/step3); конкурентность + fail-fast + чекпоинты (оркестрация — `core.run_loop`).
+  `passed = contract & semantic & mapping`; step3 — информация (count), не pass/fail.
 
 ## Split-скрининг (`screening_split` + `screening_counters`)
 Раздельный скрининг: вместо монолита — **Аналитик** (`screening_analyzer`, строгий JSON `Decision`) +
@@ -43,9 +47,10 @@
   СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
 - **C:** `ScenarioJudge` (LLM) — только для сценариев БЕЗ инварианта.
 Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
-**Как читать отчёт — `docs/screening_split_report_analysis.md`** (что значит `passed`, атрибуция, реальный баг
-vs дрейф генератора). Разборы прогонов — `docs/screening_split_review_<дата>.md` (последний — `20260817`,
-прод-инцидент: выдуманная ссылка + ложное завершение); ОТКРЫТЫЕ пункты — `docs/screening_split_backlog.md`.
+**Как читать отчёт — `docs/screening_split/report_analysis.md`** (что значит `passed`, атрибуция, реальный
+баг vs дрейф генератора). Разборы прогонов — `docs/screening_split/review_<дата>.md` (последний —
+`20260817`, прод-инцидент: выдуманная ссылка + ложное завершение); ОТКРЫТЫЕ пункты —
+`docs/screening_split/backlog.md`.
 
 **Режимы входа** (`--input-mode scripted|generated`): scripted — реплики из `candidate_inputs.yaml`
 (детерминированный CI-гейт); generated — адаптивный LLM-кандидат, засеянный из рецепта (`salary_category`/
@@ -76,7 +81,8 @@ gibberish-счётчик перехватывают лупы за 2–4 хода
 в самом пакете — так тестируют не-дефолтную версию, не трогая пакет) · `--prompts-path`/env
 `PROMPTS_REPO_PATH` (ДЕВ-обходной путь к исходникам). По умолчанию берётся **установленный релиз** (как в
 проде — wheel из GHCR-образа `ghcr.io/podbor/prompts`, установка — `docs/LOCAL_PROMPTS.md`); неявного
-подхвата соседнего `../prompts` нет (иначе тестировали бы локальную копию вместо релиза). Резолв версии в пакете: `--local-prompt-version` > env
+подхвата соседнего `../prompts` нет (иначе тестировали бы локальную копию вместо релиза). Резолв версии
+в пакете: `--local-prompt-version` > `model.yaml[<component>].local_version` > env
 `<COMPONENT>_PROMPT_VERSION` > `pointer.yaml active`. Маппинг имён (`model.yaml` → директория в `prompts`)
 — поле `local_component` в `model.yaml` (`first_touch`→`FIRST_TOUCH`, `screening_autofill`→
 `screening_autofill_prompt` и т.п.; где не задан — identity). **Screening тестируется в local** (v51),

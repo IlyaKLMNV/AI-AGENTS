@@ -328,8 +328,8 @@ def write_reports(
     """Записать отчёты прогона (UTF-8 без BOM): metrics.json + cases.json (для машин) и
     review.md (человекочитаемый). Вернуть (metrics_path, cases_path).
 
-    write_review=False — не писать review.md (пока используется только screening_split;
-    TODO: убрать review.md глобально у всех раннеров, см. docs/screening_split_backlog.md A1)."""
+    write_review=False — не писать review.md (используется screening_split: там человекочитаемость
+    даёт cases.json, см. docs/screening_split/report_analysis.md §1)."""
     out_dir = Path(reports_dir) / runner
     out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = out_dir / f"{runner}_{run_id}.metrics.json"
