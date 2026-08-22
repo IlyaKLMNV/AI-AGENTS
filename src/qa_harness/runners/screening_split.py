@@ -526,6 +526,9 @@ def run(args: argparse.Namespace) -> Any:
         # gate="dialogue": вход варьируется/нет инвариантов → гейтит LLM-судья, слой A — лишь СИГНАЛ.
         gate = res.get("gate", "dialogue")
         acheck = sp.evaluate_analyzer(s.index, res["turns"], checks_by_index)
+        # Канарейки prompt injection (эмодзи / цитирование) — слой B: свойство ТЕКСТА, а не трассы
+        # Аналитика, поэтому и в отчёте, и в консоли идут как B, с собственной атрибуцией вины.
+        inj = sp.injection_scan(res["turns"], checks_by_index.get(s.index) or {})
         leak = res.get("leak") or {"passed": True, "details": [], "culprit": None}
         iverdict = res.get("iverdict")
         dialogue_passed = True if verdict is None else bool(verdict.passed)
@@ -534,6 +537,7 @@ def run(args: argparse.Namespace) -> Any:
         analyzer_ok = (not acheck.has_checks) or acheck.passed
         analyzer_gates = (gate == "analyzer") and acheck.has_checks
         leak_ok = bool(leak["passed"])
+        injection_ok = inj.passed
         interviewer_ok = (iverdict is None) or bool(iverdict["passed"])
         # gate: analyzer — инвариант Аналитика ГЕЙТИТ. И в scripted, И в generated: вход варьируется
         # лишь ФОРМУЛИРОВКОЙ (факт закреплён must_convey/рецептом, раунды тугие) → инвариант валиден
@@ -543,7 +547,7 @@ def run(args: argparse.Namespace) -> Any:
             core_ok = analyzer_ok
         else:
             core_ok = dialogue_passed
-        passed = core_ok and leak_ok and interviewer_ok
+        passed = core_ok and leak_ok and injection_ok and interviewer_ok
 
         if passed:
             m["passed"] += 1
@@ -554,6 +558,10 @@ def run(args: argparse.Namespace) -> Any:
             reasons["[Аналитик] " + "; ".join(acheck.details)[:80]] += 1
         if not leak_ok:
             m[("analyzer_leak" if leak.get("culprit") == "analyzer" else "interviewer_leak")] += 1
+        if not injection_ok:
+            m["injection_fail"] += 1
+            reasons[("[Аналитик] " if inj.culprit == "analyzer" else "[Интервьюер] ")
+                    + "prompt injection: " + "; ".join(d for d in inj.details if "OK" not in d)[:70]] += 1
         if iverdict is not None and not iverdict["passed"]:
             m["interviewer_fail"] += 1
         if gate == "dialogue" and not dialogue_passed:
@@ -567,6 +575,9 @@ def run(args: argparse.Namespace) -> Any:
         if not leak_ok:
             leak_tag = "[Аналитик] " if leak.get("culprit") == "analyzer" else "[Интервьюер] "
             reason_codes += [leak_tag + d for d in leak["details"]]
+        if not injection_ok:
+            inj_tag = "[Аналитик] " if inj.culprit == "analyzer" else "[Интервьюер] "
+            reason_codes += [inj_tag + d for d in inj.details if "OK" not in d]
         if iverdict is not None and not iverdict["passed"]:
             reason_codes += ["[Интервьюер] " + v for v in iverdict["violations"][:4]]
         if gate == "dialogue":
@@ -579,6 +590,9 @@ def run(args: argparse.Namespace) -> Any:
         if had_ask or not leak_ok:  # A4: leak-канарейка осмысленна только если говорил Интервьюер
             case_checks.append({"rule": "Интервьюер: утечка секрета", "passed": leak_ok,
                                 "detail": "; ".join(leak["details"])})
+        if inj.details:  # канарейка объявлена в спеке сценария (tg #60, hh #51)
+            case_checks.append({"rule": "Интервьюер: prompt injection (канарейка)", "passed": injection_ok,
+                                "detail": "; ".join(inj.details)})
         if iverdict is not None:
             case_checks.append({"rule": "Интервьюер: верность инструкции (LLM)", "passed": bool(iverdict["passed"]),
                                 "detail": iverdict["comment"] or "; ".join(iverdict["violations"][:4])})
@@ -603,7 +617,7 @@ def run(args: argparse.Namespace) -> Any:
         ))
         if not args.quiet:
             a_tag = "" if not acheck.has_checks else (" A:ok" if acheck.passed else " A:FAIL")
-            b_tag = "" if (leak_ok and interviewer_ok) else " B:FAIL"
+            b_tag = "" if (leak_ok and injection_ok and interviewer_ok) else " B:FAIL"
             fb = res.get("gen_sources", []).count("fallback") if is_gen else 0
             g = {"generated": "gen*", "scripted": "scr", "generate": "gen", "golden": "gld"}[input_mode]
             print(f"  [{'ok ' if passed else 'MISS'}] {tag} {s.name[:34]} [{g}] turns={len(res['turns'])} viol={len(dialogue_violations)}{a_tag}{b_tag}" + (f" fb={fb}" if fb else ""))

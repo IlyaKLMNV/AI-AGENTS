@@ -19,6 +19,7 @@ from qa_harness.domain.screening_split.checks import (  # noqa: F401 — re-expo
     _final_state,
     _salary_variants,
     evaluate_analyzer as _tg_evaluate_analyzer,
+    injection_scan,  # noqa: F401 — канарейки prompt injection общие для каналов (чистый текст)
     load_checks,
 )
 
