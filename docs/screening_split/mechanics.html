@@ -1,0 +1,951 @@
+<title>Механика split-скрининга</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --paper:       #EFF3F3;
+    --surface:     #FFFFFF;
+    --surface-2:   #F7FAFA;
+    --ink:         #131E1D;
+    --ink-2:       #3A4B49;
+    --muted:       #647573;
+    --rule:        #D2DDDC;
+    --rule-strong: #B4C4C2;
+
+    --code:        #0C6A5F;   /* детерминированный код */
+    --code-soft:   #DCEDEA;
+    --llm:         #6A4BA6;   /* решение принимает модель */
+    --llm-soft:    #E9E3F5;
+    --stop:        #A93A2C;   /* принудительное завершение */
+    --stop-soft:   #F6E2DE;
+
+    --shadow: 0 1px 2px rgba(19, 30, 29, .05), 0 8px 24px -16px rgba(19, 30, 29, .35);
+
+    --f-display: "Onest", "Segoe UI", system-ui, sans-serif;
+    --f-body:    "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --f-mono:    "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:       #0E1615;
+      --surface:     #16201F;
+      --surface-2:   #1B2625;
+      --ink:         #E4EDEB;
+      --ink-2:       #BCCBC9;
+      --muted:       #8DA09E;
+      --rule:        #2A3937;
+      --rule-strong: #3C4E4C;
+
+      --code:        #4FC3B0;
+      --code-soft:   #10312D;
+      --llm:         #A891E0;
+      --llm-soft:    #241C3A;
+      --stop:        #E58170;
+      --stop-soft:   #38201C;
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:       #0E1615;
+    --surface:     #16201F;
+    --surface-2:   #1B2625;
+    --ink:         #E4EDEB;
+    --ink-2:       #BCCBC9;
+    --muted:       #8DA09E;
+    --rule:        #2A3937;
+    --rule-strong: #3C4E4C;
+
+    --code:        #4FC3B0;
+    --code-soft:   #10312D;
+    --llm:         #A891E0;
+    --llm-soft:    #241C3A;
+    --stop:        #E58170;
+    --stop-soft:   #38201C;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  /* ---------- header ---------- */
+
+  header { display: flex; flex-direction: column; gap: 18px; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(30px, 4.6vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: 64ch;
+    font-size: 17px;
+    color: var(--ink-2);
+  }
+
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 4px;
+  }
+
+  .src {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 5px 9px;
+  }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 20px; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 25px;
+    letter-spacing: -.01em;
+    margin: 0;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--rule-strong);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: 72ch; }
+  p + p { margin-top: -4px; }
+
+  ul { margin: 0; padding-left: 20px; max-width: 72ch; display: flex; flex-direction: column; gap: 7px; }
+  li::marker { color: var(--muted); }
+
+  code, .m {
+    font-family: var(--f-mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: .08em .32em;
+    white-space: nowrap;
+  }
+
+  strong { font-weight: 600; }
+
+  /* ---------- answer callouts ---------- */
+
+  .answer {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--code);
+    border-radius: 6px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  .answer.warn { border-left-color: var(--stop); }
+
+  .answer .q {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .answer .a {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 1.35;
+    margin: 0;
+    max-width: 68ch;
+  }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); }
+
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14.5px; }
+
+  thead th {
+    text-align: left;
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule-strong);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface-2); }
+
+  td.name { color: var(--ink); font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+  td.num  { font-variant-numeric: tabular-nums; text-align: center; font-family: var(--f-mono); font-size: 13.5px; white-space: nowrap; }
+  th.num  { text-align: center; }
+
+  .diff td { background: var(--stop-soft); }
+  .diff:hover td { background: var(--stop-soft); }
+  .diff td.num.hl { color: var(--stop); font-weight: 500; }
+
+  /* ---------- chips ---------- */
+
+  .chip {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .04em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .chip.code { background: var(--code-soft); color: var(--code); border-color: var(--code); }
+  .chip.llm  { background: var(--llm-soft);  color: var(--llm);  border-color: var(--llm); }
+  .chip.stop { background: var(--stop-soft); color: var(--stop); border-color: var(--stop); }
+  .chip.none { background: var(--surface-2); color: var(--muted); border-color: var(--rule-strong); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13.5px; color: var(--muted); }
+
+  /* ---------- figures ---------- */
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 22px 22px 16px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-x: auto;
+  }
+
+  figure svg { display: block; max-width: 100%; height: auto; min-width: 640px; }
+
+  figcaption { font-size: 13.5px; color: var(--muted); max-width: 76ch; }
+
+  .s-box   { fill: var(--surface-2); stroke: var(--rule-strong); stroke-width: 1.5; }
+  .s-code  { fill: var(--code-soft); stroke: var(--code); stroke-width: 1.5; }
+  .s-llm   { fill: var(--llm-soft);  stroke: var(--llm);  stroke-width: 1.5; }
+  .s-stop  { fill: var(--stop-soft); stroke: var(--stop); stroke-width: 1.5; }
+  .s-frame { fill: none; stroke: var(--rule-strong); stroke-width: 1.5; stroke-dasharray: 3 4; }
+
+  .t      { font-family: "Golos Text", system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
+  .t-sm   { font-family: "JetBrains Mono", monospace; font-size: 11px; fill: var(--muted); }
+  .t-lbl  { font-family: "JetBrains Mono", monospace; font-size: 11px; fill: var(--ink-2); }
+  .t-stop { fill: var(--stop); font-weight: 600; }
+  .t-num  { font-family: "JetBrains Mono", monospace; font-size: 12px; fill: var(--ink); font-weight: 500; }
+
+  .ln     { stroke: var(--rule-strong); stroke-width: 1.5; fill: none; }
+  .ln-dash{ stroke: var(--llm); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .ln-stop{ stroke: var(--stop); stroke-width: 1.5; fill: none; }
+
+  /* ---------- trace ---------- */
+
+  .trace { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+
+  .step { display: grid; grid-template-columns: 46px 1fr; gap: 0; border-bottom: 1px solid var(--rule); }
+  .step:last-child { border-bottom: none; }
+  .step .n {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface-2);
+    border-right: 1px solid var(--rule);
+    padding: 14px 0;
+    text-align: center;
+  }
+  .step .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 5px; }
+  .step .body .what { font-size: 14.5px; color: var(--ink); }
+  .step .body .why { font-size: 13.5px; color: var(--muted); }
+  .step.bad .n { background: var(--stop-soft); color: var(--stop); }
+  .step.bad .body .what { color: var(--stop); font-weight: 500; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: var(--shadow);
+  }
+  .card .h { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
+  .card p { font-size: 14px; color: var(--ink-2); }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 20px; font-size: 13px; color: var(--muted); }
+  footer p { max-width: 76ch; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">split-скрининг · три порта одного движка</div>
+    <h1>Механика split-скрининга</h1>
+    <p class="lede">Что происходит за один ход диалога: в каком порядке код проверяет счётчики, когда он
+      подменяет решение Аналитика, что именно считает каждый счётчик и чем расходятся три копии движка.</p>
+    <div class="sources">
+      <span class="src">tgApi · app/common/screening/ScreeningSplitEngine.py</span>
+      <span class="src">eggplant-api · app/assistants/screening/engine.py</span>
+      <span class="src">qa_harness · domain/screening_split/engine.py</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Кто принимает решения</h2>
+    <p>Ролей три, и граница между ними — главное, что нужно держать в голове при анализе поведения.</p>
+    <div class="cols">
+      <div class="card">
+        <div class="h"><span class="chip llm">LLM</span> Аналитик</div>
+        <p>Видит контекст вакансии, состояние и реплику кандидата. Возвращает строгий JSON
+          <code>Decision</code>: что делать дальше, что записать в состояние, какое событие засчитать.
+          Текста кандидату не пишет.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip llm">LLM</span> Интервьюер</div>
+        <p>Не знает о вакансии ничего. Получает готовую <code>instruction</code> от Аналитика и
+          превращает её в одно сообщение кандидату. Решений по существу не принимает.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip code">КОД</span> Оркестратор</div>
+        <p>Ведёт состояние, считает все счётчики и <strong>вправе подменить решение Аналитика</strong>
+          на готовый скрипт — завершение диалога всегда за кодом, а не за моделью.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Один ход</h2>
+
+    <figure>
+      <svg viewBox="0 0 960 470" role="img" aria-label="Схема одного хода: сообщение кандидата, вызов Аналитика, четыре проверки кода по порядку, ветка перерешивания со вторым вызовом Аналитика и один выход — скрипт или Интервьюер">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+          <marker id="ar-llm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--llm)"></path>
+          </marker>
+        </defs>
+
+        <rect class="s-box" x="12" y="36" width="132" height="52" rx="5"></rect>
+        <text class="t" x="78" y="60" text-anchor="middle">Сообщение</text>
+        <text class="t" x="78" y="76" text-anchor="middle">кандидата</text>
+
+        <line class="ln" x1="146" y1="62" x2="186" y2="62" marker-end="url(#ar)"></line>
+
+        <rect class="s-llm" x="188" y="36" width="150" height="52" rx="5"></rect>
+        <text class="t" x="263" y="58" text-anchor="middle">Аналитик</text>
+        <text class="t-sm" x="263" y="76" text-anchor="middle">Decision (JSON)</text>
+
+        <line class="ln" x1="340" y1="62" x2="382" y2="62" marker-end="url(#ar)"></line>
+
+        <rect class="s-frame" x="384" y="20" width="470" height="248" rx="7"></rect>
+        <text class="t-sm" x="400" y="40">КОД · порядок проверок за один ход</text>
+
+        <rect class="s-code" x="404" y="52" width="430" height="42" rx="4"></rect>
+        <text class="t-num" x="420" y="70">1</text>
+        <text class="t" x="444" y="70">apply_updates</text>
+        <text class="t-sm" x="444" y="85">записать updates · инкремент counters[event]</text>
+
+        <rect class="s-code" x="404" y="102" width="430" height="42" rx="4"></rect>
+        <text class="t-num" x="420" y="120">2</text>
+        <text class="t" x="444" y="120">Пороги событий</text>
+        <text class="t-sm" x="444" y="135">gibberish · bot_check · demand · contact_source · pause</text>
+
+        <rect class="s-code" x="404" y="152" width="430" height="42" rx="4"></rect>
+        <text class="t-num" x="420" y="170">3</text>
+        <text class="t" x="444" y="170">reask-cap</text>
+        <text class="t-sm" x="444" y="185">повтор того же asking · зарплата / формат / доп-вопрос</text>
+
+        <rect class="s-code" x="404" y="202" width="430" height="42" rx="4"></rect>
+        <text class="t-num" x="420" y="220">4</text>
+        <text class="t" x="444" y="220">no_progress</text>
+        <text class="t-sm" x="444" y="235">сигнатура прогресса не изменилась за ход</text>
+
+        <path class="ln-dash" d="M 404 173 L 366 173 L 366 108 L 263 108 L 263 92" marker-end="url(#ar-llm)"></path>
+        <text class="t-lbl" x="360" y="196" text-anchor="end" fill="var(--llm)">доп-вопрос исчерпан →</text>
+        <text class="t-lbl" x="360" y="210" text-anchor="end" fill="var(--llm)">refused → 2-й вызов</text>
+
+        <line class="ln" x1="560" y1="270" x2="560" y2="308" marker-end="url(#ar)"></line>
+        <line class="ln" x1="740" y1="270" x2="740" y2="308" marker-end="url(#ar)"></line>
+
+        <rect class="s-stop" x="440" y="310" width="240" height="52" rx="5"></rect>
+        <text class="t" x="560" y="332" text-anchor="middle">next_action: script</text>
+        <text class="t-sm" x="560" y="349" text-anchor="middle">готовый текст из реестра</text>
+
+        <rect class="s-llm" x="700" y="310" width="240" height="52" rx="5"></rect>
+        <text class="t" x="820" y="332" text-anchor="middle">next_action: ask → Интервьюер</text>
+        <text class="t-sm" x="820" y="349" text-anchor="middle">формулирует сообщение</text>
+
+        <line class="ln" x1="560" y1="364" x2="560" y2="398" marker-end="url(#ar)"></line>
+        <line class="ln" x1="820" y1="364" x2="820" y2="398" marker-end="url(#ar)"></line>
+
+        <rect class="s-box" x="440" y="400" width="500" height="46" rx="5"></rect>
+        <text class="t" x="690" y="428" text-anchor="middle">Ровно одно сообщение кандидату за ход</text>
+
+        <text class="t-sm" x="12" y="404">Аналитик за ход</text>
+        <text class="t-sm" x="12" y="420">вызывается 1 или 2 раза,</text>
+        <text class="t-sm" x="12" y="436">Интервьюер — всегда ≤ 1.</text>
+      </svg>
+      <figcaption>Проверки идут строго в этом порядке, и он важен: событийный порог (2) успевает
+        подменить решение до того, как reask-cap (3) начнёт считать переспрос, а <code>no_progress</code> (4)
+        смотрит уже на итог хода. Пунктиром — единственная ветка, где Аналитик вызывается второй раз.</figcaption>
+    </figure>
+
+    <div class="answer">
+      <div class="q">Вопрос 1 · перерешивание хода</div>
+      <p class="a">Да, Аналитик вызывается дважды подряд — но кандидат этого не видит: сообщение за ход
+        всё равно одно.</p>
+      <p>Ветка срабатывает только для доп-вопроса из <code>[questions]</code>, когда лимит переспросов
+        исчерпан. Код помечает вопрос <code>refused</code>, обнуляет <code>last_asking</code> и зовёт
+        Аналитика ещё раз — уже с обновлённым состоянием, где этот вопрос закрыт. Смысл в том, чтобы
+        ход не пропал впустую: без второго вызова Аналитик остался бы с решением «переспроси то, что
+        только что закрыли». Второй <code>Decision</code> и идёт в работу, и уже его результат уходит
+        либо скриптом, либо через Интервьюера. Если второй вызов упал с ошибкой — отправляется
+        <code>REPLY_FALLBACK</code>.</p>
+      <p>Для зарплаты и формата такой ветки нет: там исчерпание лимита сразу даёт терминальный скрипт,
+        перерешивать нечего.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Перерешивание хода — по шагам</h2>
+
+    <p>Ветка одна и срабатывает только на доп-вопросах из <code>[questions]</code>. Лимит, который её
+      запускает, лежит не в отдельной переменной, а внутри самого вопроса в состоянии:
+      <code>questions[i].reask_count</code> — счётчик персональный для каждого вопроса, растёт через
+      <code>apply_updates</code> со значением <code>"reasked"</code>. Порог тот же, 2 — то есть ветка
+      включается на третьем повторе одного и того же вопроса.</p>
+
+    <figure>
+      <svg viewBox="0 0 940 330" role="img" aria-label="Дорожки одного хода с перерешиванием: Аналитик вызывается дважды, между вызовами код закрывает исчерпанный вопрос, Интервьюер вызывается один раз и кандидату уходит одно сообщение">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <line class="ln" x1="120" y1="52" x2="120" y2="290"></line>
+        <text class="t-sm" x="14" y="40">один ход →</text>
+
+        <text class="t-lbl" x="14" y="96">Аналитик</text>
+        <text class="t-lbl" x="14" y="176">Код</text>
+        <text class="t-lbl" x="14" y="256">Интервьюер</text>
+
+        <line class="ln" x1="120" y1="118" x2="930" y2="118" stroke-dasharray="2 5"></line>
+        <line class="ln" x1="120" y1="198" x2="930" y2="198" stroke-dasharray="2 5"></line>
+
+        <rect class="s-llm" x="136" y="62" width="140" height="46" rx="4"></rect>
+        <text class="t" x="206" y="82" text-anchor="middle">Вызов 1</text>
+        <text class="t-sm" x="206" y="98" text-anchor="middle">ask · asking = q2</text>
+
+        <rect class="s-code" x="296" y="142" width="176" height="46" rx="4"></rect>
+        <text class="t" x="384" y="162" text-anchor="middle">reask_count(q2) = 2</text>
+        <text class="t-sm" x="384" y="178" text-anchor="middle">q2 → refused, last_asking = null</text>
+
+        <rect class="s-llm" x="492" y="62" width="140" height="46" rx="4"></rect>
+        <text class="t" x="562" y="82" text-anchor="middle">Вызов 2</text>
+        <text class="t-sm" x="562" y="98" text-anchor="middle">ask · asking = q3</text>
+
+        <rect class="s-code" x="652" y="142" width="150" height="46" rx="4"></rect>
+        <text class="t" x="727" y="162" text-anchor="middle">no_progress = 0</text>
+        <text class="t-sm" x="727" y="178" text-anchor="middle">refused = прогресс</text>
+
+        <rect class="s-llm" x="700" y="222" width="140" height="46" rx="4"></rect>
+        <text class="t" x="770" y="242" text-anchor="middle">Вызов 1</text>
+        <text class="t-sm" x="770" y="258" text-anchor="middle">формулирует q3</text>
+
+        <rect class="s-box" x="856" y="222" width="76" height="46" rx="4"></rect>
+        <text class="t-sm" x="894" y="242" text-anchor="middle">одно</text>
+        <text class="t-sm" x="894" y="258" text-anchor="middle">сообщение</text>
+
+        <path class="ln" d="M 276 85 L 290 85 L 290 160 L 292 160" marker-end="url(#ar4)"></path>
+        <path class="ln" d="M 472 165 L 486 165 L 486 88 L 488 88" marker-end="url(#ar4)"></path>
+        <path class="ln" d="M 632 85 L 646 85 L 646 160 L 648 160" marker-end="url(#ar4)"></path>
+        <path class="ln" d="M 770 190 L 770 218" marker-end="url(#ar4)"></path>
+        <line class="ln" x1="840" y1="245" x2="852" y2="245" marker-end="url(#ar4)"></line>
+
+        <text class="t-sm" x="562" y="128" text-anchor="middle">та же реплика кандидата, обновлённый state</text>
+        <text class="t-sm" x="120" y="312">Третьего вызова Аналитика в этом ходе быть не может: блок капов — не цикл, второй Decision через него не проходит.</text>
+      </svg>
+      <figcaption>Кандидат третий раз отвечает «всё есть в резюме» на <code>q2</code>. Код закрывает
+        <code>q2</code> как <code>refused</code>, и второй вызов Аналитика решает уже про следующий
+        вопрос — <code>q3</code>. Кандидату уходит одно сообщение, и оно про <code>q3</code>.</figcaption>
+    </figure>
+
+    <div class="answer">
+      <div class="q">Вопрос 2 · что происходит после второго вызова</div>
+      <p class="a">Новый round не начинается — ход продолжается тот же и доигрывается до конца:
+        второй <code>Decision</code> проходит проверку <code>no_progress</code>, потом рендерится
+        и уходит кандидату.</p>
+      <p>Второй вызов получает <strong>ту же реплику кандидата</strong>, но состояние, где исчерпанный
+        вопрос уже <code>refused</code>. Поэтому Аналитик почти всегда возвращает следующий
+        <code>pending</code>-вопрос — либо терминальный скрипт, если закрытие последнего пункта сделало
+        скрининг полным (тогда уходит <code>FINISH</code>). Если второй вызов падает с ошибкой —
+        отправляется <code>REPLY_FALLBACK</code> и состояние сохраняется.</p>
+      <p>Третьего вызова быть не может по устройству кода: блок лимитов — это линейный набор условий,
+        а не цикл, и второй <code>Decision</code> через него уже не проходит. Ровно из этого следует
+        известный зазор паритета: <strong>событийные пороги ко второму решению тоже не применяются</strong>.
+        Если второй <code>Decision</code> принесёт событие, перешагнувшее порог, STOP сработает только
+        следующим ходом. В eggplant это разобрали и решили не переставлять блоки (легко применить форс
+        дважды), а оставить комментарий; в tgApi того же комментария пока нет.</p>
+      <p><code>no_progress</code> при этом обнуляется: переход вопроса <code>pending → refused</code>
+        меняет сигнатуру прогресса, то есть отказ считается продвижением диалога.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Счётчики: что каждый считает</h2>
+
+    <div class="legend">
+      <span><span class="chip llm">LLM</span> инкремент зависит от решения модели</span>
+      <span><span class="chip code">КОД</span> инкремент чисто механический</span>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Счётчик</th>
+            <th>Что считает</th>
+            <th>Кто инкрементит</th>
+            <th>Сброс</th>
+            <th>Что делает код на пороге</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">gibberish</td>
+            <td>реплики не по делу, бессвязные</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><code>STOP_GIBBERISH_REPEAT</code></td>
+          </tr>
+          <tr>
+            <td class="name">bot_check</td>
+            <td>«вы бот?» — проверки на живого человека</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><code>STOP_BOT_REPEAT</code></td>
+          </tr>
+          <tr>
+            <td class="name">demand</td>
+            <td>настойчивость: одно и то же требование к нам, ультиматумы</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><code>STOP_PERSISTENT</code></td>
+          </tr>
+          <tr>
+            <td class="name">contact_source</td>
+            <td>требование раскрыть источник контакта</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><code>STOP_PERSISTENT</code></td>
+          </tr>
+          <tr>
+            <td class="name">pause</td>
+            <td>просьбы отложить, перенести, «напишите позже»</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><code>STOP_PAUSE</code></td>
+          </tr>
+          <tr>
+            <td class="name">salary_info</td>
+            <td>сколько раз кандидат требовал <strong>нашу</strong> вилку</td>
+            <td><span class="chip llm">LLM</span> <code>event</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td><strong>ничего — порога в коде нет.</strong> Читает только промпт: <code>0</code> → объяснить
+              политику, <code>≥1</code> → задать вопрос без объяснения</td>
+          </tr>
+          <tr>
+            <td class="name">salary_reasks<br>format_reasks<br>field_work_reasks<br>q*.reask_count</td>
+            <td>повторные заходы на <strong>один и тот же незакрытый пункт</strong></td>
+            <td><span class="chip code">КОД</span> при <code>ask</code> + <code>asking == last_asking</code> +
+              пункт всё ещё <code>pending</code></td>
+            <td><span class="chip none">нет</span></td>
+            <td>зарплата → <code>STOP_SALARY_DEMAND</code>;<br>формат / разъездной → <code>STOP_PERSISTENT</code>;<br>
+              доп-вопрос → <code>refused</code> + второй вызов Аналитика</td>
+          </tr>
+          <tr>
+            <td class="name">no_progress</td>
+            <td>ходы без нового факта, независимо от темы</td>
+            <td><span class="chip code">КОД</span> если сигнатура прогресса не изменилась</td>
+            <td><span class="chip code">да, в 0</span> при любом новом факте</td>
+            <td><code>FINISH</code>, если всё собрано, иначе <code>STOP_PERSISTENT</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>Сигнатура прогресса</strong> = (<code>salary</code>, <code>format_check</code>,
+      [<code>field_work_check</code>], есть ли город, статусы <code>q*</code>). Переспрос в неё не входит —
+      <code>reask_count</code> её не двигает.</p>
+
+    <div class="answer warn">
+      <div class="q">Вопрос 3 · сбрасываются ли счётчики</div>
+      <p class="a">Не сбрасывается ничего, кроме <code>no_progress</code>. Ответ кандидата на доп-вопрос
+        не обнуляет ни зарплатный счётчик, ни любой другой.</p>
+      <p>Во всех трёх портах reask-счётчики и <code>counters[event]</code> только инкрементируются —
+        нуль им присваивается ровно один раз, в <code>init_state</code> при старте диалога. Единственное
+        «обнуление» по ходу диалога — <code>no_progress = 0</code> при появлении нового факта и
+        <code>last_asking = None</code> в ветке перерешивания (это указатель на текущий вопрос, а не счётчик).</p>
+      <p><strong>Монотонность здесь — свойство, а не дефект.</strong> Счётчик показывает, сколько раз
+        мы фактически задали этот вопрос за весь диалог, а не «сколько подряд». Кандидат ответил на два
+        доп-вопроса, потом снова замялся на зарплате — счётчик продолжит с того места, где остановился
+        десять ходов назад, и это правильно: именно так диалог остаётся конечным и не превращается
+        в бесконечное выпрашивание одного и того же.</p>
+      <p>Дефект в инциденте ниже — не в отсутствии сброса, а в том, <em>что</em> засчитывается
+        переспросом: ходы, где кандидат не уклонялся, а задавал свои вопросы, тоже съедали попытки.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Почему нельзя завершить до вызова Аналитика</h2>
+
+    <p>Соблазн понятный: если код всё равно подменит решение терминальным скриптом, зачем платить за
+      вызов. Причина в том, что Аналитик здесь не формальность перед стопом, а <strong>датчик</strong>,
+      без которого условия стопа неизвестны.</p>
+
+    <div class="cols">
+      <div class="card">
+        <div class="h">Событие ставит только он</div>
+        <p>Счётчик двигает <code>decision.event</code> — метка на эту самую реплику. Распознавания
+          в коде нет, поднять счётчик иначе нечем.</p>
+      </div>
+      <div class="card">
+        <div class="h">У порога — не значит «завершать»</div>
+        <p>При <code>salary_reasks = 2</code> и ответе «350 тысяч на руки» стопа быть не должно.
+          Reask-cap срабатывает по условию «Аналитик снова просит то же самое», а не по значению
+          счётчика.</p>
+      </div>
+      <div class="card">
+        <div class="h">Проверять нечего</div>
+        <p>Порог проверяется сразу после инкремента, поэтому стоп уходит в тот же ход, когда счётчик
+          его перешагнул. Живого состояния «счётчик за порогом» в норме не бывает.</p>
+      </div>
+      <div class="card">
+        <div class="h">Одно исключение</div>
+        <p>После перерешивания событийные пороги ко второму <code>Decision</code> не применяются, а
+          счётчик он поднимает. Это зазор паритета, а не место для предпроверки.</p>
+      </div>
+    </div>
+
+    <p>Единственный по-настоящему лишний вызов — второй в ветке перерешивания. Убрать его можно:
+      код сам возьмёт следующий <code>pending</code>-вопрос и задаст его шаблонной инструкцией. Цена —
+      формулировка: Аналитик вкладывает в <code>instruction</code> факты и уместные пояснения, код умеет
+      только «задай вопрос дословно».</p>
+  </section>
+
+  <section>
+    <h2>Как код понимает, что это переспрос</h2>
+
+    <p>Никакого распознавания смысла здесь нет: код не читает ни реплику кандидата, ни текст вопроса.
+      Он сравнивает две служебные метки, которые Аналитик сам же и выставил — на прошлом ходе и на этом.
+      Переспрос засчитывается, когда выполнены все три условия сразу.</p>
+
+    <div class="cols">
+      <div class="card">
+        <div class="h">1 · ход кончается вопросом</div>
+        <p><code>decision.next_action == "ask"</code>. Если ход уходит скриптом, переспрашивать нечего.</p>
+      </div>
+      <div class="card">
+        <div class="h">2 · тот же пункт, что в прошлый раз</div>
+        <p><code>decision.asking == state.last_asking</code> — ключ совпал с тем, что был записан
+          в конце предыдущего хода.</p>
+      </div>
+      <div class="card">
+        <div class="h">3 · пункт всё ещё открыт</div>
+        <p><code>pending</code> в новом состоянии. Если ответ кандидата закрыл пункт на этом же ходе,
+          инкремента не будет.</p>
+      </div>
+    </div>
+
+    <div class="answer warn">
+      <div class="q">Что из этого следует</div>
+      <p class="a">Счётчик мерит «мы спрашиваем одно и то же», а не «кандидат уклоняется» — это разные
+        вещи, и именно на этом разрыве сломался диалог 17 августа.</p>
+      <p><strong>Скриптовый ход цепочку не разрывает — и это верно по существу.</strong>
+        <code>last_asking</code> записывается только в ветке <code>ask</code>, поэтому ход, ушедший
+        скриптом, оставляет прежнее значение. Молчаливых раундов при этом не бывает: все нетерминальные
+        скрипты сами кончаются вопросом — «Если вам удобно, можем продолжить общение по вакансии?»,
+        «можем ли мы вернуться к обсуждению вакансии?». Кандидата спрашивают каждый раунд, открытый
+        пункт остаётся открытым, так что переспрос через скриптовый ход — это по-прежнему переспрос.
+        Две оговорки для точности: сам скриптовый ход ничего не инкрементит (он не <code>ask</code>),
+        и вопрос в нём другой — про продолжение разговора, а не про сумму. Касается это только
+        нетерминальных <code>REPLY_*</code>: в tg их три, в hh — один (<code>REPLY_FALLBACK</code>),
+        остальные скрипты диалог завершают.</p>
+      <p><strong>Не путать с <code>last_asked</code>.</strong> Это другое поле — текст последней
+        инструкции; он нужен промпту, чтобы не повторять формулировку дословно, и на счётчики
+        не влияет.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Арифметика порога</h2>
+
+    <figure>
+      <svg viewBox="0 0 900 210" role="img" aria-label="Таймлайн: первый вопрос инкремента не даёт, первый повтор поднимает счётчик до единицы, второй до двойки, на третьем повторе проверка срабатывает и код форсит стоп">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <line class="ln" x1="30" y1="120" x2="870" y2="120" marker-end="url(#ar2)"></line>
+
+        <rect class="s-box" x="40" y="46" width="180" height="52" rx="5"></rect>
+        <text class="t" x="130" y="68" text-anchor="middle">Спросили впервые</text>
+        <text class="t-sm" x="130" y="86" text-anchor="middle">last_asking пуст → не считаем</text>
+        <circle cx="130" cy="120" r="5" fill="var(--rule-strong)"></circle>
+        <text class="t-num" x="130" y="148" text-anchor="middle">0</text>
+
+        <rect class="s-box" x="240" y="46" width="180" height="52" rx="5"></rect>
+        <text class="t" x="330" y="68" text-anchor="middle">1-й повтор</text>
+        <text class="t-sm" x="330" y="86" text-anchor="middle">проверка: 0 &lt; 2 → +1</text>
+        <circle cx="330" cy="120" r="5" fill="var(--rule-strong)"></circle>
+        <text class="t-num" x="330" y="148" text-anchor="middle">1</text>
+
+        <rect class="s-box" x="440" y="46" width="180" height="52" rx="5"></rect>
+        <text class="t" x="530" y="68" text-anchor="middle">2-й повтор</text>
+        <text class="t-sm" x="530" y="86" text-anchor="middle">проверка: 1 &lt; 2 → +1</text>
+        <circle cx="530" cy="120" r="5" fill="var(--rule-strong)"></circle>
+        <text class="t-num" x="530" y="148" text-anchor="middle">2</text>
+
+        <rect class="s-stop" x="640" y="46" width="200" height="52" rx="5"></rect>
+        <text class="t t-stop" x="740" y="68" text-anchor="middle">3-й повтор</text>
+        <text class="t-sm" x="740" y="86" text-anchor="middle" fill="var(--stop)">проверка: 2 ≥ 2 → STOP</text>
+        <circle cx="740" cy="120" r="6" fill="var(--stop)"></circle>
+        <text class="t-num" x="740" y="148" text-anchor="middle" fill="var(--stop)">STOP</text>
+
+        <text class="t-sm" x="30" y="182">значение счётчика после хода</text>
+        <text class="t-sm" x="870" y="182" text-anchor="end">порог проверяется ДО инкремента</text>
+      </svg>
+      <figcaption>Поэтому «порог 2» в коде означает завершение <strong>на третьем повторе</strong> вопроса —
+        ровно то, что написано в обоих промптах Аналитика: «<code>STOP_SALARY_DEMAND</code> на 3-й раз форсит КОД».</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Три порта: где расходятся</h2>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Механизм</th>
+            <th class="num">tgApi<br><span style="font-weight:400;text-transform:none">tg-канал</span></th>
+            <th class="num">eggplant-api<br><span style="font-weight:400;text-transform:none">hh-канал</span></th>
+            <th class="num">qa_harness<br><span style="font-weight:400;text-transform:none">наш гейт</span></th>
+            <th>Комментарий</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">gibberish</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td>совпадает</td></tr>
+          <tr><td class="name">bot_check</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td>совпадает</td></tr>
+          <tr><td class="name">demand</td><td class="num">3</td><td class="num">3</td><td class="num">3</td><td>совпадает</td></tr>
+          <tr><td class="name">pause</td><td class="num">3</td><td class="num">3</td><td class="num">3</td><td>совпадает</td></tr>
+          <tr>
+            <td class="name">contact_source</td><td class="num">3</td><td class="num">—</td><td class="num">3</td>
+            <td>канальное отличие: в hh источника контакта нет</td>
+          </tr>
+          <tr><td class="name">salary_info</td><td class="num">без порога</td><td class="num">без порога</td><td class="num">без порога</td><td>читает только промпт</td></tr>
+          <tr>
+            <td class="name">reask salary</td>
+            <td class="num">2 <span class="t-sm">(3-й)</span></td>
+            <td class="num">2 <span class="t-sm">(3-й)</span></td>
+            <td class="num">2 <span class="t-sm">(3-й)</span></td>
+            <td>было расхождение: в харнессе стояло 3 (STOP на 4-м), приведено к проду 26.08.2026</td>
+          </tr>
+          <tr><td class="name">reask format</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td>в eggplant это общая константа <code>REASK_CAP</code>, счётчики раздельные</td></tr>
+          <tr>
+            <td class="name">reask field_work</td><td class="num">—</td><td class="num">2</td><td class="num">—</td>
+            <td>канальное отличие: мультиформат только в hh</td>
+          </tr>
+          <tr><td class="name">reask доп-вопроса</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td>совпадает</td></tr>
+          <tr><td class="name">no_progress</td><td class="num">4</td><td class="num">4</td><td class="num">4</td><td>совпадает</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="answer">
+      <div class="q">Вопрос 4 · счётчики харнесса</div>
+      <p class="a">Набор счётчиков в харнессе тот же, что в tgApi — он с него и портирован 1:1.
+        Расхождение было ровно одно, по переспросу зарплаты, и оно устранено.</p>
+      <p>Харнесс не «завершал диалоги позже вообще» — он позже завершал ровно один сценарий: когда
+        кандидат третий раз подряд не даёт внятную сумму. Прод в этот момент уже отправлял
+        <code>STOP_SALARY_DEMAND</code>, а гейт продолжал диалог и считал сценарий пройденным. Порог
+        возвращён к <code>2</code>, и тест снова мерит поведение, которое живёт в проде.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Инцидент 2026-08-17: как сложился ложный STOP</h2>
+
+    <div class="trace">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body">
+          <div class="what">Спросили зарплату. Кандидат вместо суммы задаёт свой вопрос — про компанию.</div>
+          <div class="why">Аналитик отвечает и снова ставит <code>asking: "salary"</code> → счётчик +1. Уклонения не было, попытка потрачена.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body">
+          <div class="what">Ещё один встречный вопрос кандидата.</div>
+          <div class="why">Счётчик +1 = 2. Кандидат по-прежнему не уклонялся от зарплаты — он просто спрашивал.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body">
+          <div class="what">Кандидат отвечает по сути: «Сейчас я в Москве, ищу вакансии с окладом 400000-500000 net».</div>
+          <div class="why">Валидный ответ: город + диапазон net. По правилам промпта <code>salary</code> закрывается по верхней границе.</div>
+        </div>
+      </div>
+      <div class="step bad">
+        <div class="n">4</div>
+        <div class="body">
+          <div class="what">Аналитик сумму не закрыл и переспросил → код увидел 2 ≥ 2 и отправил <code>STOP_SALARY_DEMAND</code>.</div>
+          <div class="why">Диалог завершён отказом на ходе, где кандидат дал ровно то, что просили.</div>
+        </div>
+      </div>
+    </div>
+
+    <p>Причин две, и лечатся они порознь. <strong>Промпт</strong> не закрыл валидный net-диапазон —
+      это правится в правилах зарплатного блока (и надёжнее — разбором суммы в коде).
+      <strong>Код</strong> считает повторы вопроса, а не уклонения кандидата — поэтому ходы 1 и 2 съели
+      попытки. Поднимать порог здесь бессмысленно: он лишь отодвинет ту же ошибку на один ход.
+      Правка — проверять кап только когда ход не дал прогресса; сигнатура для этого уже считается
+      в том же методе.</p>
+  </section>
+
+  <section>
+    <h2>Три механизма на одном поле</h2>
+
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-label="Три механизма следят за разными сигналами одного и того же состояния: reask-cap за повтором нашего вопроса, demand за меткой модели, no_progress за фактическим отсутствием новых фактов">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <rect class="s-frame" x="580" y="40" width="300" height="220" rx="7"></rect>
+        <text class="t" x="730" y="72" text-anchor="middle">Диалог не двигается</text>
+        <text class="t-sm" x="730" y="92" text-anchor="middle">одно состояние — три разных датчика</text>
+
+        <rect class="s-code" x="20" y="60" width="230" height="56" rx="5"></rect>
+        <text class="t" x="36" y="82">reask-cap</text>
+        <text class="t-sm" x="36" y="100">сигнал: повтор нашего вопроса</text>
+
+        <rect class="s-llm" x="20" y="132" width="230" height="56" rx="5"></rect>
+        <text class="t" x="36" y="154">demand</text>
+        <text class="t-sm" x="36" y="172">сигнал: метка модели</text>
+
+        <rect class="s-code" x="20" y="204" width="230" height="56" rx="5"></rect>
+        <text class="t" x="36" y="226">no_progress</text>
+        <text class="t-sm" x="36" y="244">сигнал: нет новых фактов</text>
+
+        <line class="ln" x1="252" y1="88" x2="576" y2="120" marker-end="url(#ar3)"></line>
+        <line class="ln" x1="252" y1="160" x2="576" y2="160" marker-end="url(#ar3)"></line>
+        <line class="ln" x1="252" y1="232" x2="576" y2="200" marker-end="url(#ar3)"></line>
+
+        <text class="t-lbl" x="410" y="96" text-anchor="middle">срабатывает за 3 хода</text>
+        <text class="t-lbl" x="410" y="150" text-anchor="middle">срабатывает за 3 хода</text>
+        <text class="t-lbl" x="410" y="248" text-anchor="middle">срабатывает за 4 хода</text>
+
+        <text class="t" x="730" y="140" text-anchor="middle">Первые два почти всегда</text>
+        <text class="t" x="730" y="158" text-anchor="middle">успевают раньше —</text>
+        <text class="t" x="730" y="176" text-anchor="middle">поэтому no_progress</text>
+        <text class="t" x="730" y="194" text-anchor="middle">живьём почти недостижим</text>
+        <text class="t-sm" x="730" y="224" text-anchor="middle">он страховка, а не рабочий механизм</text>
+      </svg>
+      <figcaption>Дубляж не в значениях порогов, а в том, что три механизма покрывают одну и ту же
+        ситуацию по разным признакам. Существенная разница — кто источник сигнала:
+        <code>demand</code> единственный зависит от метки модели.</figcaption>
+    </figure>
+
+    <div class="cols">
+      <div class="card">
+        <div class="h">Решение: оставляем как есть</div>
+        <p>Идею убрать <code>demand</code> и ловить настойчивость счётчиком прогресса (с порогом 3)
+          разобрали и закрыли. Выигрыш косметический — минус один LLM-зависимый счётчик, — а трогать
+          пришлось бы завершение диалогов во всех трёх портах.</p>
+      </div>
+      <div class="card">
+        <div class="h">Почему замена не бесплатна</div>
+        <p><code>no_progress</code> сбрасывается любым новым фактом: закрытым пунктом, статусом
+          доп-вопроса, даже впервые названным городом. Кандидат, который давит и попутно отвечает,
+          обнуляет его каждым ответом — настойчивость он ловит хуже, чем <code>demand</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Источник правды — код трёх портов на дату сборки страницы: tgApi <code>19c2514</code>,
+      eggplant-api <code>512124a</code>, qa_harness ветка <code>feat/screening-split-qa</code>.
+      Пороги и порядок проверок сверены построчно; при расхождении верить коду, а не этой странице.</p>
+  </footer>
+
+</div>

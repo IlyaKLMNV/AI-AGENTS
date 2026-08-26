@@ -94,10 +94,18 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 
 | Тема | Где лежит сейчас | Суть |
 |---|---|---|
-| salary reask-cap | `../tgApi/docs/TODO_salary_reask_cap.md` | порог `salary_reasks >= 2` → `>= 3` делали и **откатили**; глубокая версия — инкрементить счётчик только при реальном уклонении + Аналитик должен принимать net-диапазон. В харнессе порог уже 3 (коммит `0208c40`) |
-| salary reask-cap (hh) | `../eggplant-api/TODO_salary_reask_cap.md` | то же для eggplant, но `REASK_CAP` общий → решить: поднять глобально или вынести зарплате отдельный порог. **Путь в файле устарел**: указан `app/assistants/screening_engine.py`, фактически `app/assistants/screening/engine.py` |
-| паритет split-движка | `../tgApi/docs/TODO_split_engine_parity.md` | 3 дефекта, найденных при ревью eggplant `#110` и исправленных там, **живы в tgApi** (в т.ч. пустой текст у `STOP_POLITICS` → кандидат не получает ничего) |
-| прайминг в analyzer_hh | `../prompts/TODO_screening_analyzer_hh_priming.md` | снять негативный прайминг в `screening_analyzer_hh/v1/system.md` (строки 82, 101), как уже сделано в `screening_analyzer`; `screening_interviewer_hh:61` НЕ трогать |
-| analyzer v2 | `../prompts` | `prompts/screening_analyzer/v2/` untracked, `pointer.yaml` уже переключён на `active: v2` — не закоммичено |
+| salary reask-cap | `../tgApi/docs/TODO_salary_reask_cap.md` | порог `salary_reasks >= 2` → `>= 3` делали и **откатили**. Порог проверяется ДО инкремента, поэтому `>= 2` = STOP на 3-м переспросе — ровно как пишут оба промпта Аналитика. Расходился не прод, а харнесс (`>= 3` = STOP на 4-м, коммит `0208c40`); 26.08.2026 приведён к проду. Решение — лечить инкремент, а не значение: см. Д1 в [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md) |
+| salary reask-cap (hh) | `../eggplant-api/TODO_salary_reask_cap.md` | то же для eggplant; `REASK_CAP` — общая КОНСТАНТА для salary/format/field_work (счётчики раздельные), поднимать её глобально не нужно (Д2 плана). **Путь в файле устарел**: указан `app/assistants/screening_engine.py`, фактически `app/assistants/screening/engine.py` |
+| паритет split-движка | `../tgApi/docs/TODO_split_engine_parity.md` | 4 дефекта, найденных при ревью eggplant `#110` и исправленных там, **живы в tgApi**: пустой текст у `STOP_POLITICS` (кандидат не получает ничего), код-форсы не переприменяются после перерешивания хода (в eggplant решили не менять — только комментарий), `Decision` не проверяет типы в `updates` (`value: 1` → `AttributeError`, ход падает), колонка `engine` больше не селектор, но выпилить нельзя — она гейт для до-split диалогов. Тестов в tgApi нет (последний удалён в `#107`) |
+
+Не наш скоуп (в штаб не тянем): `../eggplant-api/TASKS.md` и `../eggplant-api/TECH_DEBT.md` — план и техдолг
+владельцев репо (PR2 по кандидатам, задачи 8–12, событийная модель, синк снапшота резюме, уход кандидата
+из воронки HH). Читаем как контекст, задачами здесь не считаем.
+
+**Незакоммиченное в `prompts`** (намеренно, релиз делает человек): `screening_analyzer/v2/` и
+`screening_analyzer_hh/v2/` лежат untracked, оба `pointer.yaml` переключены на `active: v2`. Дельта обеих
+v2 к v1 одна и та же — убраны пояснения-примеры выдуманных значений («подставит выдуманные "XYZ",
+"example.com"», «значения нет → Интервьюер его выдумает») из правил про `instruction`; сами запреты
+на директиву без значения сохранены. В прод уедет только через bump `version` в `pyproject.toml` + релиз.
 
 Открытые пункты по самому харнессу — [screening_split/backlog.md](screening_split/backlog.md).

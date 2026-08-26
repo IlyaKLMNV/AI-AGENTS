@@ -15,6 +15,8 @@
 | [LOCAL_PROMPTS.md](LOCAL_PROMPTS.md) | how-to | Переключатель источника промптов `stored ↔ local`, установка пакета `prompts` (Docker / wheel / git+ssh), резолв версий, маппинг компонентов |
 | [legacy_runners.md](legacy_runners.md) | reference | Легаси-раннеры `app/` — заморожено до cutover |
 | [screening_split/report_analysis.md](screening_split/report_analysis.md) | playbook | Как читать отчёт split-скрининга: что значит `passed`, атрибуция роли, реальный баг vs дрейф генератора, дерево триажа |
+| [screening_split/mechanics.html](screening_split/mechanics.html) | reference | Механика движка одной страницей (HTML, открывается в браузере): порядок проверок за ход, перерешивание, что считает каждый счётчик, значения по трём портам, трасса инцидента 2026-08-17. Сверено на коммиты в футере — обновлять вместе с правкой движка |
+| [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md) | план | Кросс-репный план работ по split-скринингу: инвентаризация счётчиков (семантика + значения по портам), порядок исполнения по шагам, тематические фазы 1–4, принятые решения Д1–Д7, большие задачи Б1–Б4, отложенное и открытый вопрос О4 |
 | [screening_split/backlog.md](screening_split/backlog.md) | бэклог | ОТКРЫТЫЕ пункты split-скрининга (закрытые — в git-истории и в журналах) |
 | [screening_split/review_20260817.md](screening_split/review_20260817.md) | журнал | Разбор прогона 2026-08-17 (прод-инцидент: выдуманная ссылка + ложное завершение) + аудит закрытых пунктов бэклога |
 
