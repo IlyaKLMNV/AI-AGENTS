@@ -153,11 +153,16 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         details.append(f"script_key {pref}*: {'OK' if hit else f'НЕ сработал (был: {keys_str})'}")
 
     if spec.get("expect_no_script_prefix"):
-        pref = spec["expect_no_script_prefix"]
-        bad = [k for k in keys if k.startswith(pref)]
+        # Одна подстрока или список: «ни одного скрипта с такими префиксами». Список нужен там, где
+        # недопустимы оба вида отсева сразу — и STOP_*, и KO_* (сценарий 67: кандидат за границей,
+        # гео-ограничения в вакансии нет → завершать нечем).
+        pref_spec = spec["expect_no_script_prefix"]
+        prefs = [pref_spec] if isinstance(pref_spec, str) else list(pref_spec)
+        bad = [k for k in keys if any(k.startswith(str(p)) for p in prefs)]
         hit = not bad
         ok = ok and hit
-        details.append(f"нет script_key {pref}*: {'OK' if hit else f'сработал {bad}'}")
+        pref_str = "/".join(str(p) for p in prefs)
+        details.append(f"нет script_key {pref_str}*: {'OK' if hit else f'сработал {bad}'}")
 
     if spec.get("expect_reply_contains"):
         # Подстрока, которая ДОЛЖНА быть в тексте кандидату (регистронезависимо). Скрипт-ответы
@@ -205,6 +210,26 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         hit = want not in instr
         ok = ok and hit
         details.append(f"instruction последнего хода без «{want}»: {'OK' if hit else 'присутствует (лишнее объяснение)'}")
+
+    if spec.get("expect_instruction_lacks"):
+        # instruction НИ ОДНОГО хода не содержит перечисленные подстроки (регистронезависимо).
+        # Отличие от expect_last_instruction_lacks: там проверка только последнего хода (сценарий 29,
+        # где на ПЕРВОМ salary_info объяснение уместно, а на повторе — нет), здесь — все ходы.
+        # Носитель: запрет пересказывать ответ кандидата («Зафиксируй: кандидат находится в …»,
+        # «Подтверди, что …») — инцидент 2026-08-17, правка Аналитика v2.
+        want = spec["expect_instruction_lacks"]
+        wants = [want] if isinstance(want, str) else list(want)
+        bad: List[str] = []
+        for i, t in enumerate(turns, 1):
+            dec = t.get("decision") if isinstance(t, dict) else None
+            instr = ((dec.get("instruction") or "") if isinstance(dec, dict) else "").lower()
+            for w in wants:
+                if str(w).lower() in instr:
+                    bad.append(f"ход {i}: «{w}»")
+        hit = not bad
+        ok = ok and hit
+        details.append("instruction без пересказа/сводки: "
+                       + ("OK" if hit else "найдено — " + "; ".join(bad)))
 
     if spec.get("expect_instruction_url_valued"):
         # Правило Аналитика: поручил упомянуть ссылку — вставь её ЗНАЧЕНИЕ дословно, иначе не поручай

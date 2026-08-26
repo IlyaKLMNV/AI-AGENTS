@@ -5,7 +5,8 @@
 #
 # Поля: expect_salary/format (итоговый state) · expect_script_key (точный, сработал) ·
 #       expect_script_prefix / expect_no_script_prefix · expect_asking (был на к.-л. ходу) ·
-#       expect_end (завершился ли диалог).
+#       expect_end (завершился ли диалог) · expect_instruction_lacks (подстрока или список —
+#       ни в одной instruction за диалог) · expect_last_instruction_lacks (только последний ход).
 
 scenarios:
   # ─────────── Триггеры (терминальные) → нужный STOP_*/KO_* + завершение ───────────
@@ -149,8 +150,8 @@ scenarios:
     expect_end: false
 
   # ─────────── Терминальные триггеры → нужный STOP_* + завершение ───────────
-  - index: 10          # за пределами РФ
-    expect_script_key: STOP_ABROAD
+  - index: 10          # кандидат за границей + в вакансии ЯВНОЕ гео-ограничение → отсев через KO_GEO
+    expect_script_key: KO_GEO
     expect_end: true
   - index: 11          # глобальное несоответствие профиля → терминальный STOP (NO_EXPERIENCE/NOT_INTERESTED равнозначны, как #15)
     expect_script_prefix: STOP
@@ -276,10 +277,18 @@ scenarios:
   - index: 64          # вопросы кандидата не должны сжигать reask-cap → диалог жив
     expect_no_script_prefix: STOP
     expect_end: false
+    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
   - index: 65          # «400000-500000 net» + город → salary закрыт, идём дальше (без STOP и без переспроса)
     expect_salary: closed
     expect_no_script_prefix: STOP
     expect_end: false
+    # v2: город и сумма пришли одним ходом — Аналитик не должен поручать Интервьюеру пересказать их
+    # кандидату («Зафиксируй: кандидат находится в …»), иначе тот зачитывает анкету.
+    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
   - index: 66          # поручил упомянуть ссылку → в instruction стоит сам URL (иначе Интервьюер выдумает)
     expect_instruction_url_valued: true
+    expect_end: false
+  - index: 67          # за границей, но гео-ограничения в вакансии НЕТ → не отсеиваем, идём по приоритетам
+    expect_no_script_prefix: [STOP, KO]
+    expect_asking: salary
     expect_end: false
