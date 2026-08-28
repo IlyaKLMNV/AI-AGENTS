@@ -21,6 +21,16 @@ from .engine import ConversationResult, ScreeningSplitEngine
 from .errors import AssistantError
 from .interviewer import ScreeningInterviewer
 from .interviewer_judge import InterviewerJudge, InterviewerVerdict
+from .salary import (
+    ABSENT,
+    ACTIONABLE,
+    UNUSABLE,
+    claim_status,
+    compare_with_band,
+    normalize,
+    read_claim,
+)
+from .salary_rules import SALARY_RULES_VERSION
 from .scripts import is_known, is_terminal, render_script
 from .state import apply_updates, init_state, is_complete, progress_signature
 from .store import InMemoryStateStore
@@ -54,6 +64,15 @@ __all__ = [
     # судья Интервьюера (слой B, семантика)
     "InterviewerJudge",
     "InterviewerVerdict",
+    # зарплата: распознавание за Аналитиком (salary_claim), пересчёт и вердикт за кодом
+    "read_claim",
+    "claim_status",
+    "normalize",
+    "compare_with_band",
+    "ACTIONABLE",
+    "UNUSABLE",
+    "ABSENT",
+    "SALARY_RULES_VERSION",
     # чистые примитивы (state/scripts/context)
     "init_state",
     "apply_updates",

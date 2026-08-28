@@ -29,9 +29,19 @@ class ScreeningAnalyzer:
         self._max_attempts = max_attempts
         self.last_usage: dict = blank_usage()
 
-    def run(self, vacancy_context: str, state: dict, message: str) -> dict:
-        """Возвращает валидированный Decision (dict) или бросает AssistantError."""
+    def run(self, vacancy_context: str, state: dict, message: str, *,
+            note: str | None = None) -> dict:
+        """Возвращает валидированный Decision (dict) или бросает AssistantError.
+
+        `note` — служебная строка от КОДА для повторного вызова в том же ходе (перерешивание при
+        расхождении по зарплате). Без неё второй вызов получает ТОЖДЕСТВЕННЫЙ вход (контекст,
+        сообщение и state те же — отклонённый `salary: closed` в state не попал) и при temperature=0
+        возвращает то же решение, то есть перерешивание становится no-op. Формат тот же, что у
+        служебной строки про невалидный JSON ниже; правил в промпте не требует.
+        """
         base_input = self._build_input(vacancy_context, state, message)
+        if note:
+            base_input = f"{base_input}\n\n[Система: {note}]"
         self.last_usage = blank_usage()
 
         last_error = "unknown"

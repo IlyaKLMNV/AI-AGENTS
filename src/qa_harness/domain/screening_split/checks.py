@@ -2,16 +2,19 @@
 
 Дополняет LLM-судью диалога двумя слоями с АТРИБУЦИЕЙ ошибки:
 - **Слой A (Аналитик):** для сценариев из scenario_checks.yaml сверяет инварианты Decision/state
-  из трассы (salary closed/pending, наличие/отсутствие KO_*, asking, script_key/end). Семантические
-  якоря: ассертим ТОЛЬКО то, что правило реально фиксирует (не весь объект) — устойчиво к
-  легитимной вариативности. Провал → ошибка Аналитика.
+  из трассы (salary closed/pending, наличие/отсутствие KO_*, asking, script_key/end, а также
+  зарплатный контракт: статус `salary_claim` и эффект вердикта кода). Семантические якоря: ассертим
+  ТОЛЬКО то, что правило реально фиксирует (не весь объект) — устойчиво к легитимной вариативности.
+  Провал → ошибка Аналитика.
 - **Слой B (Интервьюер, детерминированная часть):** leak_scan — в тексте кандидату нет числа вилки,
   нет ссылки при скрытой компании и нет ВЫДУМАННОЙ ссылки при открытом поиске. Атрибуция утечки:
   число/URL в instruction (из трассы) → вина Аналитика; только в тексте Интервьюера → вина Интервьюера.
 
 Порт QA-checks tgApi (scripts/screening_qa/checks.py) + расширение под salary/state-инварианты.
-Читает `turns` в форме драйвера: [{candidate, reply, end, decision, state}], где decision — Decision
-Аналитика (или форс-словарь кода), state — компактный снимок ({salary, format_check, city, questions, counters}).
+Читает `turns` в форме драйвера: [{candidate, reply, end, decision, state, salary}], где decision —
+Decision Аналитика (или форс-словарь кода), state — компактный снимок ({salary, format_check, city,
+questions, counters}), salary — зарплатный разбор хода ({claim, status, normalized, verdict, effect})
+или отсутствует, если про деньги на этом ходе речи не было.
 """
 
 import re
@@ -118,6 +121,19 @@ def _last_instruction(turns: List[Dict[str, Any]]) -> Any:
     return None
 
 
+def _last_salary(turns: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Зарплатный разбор ПОСЛЕДНЕГО хода, где он был (пустой словарь — суммы в диалоге не было).
+
+    Ходы без денег `salary` в трассу не пишут вовсе, поэтому «последний с разбором» — это тот ход,
+    на котором кандидат назвал сумму, даже если после него диалог продолжался.
+    """
+    for t in reversed(turns):
+        sal = t.get("salary") if isinstance(t, dict) else None
+        if isinstance(sal, dict):
+            return sal
+    return {}
+
+
 def _final_state(turns: List[Dict[str, Any]]) -> Dict[str, Any]:
     for t in reversed(turns):
         st = t.get("state") if isinstance(t, dict) else None
@@ -180,6 +196,33 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         hit = got == want
         ok = ok and hit
         details.append(f"salary={want}: {'OK' if hit else f'факт {got}'}")
+
+    # ── зарплатный контракт (salary_claim): что Аналитик РАСПОЗНАЛ и что код с этим сделал ──
+    # Инварианты по state/script_key проверяют только исход, а исход часто совпадает у разных причин:
+    # «сумму не распознали» и «распознали, но признали непригодной» оба дают pending без KO. Эти два
+    # чека разводят такие случаи, поэтому только они и гейтят сценарии, где важна САМА причина.
+    if spec.get("expect_salary_status"):
+        # actionable — сумму можно пересчитать и сравнить с вилкой; unusable — про деньги речь была,
+        # но использовать нельзя (чужая сумма, текущая, проценты, валюта вне справочника, сорванный
+        # пересчёт); absent — Аналитик суммы в реплике не увидел вовсе.
+        want = str(spec["expect_salary_status"])
+        got = _last_salary(turns).get("status") or "absent"
+        hit = got == want
+        ok = ok and hit
+        details.append(f"статус salary_claim={want}: {'OK' if hit else f'факт {got}'}")
+
+    if spec.get("expect_salary_effect"):
+        # Что вердикт кода СДЕЛАЛ с ходом: ko_forced (отсев по деньгам) · ko_overridden_by_analyzer ·
+        # closed · closed_money_stop_released · closed_reask_dropped. Отличает настоящий отсев по
+        # вилке от совпавшего по исходу завершения, которое выбрал Аналитик по другой причине.
+        # Список допустим: закрытие пункта — один исход, а перерешивал ли код ход, зависит от того,
+        # переспросила модель сумму или нет; это её вариативность, а не инвариант.
+        raw = spec["expect_salary_effect"]
+        want = [str(x) for x in (raw if isinstance(raw, list) else [raw])]
+        got = _last_salary(turns).get("effect")
+        hit = got in want
+        ok = ok and hit
+        details.append(f"эффект зарплатного вердикта={'|'.join(want)}: {'OK' if hit else f'факт {got}'}")
 
     if "expect_format" in spec:
         want = spec["expect_format"]

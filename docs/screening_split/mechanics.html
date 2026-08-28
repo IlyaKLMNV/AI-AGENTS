@@ -342,12 +342,17 @@
     <div class="eyebrow">split-скрининг · три порта одного движка</div>
     <h1>Механика split-скрининга</h1>
     <p class="lede">Что происходит за один ход диалога: в каком порядке код проверяет счётчики, когда он
-      подменяет решение Аналитика, что именно считает каждый счётчик и чем расходятся три копии движка.</p>
+      подменяет решение Аналитика, как устроен зарплатный контракт <code>salary_claim</code>, что именно
+      считает каждый счётчик и чем расходятся три копии движка.</p>
     <div class="sources">
       <span class="src">tgApi · app/common/screening/ScreeningSplitEngine.py</span>
       <span class="src">eggplant-api · app/assistants/screening/engine.py</span>
       <span class="src">qa_harness · domain/screening_split/engine.py</span>
     </div>
+    <p class="lede"><strong>Состояние на 27.08.2026:</strong> зарплатный блок описан по <strong>tgApi</strong>
+      — там контракт <code>salary_claim</code> уже реализован. В <code>eggplant-api</code> и в порте
+      харнесса он ещё не перенесён, там остаётся прежняя схема (арифметика в промпте либо регулярка в
+      коде). Остальные разделы — про все три порта.</p>
   </header>
 
   <section>
@@ -357,8 +362,9 @@
       <div class="card">
         <div class="h"><span class="chip llm">LLM</span> Аналитик</div>
         <p>Видит контекст вакансии, состояние и реплику кандидата. Возвращает строгий JSON
-          <code>Decision</code>: что делать дальше, что записать в состояние, какое событие засчитать.
-          Текста кандидату не пишет.</p>
+          <code>Decision</code>: что делать дальше, что записать в состояние, какое событие засчитать и
+          <strong>какую сумму назвал кандидат</strong> (<code>salary_claim</code> — распознавание, без
+          пересчёта). Текста кандидату не пишет.</p>
       </div>
       <div class="card">
         <div class="h"><span class="chip llm">LLM</span> Интервьюер</div>
@@ -377,7 +383,7 @@
     <h2>Один ход</h2>
 
     <figure>
-      <svg viewBox="0 0 960 470" role="img" aria-label="Схема одного хода: сообщение кандидата, вызов Аналитика, четыре проверки кода по порядку, ветка перерешивания со вторым вызовом Аналитика и один выход — скрипт или Интервьюер">
+      <svg viewBox="0 0 960 520" role="img" aria-label="Схема одного хода: сообщение кандидата, вызов Аналитика, пять проверок кода по порядку — updates, зарплата, пороги событий, reask-cap, no_progress, ветка перерешивания со вторым вызовом Аналитика и один выход: скрипт или Интервьюер">
         <defs>
           <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
@@ -395,11 +401,11 @@
 
         <rect class="s-llm" x="188" y="36" width="150" height="52" rx="5"></rect>
         <text class="t" x="263" y="58" text-anchor="middle">Аналитик</text>
-        <text class="t-sm" x="263" y="76" text-anchor="middle">Decision (JSON)</text>
+        <text class="t-sm" x="263" y="76" text-anchor="middle">Decision · 7 полей</text>
 
         <line class="ln" x1="340" y1="62" x2="382" y2="62" marker-end="url(#ar)"></line>
 
-        <rect class="s-frame" x="384" y="20" width="470" height="248" rx="7"></rect>
+        <rect class="s-frame" x="384" y="20" width="470" height="298" rx="7"></rect>
         <text class="t-sm" x="400" y="40">КОД · порядок проверок за один ход</text>
 
         <rect class="s-code" x="404" y="52" width="430" height="42" rx="4"></rect>
@@ -409,46 +415,54 @@
 
         <rect class="s-code" x="404" y="102" width="430" height="42" rx="4"></rect>
         <text class="t-num" x="420" y="120">2</text>
-        <text class="t" x="444" y="120">Пороги событий</text>
-        <text class="t-sm" x="444" y="135">gibberish · bot_check · demand · contact_source · pause</text>
+        <text class="t" x="444" y="120">Зарплата</text>
+        <text class="t-sm" x="444" y="135">salary_claim → пересчёт → вилка · KO_SALARY / closed</text>
 
         <rect class="s-code" x="404" y="152" width="430" height="42" rx="4"></rect>
         <text class="t-num" x="420" y="170">3</text>
-        <text class="t" x="444" y="170">reask-cap</text>
-        <text class="t-sm" x="444" y="185">повтор того же asking · зарплата / формат / доп-вопрос</text>
+        <text class="t" x="444" y="170">Пороги событий</text>
+        <text class="t-sm" x="444" y="185">gibberish · bot_check · demand · contact_source · pause</text>
 
         <rect class="s-code" x="404" y="202" width="430" height="42" rx="4"></rect>
         <text class="t-num" x="420" y="220">4</text>
-        <text class="t" x="444" y="220">no_progress</text>
-        <text class="t-sm" x="444" y="235">сигнатура прогресса не изменилась за ход</text>
+        <text class="t" x="444" y="220">reask-cap</text>
+        <text class="t-sm" x="444" y="235">повтор того же asking · зарплата / формат / доп-вопрос</text>
 
-        <path class="ln-dash" d="M 404 173 L 366 173 L 366 108 L 263 108 L 263 92" marker-end="url(#ar-llm)"></path>
-        <text class="t-lbl" x="360" y="196" text-anchor="end" fill="var(--llm)">доп-вопрос исчерпан →</text>
-        <text class="t-lbl" x="360" y="210" text-anchor="end" fill="var(--llm)">refused → 2-й вызов</text>
+        <rect class="s-code" x="404" y="252" width="430" height="42" rx="4"></rect>
+        <text class="t-num" x="420" y="270">5</text>
+        <text class="t" x="444" y="270">no_progress</text>
+        <text class="t-sm" x="444" y="285">сигнатура прогресса не изменилась за ход</text>
 
-        <line class="ln" x1="560" y1="270" x2="560" y2="308" marker-end="url(#ar)"></line>
-        <line class="ln" x1="740" y1="270" x2="740" y2="308" marker-end="url(#ar)"></line>
+        <path class="ln-dash" d="M 404 223 L 366 223 L 366 108 L 263 108 L 263 92" marker-end="url(#ar-llm)"></path>
+        <path class="ln-dash" d="M 404 123 L 386 123 L 386 108" marker-end="url(#ar-llm)"></path>
+        <text class="t-lbl" x="360" y="246" text-anchor="end" fill="var(--llm)">доп-вопрос исчерпан или</text>
+        <text class="t-lbl" x="360" y="260" text-anchor="end" fill="var(--llm)">claim не принят → 2-й вызов</text>
 
-        <rect class="s-stop" x="440" y="310" width="240" height="52" rx="5"></rect>
-        <text class="t" x="560" y="332" text-anchor="middle">next_action: script</text>
-        <text class="t-sm" x="560" y="349" text-anchor="middle">готовый текст из реестра</text>
+        <line class="ln" x1="560" y1="320" x2="560" y2="358" marker-end="url(#ar)"></line>
+        <line class="ln" x1="740" y1="320" x2="740" y2="358" marker-end="url(#ar)"></line>
 
-        <rect class="s-llm" x="700" y="310" width="240" height="52" rx="5"></rect>
-        <text class="t" x="820" y="332" text-anchor="middle">next_action: ask → Интервьюер</text>
-        <text class="t-sm" x="820" y="349" text-anchor="middle">формулирует сообщение</text>
+        <rect class="s-stop" x="440" y="360" width="240" height="52" rx="5"></rect>
+        <text class="t" x="560" y="382" text-anchor="middle">next_action: script</text>
+        <text class="t-sm" x="560" y="399" text-anchor="middle">готовый текст из реестра</text>
 
-        <line class="ln" x1="560" y1="364" x2="560" y2="398" marker-end="url(#ar)"></line>
-        <line class="ln" x1="820" y1="364" x2="820" y2="398" marker-end="url(#ar)"></line>
+        <rect class="s-llm" x="700" y="360" width="240" height="52" rx="5"></rect>
+        <text class="t" x="820" y="382" text-anchor="middle">next_action: ask → Интервьюер</text>
+        <text class="t-sm" x="820" y="399" text-anchor="middle">формулирует сообщение</text>
 
-        <rect class="s-box" x="440" y="400" width="500" height="46" rx="5"></rect>
-        <text class="t" x="690" y="428" text-anchor="middle">Ровно одно сообщение кандидату за ход</text>
+        <line class="ln" x1="560" y1="414" x2="560" y2="448" marker-end="url(#ar)"></line>
+        <line class="ln" x1="820" y1="414" x2="820" y2="448" marker-end="url(#ar)"></line>
 
-        <text class="t-sm" x="12" y="404">Аналитик за ход</text>
-        <text class="t-sm" x="12" y="420">вызывается 1 или 2 раза,</text>
-        <text class="t-sm" x="12" y="436">Интервьюер — всегда ≤ 1.</text>
+        <rect class="s-box" x="440" y="450" width="500" height="46" rx="5"></rect>
+        <text class="t" x="690" y="478" text-anchor="middle">Ровно одно сообщение кандидату за ход</text>
+
+        <text class="t-sm" x="12" y="454">Аналитик за ход</text>
+        <text class="t-sm" x="12" y="470">вызывается 1 или 2 раза,</text>
+        <text class="t-sm" x="12" y="486">Интервьюер — всегда ≤ 1.</text>
       </svg>
-      <figcaption>Проверки идут строго в этом порядке, и он важен: событийный порог (2) успевает
-        подменить решение до того, как reask-cap (3) начнёт считать переспрос, а <code>no_progress</code> (4)
+      <figcaption>Проверки идут строго в этом порядке, и он важен: зарплатный вердикт (2) считается до
+        событийных порогов (3), иначе кандидат, который давит и одновременно назвал сумму выше вилки,
+        получал бы <code>STOP_PERSISTENT</code> вместо отсева по деньгам; порог (3) успевает подменить
+        решение до того, как reask-cap (4) начнёт считать переспрос, а <code>no_progress</code> (5)
         смотрит уже на итог хода. Пунктиром — единственная ветка, где Аналитик вызывается второй раз.</figcaption>
     </figure>
 
@@ -551,6 +565,309 @@
         дважды), а оставить комментарий; в tgApi того же комментария пока нет.</p>
       <p><code>no_progress</code> при этом обнуляется: переход вопроса <code>pending → refused</code>
         меняет сигнатуру прогресса, то есть отказ считается продвижением диалога.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Зарплата: как это работает</h2>
+
+    <p class="lede">Одно правило на весь раздел: <strong>Аналитик слышит, код считает.</strong>
+      Аналитик не пересчитывает и не сравнивает с вилкой. Код не догадывается, что имел в виду
+      кандидат.</p>
+
+    <h3>Кто что делает</h3>
+
+    <figure>
+      <svg viewBox="0 0 960 300" role="img" aria-label="Разделение работы: Аналитик заполняет поле salary_claim по реплике кандидата, код пересчитывает сумму в рубли за месяц и сравнивает с вилкой">
+        <defs>
+          <marker id="ars1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <rect class="s-box" x="14" y="28" width="180" height="58" rx="5"></rect>
+        <text class="t" x="104" y="52" text-anchor="middle">Реплика кандидата</text>
+        <text class="t-sm" x="104" y="72" text-anchor="middle">«от 4000 до 5000 $»</text>
+
+        <line class="ln" x1="196" y1="57" x2="234" y2="57" marker-end="url(#ars1)"></line>
+
+        <rect class="s-llm" x="236" y="20" width="300" height="74" rx="5"></rect>
+        <text class="t" x="252" y="44">АНАЛИТИК слышит</text>
+        <text class="t-sm" x="252" y="63">чьи деньги · какое из чисел ожидание</text>
+        <text class="t-sm" x="252" y="79">диапазон или порог · валюта · период · net/gross</text>
+
+        <line class="ln" x1="538" y1="57" x2="576" y2="57" marker-end="url(#ars1)"></line>
+
+        <rect class="s-code" x="578" y="20" width="322" height="74" rx="5"></rect>
+        <text class="t" x="594" y="44">КОД считает</text>
+        <text class="t-sm" x="594" y="63">масштаб · курс · период · gross в net</text>
+        <text class="t-sm" x="594" y="79">сравнение с вилкой · закрытие пункта</text>
+
+        <rect class="s-box" x="236" y="118" width="664" height="70" rx="5"></rect>
+        <text class="t-lbl" x="252" y="140">salary_claim — что услышал Аналитик, без пересчёта</text>
+        <text class="t-sm" x="252" y="160">subject: own_expectation · form: range · 4000-5000 · scale: unit</text>
+        <text class="t-sm" x="252" y="176">currency: USD · period: month · tax: unspecified · quote: «от 4000 до 5000 $»</text>
+
+        <rect class="s-box" x="578" y="212" width="322" height="66" rx="5"></rect>
+        <text class="t-lbl" x="594" y="234">итог кода</text>
+        <text class="t-sm" x="594" y="254">320000-400000 RUB/мес</text>
+        <text class="t-sm" x="594" y="270">нижняя граница выше вилки → KO_SALARY</text>
+
+        <path class="ln" d="M 739 190 L 739 210" marker-end="url(#ars1)"></path>
+
+        <rect class="s-frame" x="14" y="118" width="200" height="160" rx="7"></rect>
+        <text class="t-lbl" x="30" y="140">Почему так</text>
+        <text class="t-sm" x="30" y="162">Перед арифметикой стоят</text>
+        <text class="t-sm" x="30" y="178">вопросы, которые решает</text>
+        <text class="t-sm" x="30" y="194">только смысл:</text>
+        <text class="t-sm" x="30" y="216">· про деньги ли число</text>
+        <text class="t-sm" x="30" y="232">· ЧЬИ это деньги</text>
+        <text class="t-sm" x="30" y="248">· КАКОЕ из чисел ожидание</text>
+        <text class="t-sm" x="30" y="270">Регулярка их не решала.</text>
+      </svg>
+      <figcaption>До 27.08.2026 сумму разбирала регулярка по тексту. Она не различала, чьи это деньги,
+        и давала ложные отказы: «у коллеги 500 тысяч» → отсев, «на прошлой работе платили 400к» →
+        отсев, «сейчас получаю 250, хочу 350» → пункт закрывался по 250.</figcaption>
+    </figure>
+
+    <h3>Три исхода хода</h3>
+
+    <p>Код смотрит на <code>salary_claim</code> и сначала решает, <strong>годится ли он</strong>. Годный
+      claim пересчитывается и сравнивается с вилкой; негодный не используется вообще.</p>
+
+    <figure>
+      <svg viewBox="0 0 960 330" role="img" aria-label="Три исхода: claim негоден - уточняющий вопрос; сумма выше вилки - отказ; сумма подходит - пункт закрыт">
+        <defs>
+          <marker id="ars2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <rect class="s-code" x="300" y="16" width="360" height="52" rx="5"></rect>
+        <text class="t" x="480" y="38" text-anchor="middle">Годен ли claim?</text>
+        <text class="t-sm" x="480" y="56" text-anchor="middle">четыре проверки, все структурные</text>
+
+        <line class="ln" x1="160" y1="90" x2="160" y2="126" marker-end="url(#ars2)"></line>
+        <line class="ln" x1="480" y1="90" x2="480" y2="126" marker-end="url(#ars2)"></line>
+        <line class="ln" x1="800" y1="90" x2="800" y2="126" marker-end="url(#ars2)"></line>
+        <path class="ln" d="M 340 68 L 340 80 L 160 80 L 160 90"></path>
+        <path class="ln" d="M 480 68 L 480 90"></path>
+        <path class="ln" d="M 620 68 L 620 80 L 800 80 L 800 90"></path>
+
+        <rect class="s-box" x="20" y="128" width="280" height="86" rx="5"></rect>
+        <text class="t" x="160" y="152" text-anchor="middle">НЕ годен</text>
+        <text class="t-sm" x="160" y="172" text-anchor="middle">чужая сумма · текущая ЗП</text>
+        <text class="t-sm" x="160" y="188" text-anchor="middle">проценты · «обсуждаемо»</text>
+        <text class="t-sm" x="160" y="204" text-anchor="middle">валюта вне справочника</text>
+
+        <rect class="s-stop" x="340" y="128" width="280" height="86" rx="5"></rect>
+        <text class="t t-stop" x="480" y="152" text-anchor="middle">годен, сумма выше вилки</text>
+        <text class="t-sm" x="480" y="172" text-anchor="middle" fill="var(--stop)">отказ, только если даже</text>
+        <text class="t-sm" x="480" y="188" text-anchor="middle" fill="var(--stop)">НИЖНЯЯ граница ожиданий</text>
+        <text class="t-sm" x="480" y="204" text-anchor="middle" fill="var(--stop)">выше нашего максимума</text>
+
+        <rect class="s-box" x="660" y="128" width="280" height="86" rx="5"></rect>
+        <text class="t" x="800" y="152" text-anchor="middle">годен, сумма подходит</text>
+        <text class="t-sm" x="800" y="172" text-anchor="middle">в т.ч. НИЖЕ вилки —</text>
+        <text class="t-sm" x="800" y="188" text-anchor="middle">это не отказ, закрываем</text>
+        <text class="t-sm" x="800" y="204" text-anchor="middle">молча и идём дальше</text>
+
+        <line class="ln" x1="160" y1="216" x2="160" y2="248" marker-end="url(#ars2)"></line>
+        <line class="ln" x1="480" y1="216" x2="480" y2="248" marker-end="url(#ars2)"></line>
+        <line class="ln" x1="800" y1="216" x2="800" y2="248" marker-end="url(#ars2)"></line>
+
+        <rect class="s-box" x="20" y="250" width="280" height="48" rx="5"></rect>
+        <text class="t" x="160" y="270" text-anchor="middle">уточняющий вопрос</text>
+        <text class="t-sm" x="160" y="288" text-anchor="middle">salary остаётся pending</text>
+
+        <rect class="s-stop" x="340" y="250" width="280" height="48" rx="5"></rect>
+        <text class="t t-stop" x="480" y="270" text-anchor="middle">KO_SALARY</text>
+        <text class="t-sm" x="480" y="288" text-anchor="middle" fill="var(--stop)">диалог закрыт</text>
+
+        <rect class="s-box" x="660" y="250" width="280" height="48" rx="5"></rect>
+        <text class="t" x="800" y="270" text-anchor="middle">salary = closed</text>
+        <text class="t-sm" x="800" y="288" text-anchor="middle">дальше формат / questions</text>
+      </svg>
+      <figcaption>Уточняющий вопрос при негодном claim задаёт сам Аналитик — промпт это предписывает,
+        так что отдельного действия кода тут нет. Сравнение делается на ЛЮБОМ ходе с годным claim,
+        в том числе после закрытия пункта: кандидат, поднявший ожидания в середине диалога, будет
+        отсеян.</figcaption>
+    </figure>
+
+    <h3>Четыре проверки годности</h3>
+
+    <div class="trace">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body">
+          <div class="what">Цитата обязана найтись в реплике кандидата и содержать цифру.</div>
+          <div class="why">Гейт против выдуманной суммы: если Аналитик приложил фрагмент, которого в
+            сообщении нет, сумму не используем. Без судьи и без токенов.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body">
+          <div class="what">Деньги должны быть СВОИ и быть ОЖИДАНИЕМ.</div>
+          <div class="why"><code>subject</code> = <code>own_expectation</code>. Зарплата коллеги
+            (<code>third_party</code>) и своя текущая (<code>own_current</code>) — не ожидания, по ним
+            ни закрывать пункт, ни отказывать нельзя.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body">
+          <div class="what">Форма должна нести сумму, а валюта — быть в справочнике.</div>
+          <div class="why">«+15% к текущей» и «обсуждаемо» суммы не дают. Валюта вне справочника
+            (<code>other</code>) — пересчитать нечем.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div class="body">
+          <div class="what">Claim не должен противоречить себе.</div>
+          <div class="why">Обе границы пустые (форма обещала сумму, но обнулила её) либо перепутаны
+            (<code>min &gt; max</code>: «250-400» пришло как min=400/max=250 — отсев считался бы по
+            400). Проверки структурные: о величине суммы они ничего не предполагают.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="answer">
+      <div class="q">Зачем нужно перерешивание хода</div>
+      <p class="a">Аналитик отвечает на реплику ОДНИМ решением: и заполняет <code>salary_claim</code>,
+        и выбирает, что сказать кандидату. Он не может знать заранее, что код забракует claim, —
+        поэтому иногда уходит дальше, считая деньги решёнными.</p>
+
+      <figure>
+        <svg viewBox="0 0 960 250" role="img" aria-label="Без перерешивания кандидат получает вопрос про город при неразрешённой зарплате; с перерешиванием код зовёт Аналитика второй раз и уточнение уходит сразу">
+          <defs>
+            <marker id="ars3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+            </marker>
+          </defs>
+
+          <text class="t-lbl" x="14" y="26" fill="var(--stop)">Было: ход исполняется на отменённой посылке</text>
+          <rect class="s-box" x="14" y="36" width="210" height="46" rx="5"></rect>
+          <text class="t-sm" x="30" y="56">Аналитик: «сумму получил,</text>
+          <text class="t-sm" x="30" y="72">спрошу город»</text>
+          <line class="ln" x1="226" y1="59" x2="262" y2="59" marker-end="url(#ars3)"></line>
+          <rect class="s-code" x="264" y="36" width="200" height="46" rx="5"></rect>
+          <text class="t-sm" x="280" y="56">Код: claim негоден,</text>
+          <text class="t-sm" x="280" y="72">salary остаётся pending</text>
+          <line class="ln" x1="466" y1="59" x2="502" y2="59" marker-end="url(#ars3)"></line>
+          <rect class="s-stop" x="504" y="36" width="440" height="46" rx="5"></rect>
+          <text class="t-sm" x="520" y="56" fill="var(--stop)">Кандидату: «в каком вы городе?» — про деньги не договорились,</text>
+          <text class="t-sm" x="520" y="72" fill="var(--stop)">а FINISH на этом месте закрыл бы скрининг как успешный</text>
+
+          <text class="t-lbl" x="14" y="122">Стало: код зовёт Аналитика второй раз</text>
+          <rect class="s-box" x="14" y="132" width="210" height="46" rx="5"></rect>
+          <text class="t-sm" x="30" y="152">Аналитик: «сумму получил,</text>
+          <text class="t-sm" x="30" y="168">спрошу город»</text>
+          <line class="ln" x1="226" y1="155" x2="262" y2="155" marker-end="url(#ars3)"></line>
+          <rect class="s-code" x="264" y="132" width="200" height="46" rx="5"></rect>
+          <text class="t-sm" x="280" y="152">Код: claim негоден →</text>
+          <text class="t-sm" x="280" y="168">перерешать ход</text>
+          <line class="ln" x1="466" y1="155" x2="502" y2="155" marker-end="url(#ars3)"></line>
+          <rect class="s-llm" x="504" y="132" width="200" height="46" rx="5"></rect>
+          <text class="t-sm" x="520" y="152">Аналитик, 2-й вызов:</text>
+          <text class="t-sm" x="520" y="168">та же реплика + пометка</text>
+          <line class="ln" x1="706" y1="155" x2="742" y2="155" marker-end="url(#ars3)"></line>
+          <rect class="s-box" x="744" y="132" width="200" height="46" rx="5"></rect>
+          <text class="t-sm" x="760" y="152">Кандидату: уточнение</text>
+          <text class="t-sm" x="760" y="168">про сумму, сразу</text>
+
+          <rect class="s-frame" x="14" y="196" width="930" height="42" rx="7"></rect>
+          <text class="t-sm" x="30" y="220">Реплика подаётся ТА ЖЕ, а факты первого решения (город, закрытые доп-вопросы) уже в state — отброшено только закрытие зарплаты. Поэтому ничего из сказанного кандидатом не теряется.</text>
+        </svg>
+      </figure>
+
+      <p><strong>Когда срабатывает.</strong> Расхождение бывает в обе стороны, и обе перерешиваются:</p>
+      <ul>
+        <li><strong>код сумму НЕ принял, а решение исходило из «деньги закрыты»</strong> — Аналитик сам
+          поставил <code>salary: closed</code>, вернул <code>FINISH</code>, либо ушёл спрашивать
+          следующий приоритет;</li>
+        <li><strong>код принял и закрыл, а решение всё ещё переспрашивает про деньги</strong>
+          (<code>asking: "salary"</code>) — иначе кандидату уходит вопрос, на который он только что
+          ответил. В прогоне 28.08 это выглядело как «правильно ли я понимаю, что 75 тысяч?».</li>
+      </ul>
+      <p>Если Аналитик просто ответил на вопрос кандидата, не двигая приоритеты, — это законный ход,
+        перерешивания нет. Когда сумму не назвал сам кандидат (чужая, текущая, проценты), он по промпту
+        и так спрашивает деньги — перерешивать тоже нечего.</p>
+
+      <p><strong>Пометка нужна только первому случаю.</strong> Там состояние между вызовами не
+        меняется: единственное, что первое решение изменило по деньгам, — <code>salary: closed</code>,
+        а его код и отбросил. Вход выходит тождественным, и при <code>temperature: 0</code> модель
+        повторяет то же решение. Поэтому код добавляет ко входу строку <code>[Система: …]</code> с
+        фактом «сумму использовать нельзя, зарплата не закрыта» — тем же механизмом, которым Аналитик
+        уже получает замечание про невалидный JSON. Правил в промпте это не требует.</p>
+      <p>Во втором случае пометка не нужна: <code>pending → closed</code> это реальное изменение,
+        второй вызов видит его сам и по обычному правилу приоритетов идёт дальше.</p>
+
+      <p><strong>Что со счётчиками.</strong> Три правила, все из одного принципа «поведение кандидата
+        в реплике одно, значит и счёт по нему один»:</p>
+      <ul>
+        <li>инкремент по <code>event</code> происходит ПОСЛЕ перерешивания — иначе второй вызов
+          увидел бы в счётчике единицу от текущего же хода и прочитал «вы бот?» из этой реплики как
+          повтор, завершив диалог <code>STOP_BOT_REPEAT</code> кандидату, который спросил раз;</li>
+        <li><code>event</code> второго решения не применяется — иначе одно поведение засчиталось бы
+          дважды;</li>
+        <li>перерешённый ход не жжёт лимит переспросов: вопрос задан из-за нашей ошибки, а не
+          уклонения кандидата, и расходовать на неё бюджет кандидата нельзя.</li>
+      </ul>
+    </div>
+
+    <div class="answer">
+      <div class="q">Откуда берётся вилка и что остаётся в записи диалога</div>
+      <p class="a">Вилка — числом из записи диалога (<code>salary_band</code>, кладётся при создании).
+        У диалогов, начатых до этой правки, ключа нет: движок достаёт границы регуляркой из строки
+        контекста, поэтому миграции не потребовалось.</p>
+      <p>Каждое зарплатное решение пишется в запись диалога отдельным массивом: claim как пришёл,
+        статус годности, нормализованное значение, список применённых пересчётов, версия правил,
+        вердикт и что он сделал с ходом. Движок эту запись не читает. Она нужна затем, что в
+        <code>state</code> числа нет вообще (только <code>pending|closed</code>), а у отсеянного
+        кандидата сводки для рекрутера не создаётся вовсе — без этого массива отказ по деньгам
+        невоспроизводим.</p>
+    </div>
+
+    <div class="answer">
+      <div class="q">Где живут курсы, нормо-часы и ставки НДФЛ</div>
+      <p class="a">В отдельном модуле данных (<code>salary_rules</code>) с
+        <code>SALARY_RULES_VERSION</code>, а не в env или конфиге.</p>
+      <p>Курсы и ставки обязаны быть одинаковы во всех трёх портах движка — переменные окружения
+        позволяют деплоям молча разъехаться. Плюс каждое зарплатное решение пишется в аудит-запись
+        вместе с версией правил, чтобы его можно было пересчитать; версия имеет смысл только когда
+        правила меняются вместе с кодом, а не под ним в рантайме. Отдельный модуль (а не константы
+        внутри <code>salary.py</code>) — чтобы правка курса читалась в диффе как изменение данных.
+        Шкала НДФЛ сверена 27.08.2026: введена с 2025, в 2026 параметры не менялись.</p>
+    </div>
+
+    <div class="answer">
+      <div class="q">Что осталось незакрытым</div>
+      <p class="a">Главная цена правки — <strong>недетерминизм</strong>: распознавание суммы теперь
+        делает модель, и одна и та же реплика при <code>temperature: 0</code> формально может быть
+        разобрана по-разному. Риск принят сознательно.</p>
+      <p><strong>Ошибка модели в поле масштаба или валюты ничем не ловится.</strong>
+        <code>scale: million</code> вместо <code>thousand</code> — это ×1000, <code>currency: USD</code>
+        вместо <code>RUB</code> — ×80, и оба дают правдоподобное число, то есть структурной проверкой не
+        отличимы от правды. Потолок правдоподобия, который это ловил, снят 27.08.2026: он был
+        абсолютным, а не относительным к вилке, и при вилке в 5 млн забраковал бы законные ожидания.
+        Цена решения: такая ошибка теперь даёт <code>KO_SALARY</code> вместо безобидного переспроса.
+        Если класс всплывёт в прогонах, правильная форма проверки — относительно вилки.</p>
+      <p><strong>Семантическая ошибка модели неотличима вообще.</strong> Если Аналитик пометит
+        ожидания как <code>own_current</code>, код увидит корректный claim и спишет непригодность на
+        кандидата. Кодом это не берётся — только сценариями и разбором отчёта глазами.</p>
+      <p><strong>Чем проверяется.</strong> Арифметика, гейты годности, приоритеты решений и
+        перерешивание — детерминированно, 50 проверок в <code>--offline</code>-режиме раннера
+        харнесса. Распознавание — только живыми сценариями. Перерешивание живым сценарием не
+        проверяется вовсе: все входы в него требуют, чтобы модель ошиблась в служебном поле claim,
+        а этого живой прогон не добудет.</p>
+      <p><strong>hh-контур не тронут.</strong> В <code>screening_analyzer_hh</code> v2 остаётся полный
+        27-строчный блок с арифметикой и правила, прямо противоречащие принятым (диапазон по верхней
+        границе, голое «260» уточнять, gross с вилкой не сравнивать). Пока правка только в tg-канале,
+        сравнивать прогоны каналов нельзя.</p>
+      <p><strong>Три копии констант.</strong> Курсы и ставки живут в каждом порте отдельно;
+        единственная защита — сверка глазами по одному файлу.</p>
     </div>
   </section>
 

@@ -27,6 +27,7 @@ class InMemoryStateStore:
         context: Optional[str] = None,
         location: Optional[str] = None,
         contact_source: Optional[str] = None,
+        salary_band: Optional[dict] = None,
     ) -> None:
         """Заводит диалог. Движок фиксируется здесь и дальше не меняется."""
         self._docs[conversation_id] = {
@@ -37,6 +38,7 @@ class InMemoryStateStore:
             "context": context or "",
             "location": location or "",
             "contact_source": contact_source or "",
+            "salary_band": salary_band or {},
         }
 
     def save_state(self, conversation_id: Any, state: dict, *, finished: bool = False) -> None:
@@ -46,6 +48,17 @@ class InMemoryStateStore:
             return
         doc["state"] = state
         doc["finished"] = finished
+
+    def log_salary_claim(self, conversation_id: Any, entry: dict) -> None:
+        """Аудит зарплатного решения (в проде — `$push` в документ диалога).
+
+        Движок эту запись НЕ читает; в QA она нужна раннеру для инвариантов слоя A по зарплате
+        (какой claim пришёл, годен ли, во что пересчитался, каков вердикт и что он сделал с ходом).
+        """
+        doc = self._docs.get(conversation_id)
+        if doc is None:  # страховка (в проде — гарантия create до записи)
+            return
+        doc.setdefault("salary_claims", []).append(entry)
 
     def engine_of(self, conversation_id: Any) -> Optional[str]:
         """None — у диалога нет записи, значит он создан до флага: legacy."""

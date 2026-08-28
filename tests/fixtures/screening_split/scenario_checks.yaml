@@ -6,7 +6,9 @@
 # Поля: expect_salary/format (итоговый state) · expect_script_key (точный, сработал) ·
 #       expect_script_prefix / expect_no_script_prefix · expect_asking (был на к.-л. ходу) ·
 #       expect_end (завершился ли диалог) · expect_instruction_lacks (подстрока или список —
-#       ни в одной instruction за диалог) · expect_last_instruction_lacks (только последний ход).
+#       ни в одной instruction за диалог) · expect_last_instruction_lacks (только последний ход) ·
+#       expect_salary_status (absent|unusable|actionable — годность claim) ·
+#       expect_salary_effect (что вердикт сделал с ходом; допустим список).
 
 scenarios:
   # ─────────── Триггеры (терминальные) → нужный STOP_*/KO_* + завершение ───────────
@@ -16,7 +18,7 @@ scenarios:
   - index: 2   # агрессия/оскорбления
     expect_script_key: STOP_ABUSE
     expect_end: true
-  - index: 3   # бессмыслица (2-й раз → repeat)
+  - index: 3   # бессмыслица (2-й раз → repeat; ключ форсит КОД, Аналитик его не знает — Б5)
     expect_script_key: STOP_GIBBERISH_REPEAT
     expect_end: true
   - index: 4   # иностранный язык
@@ -25,7 +27,7 @@ scenarios:
   - index: 5   # флирт
     expect_script_key: STOP_FLIRT
     expect_end: true
-  - index: 6   # неформальное/абсурд (2-й раз → repeat)
+  - index: 6   # неформальное/абсурд (2-й раз → repeat; ключ форсит КОД — Б5)
     expect_script_key: STOP_GIBBERISH_REPEAT
     expect_end: true
   - index: 7   # мошенничество/легитимность
@@ -59,35 +61,39 @@ scenarios:
     expect_script_key: KO_SALARY
     expect_end: true
 
-  # ─────────── УТОЧНИТЬ (неоднозначная сумма): pending + asking=salary, БЕЗ KO, без завершения ───────────
-  - index: 45          # без единиц: двузначное число
-    expect_salary: pending
-    expect_asking: salary
+  # ─────────── Пересчёт делает КОД: масштаб, период, валюта, gross (контракт salary_claim) ───────────
+  # Аналитик обязан РАСПОЗНАТЬ сумму (actionable claim), дальше всё считает код по вилке 200000-280000.
+  # `expect_salary_status: actionable` тут ключевой: без него сценарий проходил бы и тогда, когда модель
+  # суммы вообще не увидела, а pending без KO выглядит «нормально».
+  - index: 45          # «75» в ответ на наш вопрос → 70000-ая шкала: 75000, ниже вилки — НЕ отказ
+    expect_salary_status: actionable
+    expect_salary_effect: [closed, closed_reask_dropped]
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 46          # без единиц: двузначный диапазон
-    expect_salary: pending
-    expect_asking: salary
+  - index: 46          # «40-60» → 40000-60000
+    expect_salary_status: actionable
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 47          # почасовая ставка
-    expect_salary: pending
-    expect_asking: salary
+  - index: 47          # «минимально 800 рублей в час» → порог 800 × 160 ч = 128000/мес, в вилке
+    expect_salary_status: actionable
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 48          # валюта
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 58          # gross/процент сверху → уточнить net, не KO
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 62          # «от 260» голым числом без единиц → уточнить
-    expect_salary: pending
-    expect_asking: salary
+  - index: 48          # «от 4000 до 5000 долларов» → 320000-400000: даже нижняя граница выше вилки → KO
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 58          # gross → net по прогрессивной шкале НДФЛ; результат всё ещё выше вилки → KO
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 62          # «от 260 на руки» → порог 260000 без верхней границы, в вилке
+    expect_salary_status: actionable
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
 
@@ -185,12 +191,15 @@ scenarios:
   - index: 26          # 1-й раз «вы бот?» → bot_check, представиться, не END (B поймает потерю «внешний рекрутер»)
     expect_event: bot_check
     expect_end: false
-  - index: 27          # 2-й раз «вы бот?» → STOP_BOT_REPEAT
+  - index: 27          # 2-й раз «вы бот?» → STOP_BOT_REPEAT форсит КОД по счётчику
+    # После правки Б5 (27.08.2026) Аналитик этот ключ не возвращает вообще: он оба раза отвечает
+    # «я внешний рекрутер» + event:"bot_check", а завершение на 2-м даёт порог в движке.
     expect_script_key: STOP_BOT_REPEAT
     expect_end: true
-  - index: 30          # упорно требует нашу вилку → STOP_SALARY_DEMAND
-    # NB: завершает САМ Аналитик по своему счётчику salary_info (прогон 203237: next_action=script,
-    # source отсутствует), а не код-кап — поэтому порог salary_reasks в движке здесь ни при чём.
+  - index: 30          # упорно требует нашу вилку → STOP_SALARY_DEMAND форсит КОД (reask-cap)
+    # До правки Б5 ключ возвращал сам Аналитик. Теперь он его не знает: на всех четырёх ходах
+    # asking="salary", и кап (порог 2, проверка ДО инкремента) завершает диалог на 4-м ходе.
+    # Ходов в реплике ровно четыре — если сокращать сценарий, кап не успеет сработать.
     expect_script_key: STOP_SALARY_DEMAND
     expect_end: true
 
@@ -291,4 +300,78 @@ scenarios:
   - index: 67          # за границей, но гео-ограничения в вакансии НЕТ → не отсеиваем, идём по приоритетам
     expect_no_script_prefix: [STOP, KO]
     expect_asking: salary
+    expect_end: false
+
+  # ─────────── Непригодный claim: сумму использовать нельзя → ОДИН уточняющий вопрос ───────────
+  # `expect_salary_status: unusable` требует, чтобы Аналитик сумму УВИДЕЛ и честно её описал (форма
+  # без суммы, чужая, текущая, валюта вне справочника), а не промолчал: молчание тоже даёт pending
+  # без KO, то есть по одному исходу эти случаи неотличимы.
+  - index: 68          # form: not_stated — «обсуждаемо»
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 69          # subject: own_current — названа только текущая ЗП
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 70          # form: relative_only — «+15% к текущей»
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 71          # currency: other — фунты, курса в справочнике нет
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+
+  # ─────────── Распознавание: классы, которые регулярочный парсер разбирал НЕВЕРНО ───────────
+  # Гейт правки 2026-08-27 (контракт salary_claim). Все шесть — про то, ЧТО именно Аналитик услышал:
+  # чьи это деньги и какое из чисел ожидание. Раньше эти вопросы решала регулярка, и четыре сценария
+  # из шести давали ложный отсев, а два теряли названную сумму. Инварианты жёсткие по статусу claim
+  # и по эффекту вердикта: по одному лишь исходу (pending/closed/KO) эти классы неотличимы от
+  # «модель промолчала» и от «отсеяли по другой причине».
+  - index: 72          # чужая сумма (коллеги) → пункт НЕ закрывается и отсева нет
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 73          # текущая + ожидаемая → берём ОЖИДАЕМУЮ, она выше вилки → отсев
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 74          # две своих суммы → решение по НИЖНЕЙ границе, она в вилке → без отсева
+    expect_salary_status: actionable
+    expect_salary_effect: [closed, closed_reask_dropped]
+    expect_salary: closed
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 75          # «ниже 400 тысяч не рассматриваю» = порог снизу → отсев по нижней границе
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 76          # сумма внутри условной фразы с процентом → распознана, в вилке
+    expect_salary_status: actionable
+    expect_salary_effect: [closed, closed_reask_dropped]
+    expect_salary: closed
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+
+  # Вопрос кандидата не должен теряться из-за того, что код не принял сумму. Вакансия сценария —
+  # удалённая, поэтому ответ про формат виден по слову «удал…» в тексте кандидату.
+  - index: 77          # вопрос + непригодная сумма одним ходом → ответ на вопрос И просьба про сумму
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_reply_contains: "удал"
+    expect_no_script_prefix: [KO, STOP]
     expect_end: false
