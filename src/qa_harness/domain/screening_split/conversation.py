@@ -20,6 +20,11 @@ from .interviewer import ScreeningInterviewer
 from .store import InMemoryStateStore
 
 
+# Какой движок поднимать по умолчанию: "split" (действующий) | "policy" (новая архитектура).
+# Ставится раннером один раз из флага --engine; параметр конструктора её перекрывает.
+DEFAULT_ENGINE = "split"
+
+
 @dataclass
 class TurnResult:
     response: Optional[str]
@@ -41,11 +46,22 @@ class SplitConversation:
         recruiter_name: str,
         candidate_name: str,
         accounts: Optional[list] = None,
+        engine: Optional[str] = None,
     ) -> None:
+        engine = engine or DEFAULT_ENGINE
         store = InMemoryStateStore()
-        analyzer = ScreeningAnalyzer(analyzer_client)
         interviewer = ScreeningInterviewer(interviewer_spec, client)
-        self._engine = ScreeningSplitEngine(store, analyzer, interviewer, client)
+        if engine == "policy":
+            # Новая архитектура: Наблюдатель + чистое ядро + гарды (docs/screening_split/
+            # rearchitecture.html). Трасса остаётся совместимой — `last_decision` собирается из
+            # TurnPlan, поэтому инварианты слоя A работают без правок фикстур.
+            from .policy.engine import PolicyEngine
+            from .policy.observer import ScreeningObserver
+            self._engine = PolicyEngine(store, ScreeningObserver(analyzer_client), interviewer, client)
+        else:
+            analyzer = ScreeningAnalyzer(analyzer_client)
+            self._engine = ScreeningSplitEngine(store, analyzer, interviewer, client)
+        self._engine_kind = engine
         self._vacancy_info = vacancy_info
         self._recruiter = recruiter_name
         self._candidate = candidate_name
@@ -71,7 +87,12 @@ class SplitConversation:
         )
 
     def _trace(self) -> dict:
-        """Снимок хода для отчёта: решение Аналитика + компактное состояние."""
+        """Снимок хода для отчёта: решение Аналитика + компактное состояние + зарплатный разбор.
+
+        `salary` в трассе — это то, что код СДЕЛАЛ с суммой на этом ходе (годность claim, пересчёт,
+        вердикт, effect). Без него инварианты слоя A по зарплате пришлось бы выводить косвенно, по
+        script_key и state, и «сумму не распознали» было бы не отличить от «распознали, но не отсеяли».
+        """
         decision = self._engine.last_decision
         st = self._engine.last_state
         state_snap = None
@@ -83,4 +104,13 @@ class SplitConversation:
                 "questions": {q["key"]: q["status"] for q in st.get("questions", [])},
                 "counters": dict(st.get("counters", {})),
             }
-        return {"decision": decision, "state": state_snap}
+        trace = {"decision": decision, "state": state_snap, "salary": self._engine.last_salary}
+        if self._engine_kind == "policy":
+            # Что натворили гарды и что модель увидела — иначе «гард вырезал» неотличимо от
+            # «Интервьюер так и написал», а отброшенный сигнал — от неувиденного.
+            trace["guard_trips"] = list(getattr(self._engine, "last_guard_trips", []) or [])
+            plan = getattr(self._engine, "last_plan", None)
+            if plan is not None:
+                trace["audit"] = plan.audit
+                trace["rule"] = plan.rule
+        return trace

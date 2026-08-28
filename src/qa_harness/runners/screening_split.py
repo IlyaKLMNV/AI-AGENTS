@@ -10,8 +10,12 @@ Decision; `screening_interviewer` — «рот», одно сообщение) +
 монолита + новый зарплатный кейс). Легаси-раннер screening_scenarios и его CSV не трогаем.
 
 Режимы:
-- `--offline` — плумбинг: сценарии + реплики кандидата + санити чистого домена (без сети
-  и без пакета prompts);
+- `--offline` — плумбинг (сценарии + реплики кандидата + санити чистого домена) И детерминированный
+  ГЕЙТ зарплатного кода: арифметика, гейты годности `salary_claim`, приоритеты решений и
+  перерешивание хода при расхождении с Аналитиком. Без сети и без пакета prompts; провал валит
+  прогон. Здесь же живут классы, которых живой сценарий добыть не может (для них нужно заставить
+  модель ошибиться в служебном поле): порядок «нормализация → гейт updates» и все ветки
+  перерешивания;
 - golden (дефолт) — реплики кандидата из CSV, живой прогон split-движка, судья диалога
   (ScenarioJudge против expected_behavior). Слои A (Аналитик, checks) и B (Интервьюер) —
   следующий этап; `--generate` — позже.
@@ -145,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--cfg", type=Path, default=None)
     p.add_argument("--quiet", action="store_true")
+    p.add_argument("--engine", choices=["split", "policy"], default="split",
+                   help="split — действующий движок (Decision); policy — новая архитектура "
+                        "(Наблюдатель + чистое ядро + гарды). Для policy нужен промпт v3: "
+                        "--local-prompt-version v3")
     add_prompt_source_args(p)  # --prompt-source/--local-prompt-version/--prompts-path (split — local-only)
     return p
 
@@ -193,7 +201,12 @@ def _run_fixed_turns(scenario: Scenario, variant: int, candidate_turns: List[str
         tr = result.tool_trace or {}
         res["turns"].append({"candidate": turn, "reply": str(result.response or ""),
                              "end": result.conversation_end, "usage": result.usage,
-                             "decision": tr.get("decision"), "state": tr.get("state")})
+                             "decision": tr.get("decision"), "state": tr.get("state"),
+                             "salary": tr.get("salary"),
+                             # Трасса нового ядра (движок policy): какое правило выиграло, что видел
+                             # наблюдатель, что срезали гарды. У старого движка этих полей нет.
+                             "rule": tr.get("rule"), "audit": tr.get("audit"),
+                             "guard_trips": tr.get("guard_trips")})
         if result.conversation_end:
             break
     if gate_mode == "dialogue":
@@ -250,7 +263,10 @@ def _process_generate(item: Any, *, client: Any, analyzer_client: Any, interview
         tr = t.tool_trace or {}
         res["turns"].append({"candidate": t.candidate, "reply": t.reply, "end": t.end,
                              "usage": t.assistant_usage, "gen_usage": t.gen_usage, "source": t.candidate_source,
-                             "decision": tr.get("decision"), "state": tr.get("state")})
+                             "decision": tr.get("decision"), "state": tr.get("state"),
+                             "salary": tr.get("salary"),
+                             "rule": tr.get("rule"), "audit": tr.get("audit"),
+                             "guard_trips": tr.get("guard_trips")})
         res["gen_sources"].append(t.candidate_source)
     if result.error:
         res["call_error"] = result.error
@@ -285,7 +301,132 @@ def _judge_into(res: Dict[str, Any], judge: Any, scenario: Scenario) -> None:
         res["call_error"] = f"judge:{type(e).__name__}:{e}"
 
 
-def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: str = "tg") -> None:
+def _policy_migration_selfcheck() -> List[tuple]:
+    """[(имя, ok, деталь)] — ленивая миграция документа под новый движок (решение Р7).
+
+    Самая опасная часть жёсткой подмены: если вилка не доедет до типизированного поля, зарплатный
+    отсев отключится ТИХО — `compare_with_band` без границ всегда возвращает «проходит», и в
+    отчётности это никак не видно. Поэтому проверки живут в гейте, а не в скретчпаде.
+    """
+    from qa_harness.domain.screening_split import context as ctx
+    from qa_harness.domain.screening_split import state as state_model
+    from qa_harness.domain.screening_split.policy import DecideContext, decide, migration
+    from qa_harness.domain.screening_split.policy.observation import Observation
+
+    out: List[tuple] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        out.append((name, bool(ok), detail))
+
+    VAC = {"title": "Python Backend Developer", "company_name": "ExampleSoft",
+           "responsibilities": "Микросервисы", "work_format": "remote", "location": "Москва",
+           "company_info": {"firm_description": "b2b", "vacancy_url": "https://example.com/v"},
+           "min_salary": 200000, "max_salary": 280000, "questions": "- A\n- B"}
+
+
+    def old_doc(**over):
+        """Документ, каким его создавал СТАРЫЙ движок: контекст строкой с вилкой, band пустой."""
+        doc = {
+            "conversation_id": "c1", "engine": "split", "finished": False,
+            "context": ctx.build_context("Анна", "Иван", "резюме HH", VAC),
+            "location": "Москва", "contact_source": "резюме HH",
+            "salary_band": {},
+            "state": state_model.init_state("remote", "A\nB"),
+        }
+        doc.update(over)
+        return doc
+
+
+    # --- 1. вилка разбирается ДО вырезания строки ---
+    d = old_doc()
+    assert "Зарплатная вилка" in d["context"]
+    rep = migration.upgrade(d)
+    check("вилка разобрана из контекста", d["salary_band"] == {"min": 200000, "max": 280000, "currency": "RUB"},
+          str(d["salary_band"]))
+    check("источник вилки помечен", rep["band_source"] == "context", rep["band_source"])
+    check("строка вилки вырезана", "Зарплатная вилка" not in d["context"])
+    check("остальной контекст цел", "Должность: Python Backend Developer" in d["context"]
+          and "Ссылка на вакансию: https://example.com/v" in d["context"])
+
+    # --- 2. идемпотентность ---
+    before = dict(d)
+    rep2 = migration.upgrade(d)
+    check("повторная миграция — no-op", rep2["migrated"] is False and d["context"] == before["context"])
+
+    # --- 3. документ с уже типизированной вилкой не перетирается ---
+    d3 = old_doc(salary_band={"min": 100000, "max": 150000})
+    migration.upgrade(d3)
+    check("готовая вилка не перезаписана", d3["salary_band"]["min"] == 100000, str(d3["salary_band"]))
+    check("валюта проставлена по умолчанию", d3["salary_band"]["currency"] == "RUB")
+
+    # --- 4. формы вилки: только «от», только «до» ---
+    v_from = dict(VAC, min_salary=200000, max_salary=None)
+    d4 = old_doc(context=ctx.build_context("А", "И", "", v_from))
+    migration.upgrade(d4)
+    check("форма «от X»", d4["salary_band"] == {"min": 200000, "max": None, "currency": "RUB"}, str(d4["salary_band"]))
+
+    v_to = dict(VAC, min_salary=None, max_salary=280000)
+    d5 = old_doc(context=ctx.build_context("А", "И", "", v_to))
+    migration.upgrade(d5)
+    check("форма «до Y»", d5["salary_band"] == {"min": None, "max": 280000, "currency": "RUB"}, str(d5["salary_band"]))
+
+    # --- 5. вилки нет вовсе: провал разбора ВИДЕН, а не молчит ---
+    v_none = dict(VAC, min_salary=None, max_salary=None)
+    d6 = old_doc(context=ctx.build_context("А", "И", "", v_none))
+    rep6 = migration.upgrade(d6)
+    check("вилки нет → band_unparsed", rep6["band_unparsed"] is True and not d6["salary_band"], str(rep6))
+    check("пустая строка вилки всё равно вырезана", "Зарплатная вилка" not in d6["context"])
+
+    # --- 6. last_asking обнуляется, счётчики дополняются ---
+    d7 = old_doc()
+    d7["state"]["last_asking"] = "salary"
+    d7["state"].pop("no_progress", None)
+    d7["state"]["counters"].pop("contact_source", None)
+    migration.upgrade(d7)
+    check("last_asking обнулён", d7["state"]["last_asking"] is None)
+    check("no_progress добавлен", d7["state"]["no_progress"] == 0)
+    check("недостающий счётчик добавлен", d7["state"]["counters"]["contact_source"] == 0)
+    check("схема помечена", d7["schema"] == migration.SCHEMA_VERSION)
+
+    # --- 7. накопленное состояние НЕ теряется ---
+    d8 = old_doc()
+    d8["state"]["salary"] = "closed"
+    d8["state"]["candidate_city"] = "Казань"
+    d8["state"]["questions"][0]["status"] = "closed"
+    d8["state"]["counters"]["pause"] = 2
+    migration.upgrade(d8)
+    check("собранное сохранено", d8["state"]["salary"] == "closed"
+          and d8["state"]["candidate_city"] == "Казань"
+          and d8["state"]["questions"][0]["status"] == "closed"
+          and d8["state"]["counters"]["pause"] == 2)
+
+    # --- 8. мигрированный документ реально даёт отсев по деньгам ---
+    from qa_harness.domain.screening_split.policy import DecideContext, decide
+    from qa_harness.domain.screening_split.policy.observation import Observation
+
+    d9 = old_doc()
+    migration.upgrade(d9)
+    band = d9["salary_band"]
+    obs = Observation(salary_claim={"subject": "own_expectation", "form": "exact",
+                                    "amount_min": 400, "amount_max": 400, "scale": "thousand",
+                                    "currency": "RUB", "period": "month", "tax": "net",
+                                    "quote": "400 тысяч"})
+    plan = decide(d9["state"], obs, "Ожидаю 400 тысяч на руки",
+                  DecideContext(band_min=band["min"], band_max=band["max"], location="Москва"))
+    check("после миграции отсев по деньгам работает", plan.reason_code == "KO_SALARY" and plan.end,
+          f"{plan.reason_code} end={plan.end}")
+
+    # То же БЕЗ миграции — демонстрация того, что чинится: вилки нет → отсев молча отключён.
+    d10 = old_doc()
+    plan10 = decide(d10["state"], obs, "Ожидаю 400 тысяч на руки",
+                    DecideContext(band_min=None, band_max=None, location="Москва"))
+    check("без миграции отсева НЕ было бы (то, что чиним)", plan10.reason_code != "KO_SALARY",
+          plan10.reason_code)
+    return out
+
+
+def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: str = "tg") -> int:
+    """Плумбинг + детерминированные проверки кода. Возвращает число провалов (0 = всё зелено)."""
     with_ex = turns = 0
     for s in scenarios:
         ct = extract_candidate_examples(s.examples_raw, args.max_examples)
@@ -299,7 +440,370 @@ def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: s
     print(f"[offline] санити чистого домена (канал {channel}):")
     for line in (_domain_sanity_hh() if channel == "hh" else _domain_sanity()):
         print(f"  · {line}")
+
+    failed = 0
+    if channel == "tg":
+        cases = _salary_selfcheck()
+        failed = sum(1 for _, ok, _ in cases if not ok)
+        print(f"[offline] зарплатный контракт (salary_claim): {len(cases) - failed}/{len(cases)}")
+        for name, ok, detail in cases:
+            if not ok or not args.quiet:
+                print(f"  {'OK  ' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
+
+        mig = _policy_migration_selfcheck()
+        mig_failed = sum(1 for _, ok, _ in mig if not ok)
+        failed += mig_failed
+        print(f"[offline] ленивая миграция под движок policy: {len(mig) - mig_failed}/{len(mig)}")
+        for name, ok, detail in mig:
+            if not ok or not args.quiet:
+                print(f"  {'OK  ' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
     print("[offline] сеть и пакет prompts не дёргались.")
+    return failed
+
+
+# ── детерминированные проверки зарплатного контракта (без сети и без LLM) ──────
+# Живут в offline-режиме раннера, а не в pytest: в этом репозитории юнит-тестов на код харнесса не
+# держим, корректность кода проверяется `--offline`-прогоном. Здесь два класса, которых живой сценарий
+# добыть НЕ может, потому что для них нужно заставить модель ошибиться:
+#   · порядок «нормализация → гейт updates» (негодный claim + salary:closed в updates);
+#   · все ветки перерешивания хода (нужна ошибка модели в служебном поле claim).
+def _claim(**kw) -> Dict[str, Any]:
+    base = {"subject": "own_expectation", "form": "exact", "amount_min": None, "amount_max": None,
+            "scale": "thousand", "currency": "RUB", "period": "month", "tax": "unspecified",
+            "quote": ""}
+    base.update(kw)
+    return base
+
+
+def _decision(**kw) -> Dict[str, Any]:
+    base = {"next_action": "ask", "script_key": None, "instruction": "Спроси зарплатные ожидания",
+            "updates": [], "event": None, "asking": "salary", "salary_claim": None}
+    base.update(kw)
+    return base
+
+
+class _FakeAnalyzer:
+    """Отдаёт заранее заданные Decision по одному на вызов и считает вызовы."""
+
+    def __init__(self, *decisions: Dict[str, Any]) -> None:
+        self._queue = list(decisions)
+        self.calls = 0
+        self.notes: List[str | None] = []  # служебные строки, с которыми звали (для проверки rewind)
+        self.last_usage = blank_usage()
+
+    def run(self, context: str, state: Dict[str, Any], message: str, *,
+            note: str | None = None) -> Dict[str, Any]:
+        self.calls += 1
+        self.notes.append(note)
+        return self._queue.pop(0) if self._queue else _decision()
+
+
+class _FakeInterviewer:
+    def run(self, conversation_id: Any, instruction: str, message: str):
+        return f"[текст по инструкции] {instruction}", blank_usage()
+
+
+def _engine_turn(*decisions: Dict[str, Any], message: str,
+                 state_over: Dict[str, Any] | None = None, band=(200000, 280000)):
+    """Один ход движка с фейковыми ролями. Возвращает (result, doc, analyzer).
+
+    Несколько решений передаются для ветки перерешивания: второе уходит на второй вызов Аналитика.
+    """
+    store = sp.InMemoryStateStore()
+    state = sp.init_state("remote", "")
+    if state_over:
+        state.update(state_over)
+    store.create("c1", "split", state=state,
+                 context="Зарплатная вилка: от 200000 до 280000 рублей (НЕ РАСКРЫВАТЬ!)",
+                 location="Москва", contact_source="hh",
+                 salary_band={"min": band[0], "max": band[1]})
+    analyzer = _FakeAnalyzer(*decisions)
+    engine = sp.ScreeningSplitEngine(store, analyzer, _FakeInterviewer(), None)
+    result = engine.add_message_and_run("c1", message)
+    return result, store.load("c1"), analyzer
+
+
+def _salary_selfcheck() -> List[tuple]:
+    """[(имя, ok, деталь)] — арифметика, гейты годности, приоритеты решений, перерешивание хода."""
+    out: List[tuple] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        out.append((name, bool(ok), detail))
+
+    # --- арифметика: Д8-Д11, значения считаются ОТ КОНСТАНТ модуля правил ---
+    from qa_harness.domain.screening_split import salary_rules as rules
+
+    v = sp.normalize(_claim(amount_min=70, scale="none_stated"))
+    check("Д8 голое «70» = 70000", v.min == 70_000, f"факт {v.min}")
+    v = sp.normalize(_claim(amount_min=200, scale="unit"))
+    check("Д8 «200 рублей» читаем буквально", v.min == 200, f"факт {v.min}")
+    v = sp.normalize(_claim(amount_min=1200, scale="unit", period="hour"))
+    check("Д9 ставка за час × норму часов",
+          v.min == round(1200 * rules.PERIOD_TO_MONTH["hour"]), f"факт {v.min}")
+    v = sp.normalize(_claim(amount_min=4000, scale="unit", currency="USD"))
+    check("Д10 валюта по курсу из правил",
+          v.min == round(4000 * rules.RATE_TO_RUB["USD"]), f"факт {v.min}")
+    v = sp.normalize(_claim(amount_min=250, scale="thousand", tax="gross"))
+    check("Д11 gross → net по прогрессивной шкале",
+          v.min < round(250_000 * (1 - rules.NDFL_BRACKETS[0][1])), f"факт {v.min}")
+
+    # --- вердикт по вилке: Д12/Д13 ---
+    def verdict(**kw) -> str:
+        return sp.compare_with_band(sp.normalize(_claim(**kw)), 200_000, 280_000)
+
+    check("Д13 диапазон 250-400 — не отказ (готов на 250)",
+          verdict(form="range", amount_min=250, amount_max=400, scale="thousand") == "fits")
+    check("Д13 порог «от 300» — отказ", verdict(form="at_least", amount_min=300, scale="thousand") == "ko")
+    check("«до 400» — не отказ никогда", verdict(form="at_most", amount_max=400, scale="thousand") == "fits")
+    check("ниже минимума вилки — не отказ", verdict(amount_min=100, scale="thousand") == "fits")
+    check("Д12 отказ по ПЕРЕСЧИТАННОЙ сумме",
+          verdict(amount_min=4500, scale="unit", currency="USD") == "ko")
+
+    # --- гейты годности claim ---
+    check("чужая сумма непригодна",
+          sp.claim_status(_claim(subject="third_party", amount_min=500, quote="500 тысяч"),
+                          "У коллеги 500 тысяч") == sp.UNUSABLE)
+    check("текущая ЗП без ожиданий непригодна",
+          sp.claim_status(_claim(subject="own_current", amount_min=250, quote="получаю 250"),
+                          "Сейчас получаю 250") == sp.UNUSABLE)
+    check("валюта вне справочника непригодна",
+          sp.claim_status(_claim(currency="other", amount_min=4000, quote="4000 фунтов"),
+                          "Рассматриваю 4000 фунтов") == sp.UNUSABLE)
+    check("выдуманная цитата непригодна (гейт против галлюцинации)",
+          sp.claim_status(_claim(amount_min=400, quote="400 тысяч"),
+                          "Готов обсуждать варианты") == sp.UNUSABLE)
+    check("годный claim пригоден",
+          sp.claim_status(_claim(amount_min=300, quote="300 тысяч"),
+                          "Ориентируюсь на 300 тысяч") == sp.ACTIONABLE)
+
+    # --- ВЫРОЖДЕННАЯ ФОРМА claim: единственная причина, по которой normalize даёт None ---
+    # Потолка правдоподобия у пересчёта НЕТ: абсурдно большая сумма — законный отказ по вилке, а не
+    # ошибка. `claim_status` вырождение не ловит (видит одно число, не зная, что форма его обнулит).
+    _degenerate = _claim(form="at_least", amount_min=None, amount_max=300, quote="300 тысяч")
+    check("вырожденная форма: статус пропускает, пересчёт даёт None",
+          sp.claim_status(_degenerate, "Ориентируюсь на 300 тысяч") == sp.ACTIONABLE
+          and sp.normalize(_degenerate) is None)
+    check("абсурдная сумма — обычный отказ по вилке, а не уточнение",
+          sp.compare_with_band(sp.normalize(_claim(amount_min=20, scale="million")),
+                               200_000, 280_000) == "ko")
+    res, doc, _ = _engine_turn(
+        _decision(salary_claim=_degenerate, updates=[{"key": "salary", "value": "closed"}],
+                  asking="salary"),
+        _decision(asking="salary"), message="Ориентируюсь на 300 тысяч")
+    check("вырожденная форма в движке: не отсеивает и НЕ закрывает пункт",
+          doc["state"]["salary"] == "pending" and not res.conversation_end,
+          f"salary={doc['state']['salary']} end={res.conversation_end}")
+    check("вырожденная форма помечена unusable в трассе",
+          doc["salary_claims"][0]["status"] == sp.UNUSABLE,
+          f"факт {doc['salary_claims'][0]['status']}")
+
+    # --- ПОРЯДОК «нормализация → гейт updates» ---
+    res, doc, _ = _engine_turn(
+        _decision(updates=[{"key": "salary", "value": "closed"}]),
+        _decision(asking="salary"), message="Давайте обсудим позже")
+    check("гейт: closed без claim отброшен", doc["state"]["salary"] == "pending",
+          f"факт {doc['state']['salary']}")
+    res, doc, _ = _engine_turn(
+        _decision(salary_claim=_claim(form="not_stated", quote="обсуждаемо"),
+                  updates=[{"key": "salary", "value": "closed"}]),
+        _decision(asking="salary"), message="Обсуждаемо, зависит от задач")
+    check("гейт: closed с непригодным claim отброшен", doc["state"]["salary"] == "pending",
+          f"факт {doc['state']['salary']}")
+    res, doc, _ = _engine_turn(
+        _decision(updates=[{"key": "salary", "value": "closed"},
+                           {"key": "candidate_city", "value": "Казань"}]),
+        _decision(asking="salary"), message="Я из Казани")
+    check("гейт снимает только зарплату, остальные факты проходят",
+          doc["state"]["salary"] == "pending" and doc["state"]["candidate_city"] == "Казань")
+
+    # --- приоритеты решений ---
+    res, doc, _ = _engine_turn(
+        _decision(salary_claim=_claim(amount_min=400, quote="400 тысяч"), event="demand"),
+        message="Повторяю, 400 тысяч и не меньше",
+        state_over={"counters": {**sp.init_state("remote", "")["counters"], "demand": 2}})
+    check("ko перебивает событийный порог (причина отказа — деньги)",
+          doc["salary_claims"][0]["effect"] == "ko_forced" and res.conversation_end,
+          f"effect={doc['salary_claims'][0]['effect']}")
+    res, doc, _ = _engine_turn(
+        _decision(next_action="script", script_key="FINISH", instruction=None, asking=None,
+                  salary_claim=_claim(amount_min=400, quote="400 тысяч")),
+        message="И ещё: хочу 400 тысяч")
+    check("ko перебивает FINISH", doc["salary_claims"][0]["effect"] == "ko_forced",
+          f"effect={doc['salary_claims'][0]['effect']}")
+    res, doc, _ = _engine_turn(
+        _decision(next_action="script", script_key="FINISH", instruction=None, asking=None,
+                  salary_claim=_claim(amount_min=250, quote="250 тысяч")),
+        message="И ещё: хочу 250 тысяч")
+    check("fits НЕ снимает FINISH", res.conversation_end
+          and doc["salary_claims"][0]["effect"] == "closed",
+          f"effect={doc['salary_claims'][0]['effect']} end={res.conversation_end}")
+    res, doc, _ = _engine_turn(
+        _decision(next_action="script", script_key="STOP_ABUSE", instruction=None, asking=None,
+                  salary_claim=_claim(amount_min=400, quote="400 тысяч")),
+        message="Хочу 400 тысяч, уроды")
+    check("НЕденежное терминальное решение Аналитика сильнее отсева по деньгам",
+          doc["salary_claims"][0]["effect"] == "ko_overridden_by_analyzer" and res.conversation_end,
+          f"effect={doc['salary_claims'][0]['effect']}")
+    res, doc, analyzer = _engine_turn(
+        _decision(next_action="script", script_key="STOP_NOT_INTERESTED", instruction=None, asking=None,
+                  salary_claim=_claim(form="at_least", amount_min=250, quote="ниже 250 тысяч")),
+        message="Ниже 250 тысяч не рассматриваю ваше предложение")
+    check("fits снимает денежное завершение, диалог продолжается, второго вызова LLM нет",
+          not res.conversation_end and doc["state"]["salary"] == "closed" and analyzer.calls == 1,
+          f"end={res.conversation_end} salary={doc['state']['salary']} calls={analyzer.calls}")
+    res, doc, _ = _engine_turn(
+        _decision(salary_claim=_claim(amount_min=400, quote="400 тысяч")),
+        message="Передумал, хочу 400 тысяч", state_over={"salary": "closed"})
+    check("повторное сравнение после закрытия пункта",
+          res.conversation_end and doc["salary_claims"][0]["effect"] == "ko_forced",
+          f"effect={doc['salary_claims'][0]['effect']}")
+
+    # --- ПЕРЕРЕШИВАНИЕ ХОДА при расхождении кода и Аналитика ---
+    # Триггер: claim непригоден И решение построено на посылке «деньги закрыты». Модель не может знать
+    # заранее, что claim забракуют, поэтому сама этот случай не вытянет — только детерминированно.
+    broken = _claim(amount_min=300, quote="300 тысяч на руки")  # цитаты нет в реплике → unusable
+    reask = _decision(instruction="Переспроси сумму на руки в месяц", asking="salary")
+    msg = "Готов обсуждать варианты"
+
+    res, doc, an = _engine_turn(_decision(salary_claim=broken, asking="q1",
+                                          instruction="Спроси про PostgreSQL",
+                                          updates=[{"key": "salary", "value": "closed"}]),
+                                reask, message=msg)
+    check("перерешивание: закрытие зарплаты в updates → второй вызов",
+          an.calls == 2 and "Переспроси сумму" in (res.response or ""), f"calls={an.calls}")
+    # Без служебной строки второй вызов получил бы тождественный вход (state не изменился —
+    # отклонённое `salary: closed` в него не попало) и при temperature=0 повторил бы то же решение.
+    check("перерешивание: второй вызов получает служебную строку, первый — нет",
+          an.notes[:1] == [None] and bool(an.notes[1]), f"notes={an.notes}")
+    _note = an.notes[1] or ""
+    # Отброшенную инструкцию в строку НЕ кладём: пробовали, модель протаскивала из неё переход к
+    # следующему приоритету. Реакцию на счётный триггер второй вызов выводит сам — он видит счётчик
+    # нетронутым (инкремент перенесён за все вызовы Аналитика).
+    check("служебная строка НЕ несёт отброшенную инструкцию",
+          "Спроси про PostgreSQL" not in _note and "Ранее ты собирался" not in _note,
+          f"note={_note[:120]}")
+    check("служебная строка не перечисляет категории содержимого",
+          "остальное содержание реплики обработай как обычно" in _note
+          and "отработай сработавшие триггеры" in _note)
+    # Валютно-нейтральна: перерешивание срабатывает на нашей ошибке, где валюта ни при чём, а
+    # требование рублей возвращало бы трение, ради которого курс и завели (Д10).
+    check("служебная строка валютно-нейтральна и без «на руки»",
+          "в формате оплаты за месяц числом" in _note and "чтобы передать коллегам" in _note
+          and "в рублях" not in _note and "на руки" not in _note)
+    check("перерешивание: пункт остался pending", doc["state"]["salary"] == "pending",
+          f"факт {doc['state']['salary']}")
+    check("перерешивание видно в трассе", doc["salary_claims"][0]["rewind"] is True)
+
+    res, doc, an = _engine_turn(_decision(salary_claim=broken, asking="format",
+                                          instruction="Спроси город"), reask, message=msg)
+    check("перерешивание: asking уехал с зарплаты → второй вызов", an.calls == 2, f"calls={an.calls}")
+
+    res, doc, an = _engine_turn(
+        _decision(next_action="script", script_key="FINISH", instruction=None, asking=None,
+                  salary_claim=broken), reask, message=msg)
+    check("перерешивание: FINISH не закрывает скрининг с неразрешённой зарплатой",
+          an.calls == 2 and not res.conversation_end and doc["state"]["salary"] == "pending",
+          f"calls={an.calls} end={res.conversation_end}")
+    check("служебная строка валидна и без инструкции (у FINISH её нет)",
+          "Ранее ты собирался" not in (an.notes[1] or "")
+          and "зарплаты НЕ закрыт" in (an.notes[1] or ""))
+
+    res, doc, an = _engine_turn(
+        _decision(salary_claim=_claim(subject="third_party", amount_min=500, quote="500 тысяч"),
+                  instruction="Переспроси сумму", asking="salary"),
+        message="У коллеги 500 тысяч")
+    check("НЕТ перерешивания, когда Аналитик сам переспрашивает (вина кандидата)",
+          an.calls == 1, f"calls={an.calls}")
+
+    res, doc, an = _engine_turn(
+        _decision(salary_claim=_claim(subject="own_current", amount_min=250, quote="получаю 250"),
+                  instruction="Ответь про формат", asking=None),
+        message="Сейчас получаю 250, а какой формат работы?")
+    check("НЕТ перерешивания при asking=null (ответ на вопрос кандидата — законный ход)",
+          an.calls == 1, f"calls={an.calls}")
+
+    res, doc, an = _engine_turn(_decision(asking="format", instruction="Спроси город"),
+                               message="Здравствуйте!")
+    check("НЕТ перерешивания, когда про деньги речи не было", an.calls == 1, f"calls={an.calls}")
+
+    res, doc, an = _engine_turn(_decision(salary_claim=broken, asking="q1",
+                                          instruction="Спроси про PostgreSQL"),
+                                _decision(instruction="Переспроси сумму", asking="salary",
+                                          updates=[{"key": "salary", "value": "closed"}]),
+                                message=msg)
+    check("updates ВТОРОГО решения тоже гейтятся", doc["state"]["salary"] == "pending",
+          f"факт {doc['state']['salary']}")
+
+    res, doc, an = _engine_turn(_decision(salary_claim=broken, asking="q1", event="gibberish",
+                                          instruction="Спроси про PostgreSQL"),
+                                _decision(instruction="Переспроси сумму", asking="salary",
+                                          event="gibberish"), message=msg)
+    check("event второго решения не считается дважды",
+          doc["state"]["counters"]["gibberish"] == 1,
+          f"факт {doc['state']['counters']['gibberish']}")
+
+    _st = {"last_asking": "salary", "salary_reasks": 2}  # ещё один засчитанный → STOP_SALARY_DEMAND
+    res, doc, an = _engine_turn(_decision(salary_claim=broken, asking="format",
+                                          instruction="Спроси город"), reask,
+                                message=msg, state_over=dict(_st))
+    check("перерешённый ход НЕ жжёт reask-cap (наша ошибка, не уклонение кандидата)",
+          not res.conversation_end and doc["state"]["salary_reasks"] == 2,
+          f"end={res.conversation_end} reasks={doc['state']['salary_reasks']}")
+
+    res, doc, an = _engine_turn(
+        _decision(salary_claim=_claim(form="not_stated", quote="обсуждаемо"), asking="salary",
+                  instruction="Переспроси сумму"),
+        message="Обсуждаемо, зависит от задач", state_over=dict(_st))
+    check("reask-cap по-прежнему завершает диалог, когда уклоняется кандидат",
+          res.conversation_end, f"end={res.conversation_end}")
+
+    # --- ОБРАТНОЕ расхождение: код закрыл пункт, а решение всё ещё спрашивает про деньги ---
+    # Прогон 28.08 (сценарий 45): «правильно ли я понимаю, что 75 тысяч?» уже после того, как код
+    # сумму принял. Служебная строка здесь не нужна — состояние изменилось само (pending → closed).
+    good = _claim(amount_min=250, quote="250 тысяч")
+    res, doc, an = _engine_turn(
+        _decision(salary_claim=good, asking="salary", instruction="Переспроси сумму ещё раз"),
+        _decision(asking="format", instruction="Спроси город"),
+        message="Ориентируюсь на 250 тысяч")
+    check("fits + asking=salary → второй вызов, переспрос кандидату не уходит",
+          an.calls == 2 and "Спроси город" in (res.response or ""), f"calls={an.calls}")
+    check("fits + asking=salary: пункт закрыт, эффект виден в трассе",
+          doc["state"]["salary"] == "closed"
+          and doc["salary_claims"][0]["effect"] == "closed_reask_dropped",
+          f"salary={doc['state']['salary']} effect={doc['salary_claims'][0]['effect']}")
+    check("этот второй вызов идёт БЕЗ служебной строки (состояние изменилось само)",
+          an.notes == [None, None], f"notes={an.notes}")
+
+    res, doc, an = _engine_turn(
+        _decision(salary_claim=good, asking="format", instruction="Спроси город"),
+        message="Ориентируюсь на 250 тысяч")
+    check("НЕТ второго вызова, когда Аналитик и так ушёл дальше", an.calls == 1, f"calls={an.calls}")
+
+    # Счётчик обязан быть нетронутым на ОБОИХ вызовах: иначе второй прочитает «вы бот?» как повтор.
+    _seen = []
+
+    class _Spy(_FakeAnalyzer):
+        def run(self, context, state, message, *, note=None):
+            _seen.append(dict(state["counters"]))
+            return super().run(context, state, message, note=note)
+
+    _store = sp.InMemoryStateStore()
+    _store.create("c1", "split", state=sp.init_state("remote", ""),
+                  context="Зарплатная вилка: от 200000 до 280000 рублей",
+                  location="Москва", contact_source="hh",
+                  salary_band={"min": 200000, "max": 280000})
+    _an = _Spy(_decision(salary_claim=good, asking="salary", event="bot_check",
+                         instruction="Ответь про бота и переспроси сумму"),
+               _decision(asking="format", instruction="Спроси город"))
+    _eng = sp.ScreeningSplitEngine(_store, _an, _FakeInterviewer(), None)
+    _eng.add_message_and_run("c1", "Вы бот? Ориентируюсь на 250 тысяч")
+    _doc = _store.load("c1")
+    check("оба вызова видят счётчик нетронутым, инкремент ровно один",
+          len(_seen) == 2 and _seen[0]["bot_check"] == _seen[1]["bot_check"] == 0
+          and _doc["state"]["counters"]["bot_check"] == 1,
+          f"на вызовах={[x['bot_check'] for x in _seen]} итог={_doc['state']['counters']['bot_check']}")
+
+    return out
 
 
 def _domain_sanity() -> List[str]:
@@ -357,6 +861,12 @@ def run(args: argparse.Namespace) -> Any:
         fix_dir = FIXTURES / "screening_split"
         gen_vacancies, gen_constraints = DEFAULT_VACANCIES, DEFAULT_CONSTRAINTS
     sp = _sp
+    # Движок ставится один раз на весь прогон: конструкторов SplitConversation в раннере несколько
+    # (scripted/generated), и тащить параметр через все сигнатуры незачем.
+    engine_kind = getattr(args, "engine", "split") or "split"
+    if engine_kind == "policy" and channel == "hh":
+        raise SystemExit("--engine policy пока только для канала tg: hh-порт ядра не переносился")
+    sp.conversation.DEFAULT_ENGINE = engine_kind
     runner_name = "screening_split_hh" if channel == "hh" else RUNNER
     csv_path = args.csv or fix_dir / "scenarios.csv"
     checks_path = args.checks or fix_dir / "scenario_checks.yaml"
@@ -370,7 +880,11 @@ def run(args: argparse.Namespace) -> Any:
         selected = _select(scenarios, args.scenario_indices, args.sample, args.seed,
                            runnable_only=False, max_examples=args.max_examples)
         print(f"Сценариев в CSV: {len(scenarios)} · выбрано: {len(selected)} · канал: {channel} · CSV: {csv_path}")
-        _run_offline(args, selected, channel)
+        failed = _run_offline(args, selected, channel)
+        if failed:
+            # Офлайн-режим — единственный гейт кода харнесса (pytest здесь не держим), поэтому
+            # провал проверок обязан валить прогон, а не оставаться строчкой в выводе.
+            raise SystemExit(f"[offline] провалено проверок зарплатного контракта: {failed}")
         return None
 
     # --- онлайн golden: split — LOCAL-only (stored-эквивалента нет), потому local по умолчанию ---
@@ -518,6 +1032,15 @@ def run(args: argparse.Namespace) -> Any:
             a_turn: Dict[str, Any] = {"round": i, "role": "assistant", "text": t["reply"],
                                       "turn_kind": kind, "analyzer_instruction": d.get("instruction"),
                                       "decision": d, "state": t.get("state")}
+            for extra in ("rule", "audit", "guard_trips"):
+                # Трасса нового ядра: какое правило выиграло, что видел наблюдатель, что срезали
+                # гарды. Без этого «гард вырезал» неотличимо от «Интервьюер так и написал».
+                if t.get(extra):
+                    a_turn[extra] = t[extra]
+            if t.get("salary"):
+                # Зарплатный разбор хода: что код сделал с суммой (годность claim, пересчёт,
+                # вердикт, effect). Нужен и инвариантам слоя A, и разбору отчёта глазами.
+                a_turn["salary"] = t["salary"]
             if t["end"]:
                 a_turn["ended"] = True
             transcript.append(a_turn)
