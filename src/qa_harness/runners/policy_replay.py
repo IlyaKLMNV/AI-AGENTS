@@ -177,19 +177,14 @@ def guard_scan(files: List[str], args: Any) -> int:
         for case in payload.get("cases") or []:
             index = _scenario_index(case.get("case_id") or "")
             url = per_scenario.get(index, args.vacancy_url) if index is not None else args.vacancy_url
-            said: List[str] = []
             for item in case.get("transcript") or []:
                 if item.get("role") == "candidate":
-                    said.append(item.get("text") or "")
                     continue
                 text = _strip_trace(item.get("text") or "")
                 if not text.strip():
                     continue
                 total += 1
-                spec = GuardSpec(
-                    allow_urls=(url,) if url else (),
-                    candidate_texts=tuple(said),
-                )
+                spec = GuardSpec(allow_urls=(url,) if url else ())
                 result = apply_guards(text, spec)
                 if not result.trips:
                     continue

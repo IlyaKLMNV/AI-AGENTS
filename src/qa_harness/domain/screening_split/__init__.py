@@ -19,7 +19,7 @@ from .conversation import SplitConversation, TurnResult
 from .decision import REQUIRED_FIELDS, parse_and_validate
 from .engine import ConversationResult, ScreeningSplitEngine
 from .errors import AssistantError
-from .interviewer import ScreeningInterviewer
+from .interviewer import PolicyInterviewer, ScreeningInterviewer
 from .interviewer_judge import InterviewerJudge, InterviewerVerdict
 from .salary import (
     ABSENT,
@@ -44,6 +44,7 @@ __all__ = [
     "TurnResult",
     # роли
     "ScreeningAnalyzer",
+    "PolicyInterviewer",
     "ScreeningInterviewer",
     # контракт Decision
     "parse_and_validate",

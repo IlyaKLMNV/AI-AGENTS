@@ -42,6 +42,9 @@ class PolicyEngine:
         self.interviewer = interviewer
         self._client = client
         self._defensive = defensive_guards
+        # Имена участников — для сида Интервьюера: истории у него нет, сид собирается каждый ход.
+        self._recruiter_name = ""
+        self._candidate_name = ""
         # Снимок хода для QA-трассы. В проде не нужен; поведение от него не зависит.
         self.last_plan: Any = None
         self.last_decision: Optional[dict] = None   # совместимый вид для инвариантов слоя A
@@ -63,7 +66,10 @@ class PolicyEngine:
         # Контекст БЕЗ вилки: секрет не кладут туда, где его потом запрещают (П4).
         context = build_observer_context(recruiter_name, candidate_name, contact_source, vacancy_info)
         seed = ctx.build_interviewer_seed(recruiter_name, candidate_name)
+        self._recruiter_name, self._candidate_name = recruiter_name, candidate_name
 
+        # Conversation заводится ради ИДЕНТИФИКАТОРА: её id — ключ диалога. Историю в неё больше
+        # никто не пишет и не читает — Интервьюер stateless.
         conversation = self._client.conversations.create(
             items=[{"type": "message", "role": "assistant", "content": seed}]
         )
@@ -82,7 +88,6 @@ class PolicyEngine:
                          "currency": vacancy_info.get("salary_currency", "RUB")},
         )
         self._vacancy = vacancy_info
-        self._said: list[str] = []
         return conversation_id
 
     # ── ход ──────────────────────────────────────────────────────────────────
@@ -121,8 +126,12 @@ class PolicyEngine:
         observation, failed = self._observe(doc.get("context", ""), state, message)
         plan = decide(state, observation, message, ctx, analyzer_failed=failed)
 
-        self._said.append(message)
-        text = self._speak(conversation_id, plan, message, ctx)
+        text = self._speak(plan, message, ctx, state.get("last_sent") or "")
+
+        # Что реально ушло кандидату: у Интервьюера истории нет, а дословно повторённый переспрос
+        # выглядел бы поломкой.
+        if plan.kind == "ask" and text:
+            plan.state_next["last_sent"] = text
 
         self.last_plan = plan
         self.last_observation = observation
@@ -145,7 +154,7 @@ class PolicyEngine:
         accumulate_usage(self.last_usage, self.observer.last_usage)
         return observation, False
 
-    def _speak(self, conversation_id: Any, plan: Any, message: str, ctx: DecideContext) -> str:
+    def _speak(self, plan: Any, message: str, ctx: DecideContext, last_sent: str) -> str:
         """Скрипт — из реестра; вопрос — через Интервьюера, затем шлюз гардов."""
         if plan.kind == "silent":
             return ""
@@ -153,8 +162,11 @@ class PolicyEngine:
             return reasons.render(plan.reason_code, city=ctx.location,
                                   contact_source=ctx.contact_source) or ""
 
+        from .. import context as ctx_mod
+        seed = ctx_mod.build_interviewer_seed(self._recruiter_name, self._candidate_name)
         try:
-            raw, usage = self.interviewer.run(conversation_id, plan.instruction, message)
+            raw, usage = self.interviewer.run(plan.instruction, message,
+                                              seed=seed, last_sent=last_sent)
             accumulate_usage(self.last_usage, usage)
         except Exception:  # noqa: BLE001 — сбой Интервьюера не должен терять ход
             raw = ""
@@ -163,7 +175,6 @@ class PolicyEngine:
         url = ((self._vacancy.get("company_info") or {}).get("vacancy_url") or "").strip()
         spec = GuardSpec(
             allow_urls=(url,) if url else (),
-            candidate_texts=tuple(self._said),
             hidden_company=(company == "СКРЫТО"),
         )
         result = apply_guards(raw, spec, defensive=self._defensive)

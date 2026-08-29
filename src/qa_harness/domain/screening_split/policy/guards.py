@@ -9,7 +9,7 @@
   КОСМЕТИЧЕСКИЕ (G0, G2, G5) — типографика, словарь форматов, схлопывание дублей. Риска нет: текст не
   теряет смысла ни при каком входе. Включаются сразу.
 
-  ЗАЩИТНЫЕ (G1, G3, G4, G6, G7) — меняют содержимое. Предотвращают вред (служебные строки, подчинение
+  ЗАЩИТНЫЕ (G1, G3, G6, G7) — меняют содержимое. Предотвращают вред (служебные строки, подчинение
   prompt injection, выдуманная ссылка), но МОГУТ унести полезное. Включаются после теневого замера.
 
 ЧЕГО ЗДЕСЬ НАМЕРЕННО НЕТ:
@@ -40,7 +40,8 @@ _END_RE = re.compile(r"\bEND\b\.?", re.IGNORECASE)
 
 # Служебные формулировки сида/инструкции, которые Интервьюер иногда протаскивает в текст кандидату.
 _SERVICE_RE = re.compile(
-    r"\[(?:Внутренняя инструкция|Сообщение кандидата|Система)[^\]]*\]", re.IGNORECASE)
+    r"\[(?:Внутренняя инструкция|Сообщение кандидата|Система|Кто ты|Твоё предыдущее"
+    r" сообщение[^\]]*)[^\]]*\]", re.IGNORECASE)
 
 _FORMAT_WORDS = {
     "remote": "удалённый формат",
@@ -68,7 +69,6 @@ def _urls(text: str) -> list[str]:
     return [u.rstrip(_URL_TRAIL) for u in _URL_RE.findall(text or "")]
 
 
-_QUOTE_MIN_WORDS = 7  # цепочка такой длины — уже цитирование, а не совпадение
 _SENTENCE_RE = re.compile(r"[^.!?…]+[.!?…]*", re.MULTILINE)
 
 
@@ -77,7 +77,6 @@ class GuardSpec:
     """Что гардам известно об этом ходе."""
 
     allow_urls: tuple[str, ...] = ()        # каноническая ссылка вакансии; пусто — подменять нечем
-    candidate_texts: tuple[str, ...] = ()   # реплики кандидата: нужны G4 (дословное цитирование)
     hidden_company: bool = False            # company_name = «СКРЫТО»: свою ссылку давать нельзя
 
 
@@ -113,27 +112,6 @@ def _sentences(text: str) -> list[str]:
 
 def _words(text: str) -> list[str]:
     return re.findall(r"\w+", (text or "").lower())
-
-
-# Доля предложения, которую обязана покрывать цитата, чтобы предложение считалось цитированием.
-# Без неё гард режет законный переспрос с числом кандидата («это ваша текущая или ожидания?»):
-# в канарейке гейта порога не было, потому что она только ПОМЕЧАЕТ, а гард — РЕЖЕТ.
-_QUOTE_COVERAGE = 0.6
-
-
-def _longest_shared_chain(sources: tuple[str, ...], sentence: str, n: int) -> tuple[Optional[str], int]:
-    """(самая длинная цепочка, общая с репликами кандидата; её длина в словах)."""
-    target = _words(sentence)
-    if len(target) < n:
-        return None, 0
-    src_sets = [_words(src) for src in sources]
-    for size in range(len(target), n - 1, -1):
-        chains = {tuple(target[i:i + size]) for i in range(len(target) - size + 1)}
-        for src_words in src_sets:
-            for i in range(len(src_words) - size + 1):
-                if tuple(src_words[i:i + size]) in chains:
-                    return " ".join(src_words[i:i + size]), size
-    return None, 0
 
 
 # ── гарды ─────────────────────────────────────────────────────────────────────
@@ -172,23 +150,6 @@ def _g3_emoji(text: str, _spec: GuardSpec) -> tuple[str, Optional[str]]:
     cleaned = _EMOJI_RE.sub("", text)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
     return cleaned, ("G3.эмодзи" if cleaned != text.strip() else None)
-
-
-def _g4_quoting(text: str, spec: GuardSpec) -> tuple[str, Optional[str]]:
-    """Предложение, СОСТОЯЩЕЕ в основном из дословной цитаты кандидата, вырезается целиком."""
-    if not spec.candidate_texts:
-        return text, None
-    kept, chain = [], None
-    for sentence in _sentences(text):
-        found, size = _longest_shared_chain(spec.candidate_texts, sentence, _QUOTE_MIN_WORDS)
-        total = len(_words(sentence))
-        if found and total and size / total >= _QUOTE_COVERAGE:
-            chain = found
-            continue
-        kept.append(sentence)
-    if chain is None:
-        return text, None
-    return " ".join(kept).strip(), f"G4.цитирование ({chain})"
 
 
 def _g5_dedup(text: str, _spec: GuardSpec) -> tuple[str, Optional[str]]:
@@ -261,7 +222,6 @@ GUARDS = (
     ("G1", _g1_service),
     ("G2", _g2_format_words),
     ("G3", _g3_emoji),
-    ("G4", _g4_quoting),
     ("G5", _g5_dedup),
     ("G6", _g6_farewell),
     ("G7", _g7_urls),

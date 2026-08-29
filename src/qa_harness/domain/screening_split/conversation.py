@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from .analyzer import ScreeningAnalyzer
 from .engine import ScreeningSplitEngine
-from .interviewer import ScreeningInterviewer
+from .interviewer import PolicyInterviewer, ScreeningInterviewer
 from .store import InMemoryStateStore
 
 
@@ -50,17 +50,18 @@ class SplitConversation:
     ) -> None:
         engine = engine or DEFAULT_ENGINE
         store = InMemoryStateStore()
-        interviewer = ScreeningInterviewer(interviewer_spec, client)
         if engine == "policy":
             # Новая архитектура: Наблюдатель + чистое ядро + гарды (docs/screening_split/
             # rearchitecture.html). Трасса остаётся совместимой — `last_decision` собирается из
             # TurnPlan, поэтому инварианты слоя A работают без правок фикстур.
             from .policy.engine import PolicyEngine
             from .policy.observer import ScreeningObserver
-            self._engine = PolicyEngine(store, ScreeningObserver(analyzer_client), interviewer, client)
+            self._engine = PolicyEngine(store, ScreeningObserver(analyzer_client),
+                                        PolicyInterviewer(interviewer_spec, client), client)
         else:
             analyzer = ScreeningAnalyzer(analyzer_client)
-            self._engine = ScreeningSplitEngine(store, analyzer, interviewer, client)
+            self._engine = ScreeningSplitEngine(store, analyzer,
+                                                ScreeningInterviewer(interviewer_spec, client), client)
         self._engine_kind = engine
         self._vacancy_info = vacancy_info
         self._recruiter = recruiter_name

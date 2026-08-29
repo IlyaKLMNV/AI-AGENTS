@@ -63,6 +63,8 @@ def has_geo_restriction(vacancy_info: dict) -> bool:
 # Лейблы контекста — их пишет `build_observer_context` (и раньше писал прежний сборщик), поэтому
 # блок разбирается обратно надёжно. Нужен гардам: канонический URL, скрытость компании, формат.
 _LABELS = {
+    "Ваше имя": "recruiter_name",
+    "Имя кандидата": "candidate_name",
     "Должность": "title",
     "Название компании": "company_name",
     "Обязанности": "responsibilities",
