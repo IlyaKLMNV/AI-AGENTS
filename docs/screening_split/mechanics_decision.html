@@ -1,4 +1,4 @@
-<title>Механика split-скрининга</title>
+<title>Механика split-скрининга: движок на контракте Decision</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -332,6 +332,16 @@
   .card .h { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
   .card p { font-size: 14px; color: var(--ink-2); }
 
+  .genre-note {
+    background: var(--llm-soft);
+    border: 1px solid var(--llm);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    max-width: 76ch;
+  }
+
   footer { border-top: 1px solid var(--rule); padding-top: 20px; font-size: 13px; color: var(--muted); }
   footer p { max-width: 76ch; }
 </style>
@@ -339,8 +349,13 @@
 <div class="wrap">
 
   <header>
-    <div class="eyebrow">split-скрининг · три порта одного движка</div>
-    <h1>Механика split-скрининга</h1>
+    <div class="eyebrow">split-скрининг · ДЕЙСТВУЮЩИЙ движок · контракт Decision</div>
+    <h1>Механика split-скрининга: движок на контракте <code>Decision</code></h1>
+    <div class="genre-note">Это <strong>действующий</strong> движок — тот, что работает в проде сегодня.
+      Модель возвращает готовое решение, код его исполняет и местами переигрывает.
+      Новый движок, где решение принимает код, описан в парном документе
+      <a href="mechanics_policy.html">mechanics_policy.html</a>; сравнение обоих —
+      <a href="handoff_two_engines.md">handoff_two_engines.md</a>.</div>
     <p class="lede">Что происходит за один ход диалога: в каком порядке код проверяет счётчики, когда он
       подменяет решение Аналитика, как устроен зарплатный контракт <code>salary_claim</code>, что именно
       считает каждый счётчик и чем расходятся три копии движка.</p>

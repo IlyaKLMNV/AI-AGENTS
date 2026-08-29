@@ -1,0 +1,956 @@
+<title>Механика split-скрининга: движок на ядре policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --paper:       #EFF3F3;
+    --surface:     #FFFFFF;
+    --surface-2:   #F7FAFA;
+    --ink:         #131E1D;
+    --ink-2:       #3A4B49;
+    --muted:       #647573;
+    --rule:        #D2DDDC;
+    --rule-strong: #B4C4C2;
+
+    --code:        #0C6A5F;   /* детерминированный код */
+    --code-soft:   #DCEDEA;
+    --llm:         #6A4BA6;   /* решение принимает модель */
+    --llm-soft:    #E9E3F5;
+    --stop:        #A93A2C;   /* принудительное завершение */
+    --stop-soft:   #F6E2DE;
+
+    --shadow: 0 1px 2px rgba(19, 30, 29, .05), 0 8px 24px -16px rgba(19, 30, 29, .35);
+
+    --f-display: "Onest", "Segoe UI", system-ui, sans-serif;
+    --f-body:    "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --f-mono:    "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:       #0E1615;
+      --surface:     #16201F;
+      --surface-2:   #1B2625;
+      --ink:         #E4EDEB;
+      --ink-2:       #BCCBC9;
+      --muted:       #8DA09E;
+      --rule:        #2A3937;
+      --rule-strong: #3C4E4C;
+
+      --code:        #4FC3B0;
+      --code-soft:   #10312D;
+      --llm:         #A891E0;
+      --llm-soft:    #241C3A;
+      --stop:        #E58170;
+      --stop-soft:   #38201C;
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:       #0E1615;
+    --surface:     #16201F;
+    --surface-2:   #1B2625;
+    --ink:         #E4EDEB;
+    --ink-2:       #BCCBC9;
+    --muted:       #8DA09E;
+    --rule:        #2A3937;
+    --rule-strong: #3C4E4C;
+
+    --code:        #4FC3B0;
+    --code-soft:   #10312D;
+    --llm:         #A891E0;
+    --llm-soft:    #241C3A;
+    --stop:        #E58170;
+    --stop-soft:   #38201C;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  /* ---------- header ---------- */
+
+  header { display: flex; flex-direction: column; gap: 18px; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(30px, 4.6vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: 64ch;
+    font-size: 17px;
+    color: var(--ink-2);
+  }
+
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 4px;
+  }
+
+  .src {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 5px 9px;
+  }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 20px; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 25px;
+    letter-spacing: -.01em;
+    margin: 0;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--rule-strong);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: 72ch; }
+  p + p { margin-top: -4px; }
+
+  ul { margin: 0; padding-left: 20px; max-width: 72ch; display: flex; flex-direction: column; gap: 7px; }
+  li::marker { color: var(--muted); }
+
+  code, .m {
+    font-family: var(--f-mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: .08em .32em;
+    white-space: nowrap;
+  }
+
+  strong { font-weight: 600; }
+
+  /* ---------- answer callouts ---------- */
+
+  .answer {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--code);
+    border-radius: 6px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  .answer.warn { border-left-color: var(--stop); }
+
+  .answer .q {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .answer .a {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 1.35;
+    margin: 0;
+    max-width: 68ch;
+  }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); }
+
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14.5px; }
+
+  thead th {
+    text-align: left;
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule-strong);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface-2); }
+
+  td.name { color: var(--ink); font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+  td.num  { font-variant-numeric: tabular-nums; text-align: center; font-family: var(--f-mono); font-size: 13.5px; white-space: nowrap; }
+  th.num  { text-align: center; }
+
+  .diff td { background: var(--stop-soft); }
+  .diff:hover td { background: var(--stop-soft); }
+  .diff td.num.hl { color: var(--stop); font-weight: 500; }
+
+  /* ---------- chips ---------- */
+
+  .chip {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .04em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .chip.code { background: var(--code-soft); color: var(--code); border-color: var(--code); }
+  .chip.llm  { background: var(--llm-soft);  color: var(--llm);  border-color: var(--llm); }
+  .chip.stop { background: var(--stop-soft); color: var(--stop); border-color: var(--stop); }
+  .chip.none { background: var(--surface-2); color: var(--muted); border-color: var(--rule-strong); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13.5px; color: var(--muted); }
+
+  /* ---------- figures ---------- */
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 22px 22px 16px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-x: auto;
+  }
+
+  figure svg { display: block; max-width: 100%; height: auto; min-width: 640px; }
+
+  figcaption { font-size: 13.5px; color: var(--muted); max-width: 76ch; }
+
+  .s-box   { fill: var(--surface-2); stroke: var(--rule-strong); stroke-width: 1.5; }
+  .s-code  { fill: var(--code-soft); stroke: var(--code); stroke-width: 1.5; }
+  .s-llm   { fill: var(--llm-soft);  stroke: var(--llm);  stroke-width: 1.5; }
+  .s-stop  { fill: var(--stop-soft); stroke: var(--stop); stroke-width: 1.5; }
+  .s-frame { fill: none; stroke: var(--rule-strong); stroke-width: 1.5; stroke-dasharray: 3 4; }
+
+  .t      { font-family: "Golos Text", system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
+  .t-sm   { font-family: "JetBrains Mono", monospace; font-size: 11px; fill: var(--muted); }
+  .t-lbl  { font-family: "JetBrains Mono", monospace; font-size: 11px; fill: var(--ink-2); }
+  .t-stop { fill: var(--stop); font-weight: 600; }
+  .t-num  { font-family: "JetBrains Mono", monospace; font-size: 12px; fill: var(--ink); font-weight: 500; }
+
+  .ln     { stroke: var(--rule-strong); stroke-width: 1.5; fill: none; }
+  .ln-dash{ stroke: var(--llm); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .ln-stop{ stroke: var(--stop); stroke-width: 1.5; fill: none; }
+
+  /* ---------- trace ---------- */
+
+  .trace { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+
+  .step { display: grid; grid-template-columns: 46px 1fr; gap: 0; border-bottom: 1px solid var(--rule); }
+  .step:last-child { border-bottom: none; }
+  .step .n {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface-2);
+    border-right: 1px solid var(--rule);
+    padding: 14px 0;
+    text-align: center;
+  }
+  .step .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 5px; }
+  .step .body .what { font-size: 14.5px; color: var(--ink); }
+  .step .body .why { font-size: 13.5px; color: var(--muted); }
+  .step.bad .n { background: var(--stop-soft); color: var(--stop); }
+  .step.bad .body .what { color: var(--stop); font-weight: 500; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: var(--shadow);
+  }
+  .card .h { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
+  .card p { font-size: 14px; color: var(--ink-2); }
+
+  .genre-note {
+    background: var(--llm-soft);
+    border: 1px solid var(--llm);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    max-width: 76ch;
+  }
+
+  .genre-note {
+    background: var(--code-soft);
+    border: 1px solid var(--code);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    max-width: 76ch;
+  }
+
+  .card.now { border-top: 3px solid var(--stop); }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 20px; font-size: 13px; color: var(--muted); }
+  footer p { max-width: 76ch; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">split-скрининг · НОВЫЙ движок · контракт Observation + ядро policy</div>
+    <h1>Механика split-скрининга: движок на ядре <code>policy</code></h1>
+    <p class="lede">Что происходит за один ход: что возвращает модель, в каком порядке считает код,
+      как таблица правил выбирает действие, что делают бюджеты завершения, шлюз гардов и реестр
+      причин, и как диалог, начатый на прежнем движке, доезжает на этом.</p>
+    <div class="sources">
+      <span class="src">tgApi · app/common/screening/ScreeningSplitEngine.py · 187 строк</span>
+      <span class="src">tgApi · app/common/screening/policy/ · 12 модулей</span>
+      <span class="src">prompts · screening_analyzer/v3</span>
+      <span class="src">qa_harness · domain/screening_split/policy/</span>
+    </div>
+    <div class="genre-note"><strong>Это НОВЫЙ движок. В проде он не работал ни разу.</strong>
+      Действующий движок — тот, что сейчас в проде, — описан в парном документе
+      <a href="mechanics_decision.html">mechanics_decision.html</a>. Сравнение обоих и таблица
+      «известная ошибка → повторится или нет» — <a href="handoff_two_engines.md">handoff_two_engines.md</a>.
+      Обоснование перестройки — <a href="rearchitecture.html">rearchitecture.html</a>, журнал решений —
+      <a href="decisions_rearchitecture.md">decisions_rearchitecture.md</a>.</div>
+  </header>
+
+  <section>
+    <h2>Кто принимает решения</h2>
+    <p>Ролей по-прежнему три, но граница между ними сдвинулась: модель больше не выбирает действие.</p>
+    <div class="cols">
+      <div class="card">
+        <div class="h"><span class="chip llm">LLM</span> Наблюдатель</div>
+        <p>Видит контекст вакансии <strong>без зарплатной вилки</strong>, проекцию состояния и реплику
+          кандидата. Возвращает <code>Observation</code>: какие сигналы услышал (каждый с дословной
+          цитатой), ответил ли кандидат по сути, какие факты назвал, что сказал про деньги и какой
+          материал для ответа нужен. <strong>Действие не выбирает</strong> — полей решения в схеме нет.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip llm">LLM</span> Интервьюер</div>
+        <p>Не изменился. Не знает о вакансии ничего, получает собранную <code>instruction</code> и
+          превращает её в одно сообщение. Новое только одно: его текст проходит через шлюз гардов,
+          прежде чем уйти кандидату.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip code">КОД</span> Ядро политики</div>
+        <p>Считает зарплату и счётчики, ведёт состояние и <strong>выбирает действие</strong> по
+          упорядоченной таблице правил. Формулирует вопрос кандидату по шаблону со вставленными
+          значениями. Завершает диалог по реестру причин.</p>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="chip llm">LLM</span> решает модель</span>
+      <span><span class="chip code">КОД</span> решает детерминированный код</span>
+      <span><span class="chip stop">СТОП</span> завершение диалога</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Один ход</h2>
+
+    <figure>
+      <svg viewBox="0 0 960 470" role="img" aria-label="Схема одного хода нового движка: реплика кандидата, единственный вызов Наблюдателя, затем код считает зарплату, факты, счётчики и проходит по таблице правил, после чего либо скрипт из реестра, либо Интервьюер со шлюзом гардов">
+        <defs>
+          <marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--rule-strong)"></path>
+          </marker>
+        </defs>
+
+        <rect class="s-box" x="12" y="36" width="132" height="52" rx="5"></rect>
+        <text class="t" x="78" y="60" text-anchor="middle">Сообщение</text>
+        <text class="t" x="78" y="76" text-anchor="middle">кандидата</text>
+
+        <line class="ln" x1="146" y1="62" x2="186" y2="62" marker-end="url(#pa)"></line>
+
+        <rect class="s-llm" x="188" y="36" width="168" height="52" rx="5"></rect>
+        <text class="t" x="272" y="58" text-anchor="middle">Наблюдатель</text>
+        <text class="t-sm" x="272" y="76" text-anchor="middle">Observation · ЕДИНСТВЕННЫЙ вызов</text>
+
+        <line class="ln" x1="358" y1="62" x2="400" y2="62" marker-end="url(#pa)"></line>
+
+        <rect class="s-frame" x="402" y="20" width="452" height="270" rx="7"></rect>
+        <text class="t-sm" x="418" y="40">КОД · всё считается ДО выбора действия</text>
+
+        <rect class="s-code" x="422" y="52" width="412" height="42" rx="4"></rect>
+        <text class="t-num" x="438" y="70">1</text>
+        <text class="t" x="462" y="70">Зарплата целиком</text>
+        <text class="t-sm" x="462" y="85">статус claim → пересчёт → вилка → гейты понижения</text>
+
+        <rect class="s-code" x="422" y="102" width="412" height="42" rx="4"></rect>
+        <text class="t-num" x="438" y="120">2</text>
+        <text class="t" x="462" y="120">Факты и ответы</text>
+        <text class="t-sm" x="462" y="135">город · готовность к формату · закрытые доп-вопросы</text>
+
+        <rect class="s-code" x="422" y="152" width="412" height="42" rx="4"></rect>
+        <text class="t-num" x="438" y="170">3</text>
+        <text class="t" x="462" y="170">Счётчики</text>
+        <text class="t-sm" x="462" y="185">ровно один за ход · фокус · бюджет переспросов</text>
+
+        <rect class="s-code" x="422" y="202" width="412" height="42" rx="4"></rect>
+        <text class="t-num" x="438" y="220">4</text>
+        <text class="t" x="462" y="220">Таблица правил R1–R11</text>
+        <text class="t-sm" x="462" y="235">первое сработавшее выигрывает → TurnPlan</text>
+
+        <rect class="s-code" x="422" y="252" width="412" height="30" rx="4"></rect>
+        <text class="t-sm" x="462" y="271">5 · сборка instruction: ответ модели + реакция и вопрос кода</text>
+
+        <line class="ln" x1="560" y1="292" x2="560" y2="330" marker-end="url(#pa)"></line>
+        <line class="ln" x1="760" y1="292" x2="760" y2="330" marker-end="url(#pa)"></line>
+
+        <rect class="s-stop" x="420" y="332" width="240" height="52" rx="5"></rect>
+        <text class="t" x="540" y="354" text-anchor="middle">kind: script</text>
+        <text class="t-sm" x="540" y="371" text-anchor="middle">текст из реестра причин</text>
+
+        <rect class="s-llm" x="680" y="332" width="260" height="52" rx="5"></rect>
+        <text class="t" x="810" y="354" text-anchor="middle">kind: ask → Интервьюер</text>
+        <text class="t-sm" x="810" y="371" text-anchor="middle">формулирует сообщение</text>
+
+        <line class="ln" x1="810" y1="386" x2="810" y2="410" marker-end="url(#pa)"></line>
+        <rect class="s-code" x="680" y="412" width="260" height="42" rx="5"></rect>
+        <text class="t" x="810" y="432" text-anchor="middle">Шлюз гардов G0–G7</text>
+        <text class="t-sm" x="810" y="447" text-anchor="middle">ссылка · эмодзи · дубли · служебное</text>
+
+        <line class="ln" x1="540" y1="386" x2="540" y2="432" marker-end="url(#pa)"></line>
+        <line class="ln" x1="676" y1="433" x2="546" y2="433"></line>
+
+        <text class="t-sm" x="12" y="330">Вызовов LLM за ход:</text>
+        <text class="t-sm" x="12" y="346">0 — диалог закрыт;</text>
+        <text class="t-sm" x="12" y="362">1 — ход-скрипт;</text>
+        <text class="t-sm" x="12" y="378">2 — ход с вопросом.</text>
+        <text class="t-lbl" x="12" y="402">Третьего не бывает:</text>
+        <text class="t-lbl" x="12" y="418">второго вызова</text>
+        <text class="t-lbl" x="12" y="434">Наблюдателя в движке</text>
+        <text class="t-lbl" x="12" y="450">нет вовсе.</text>
+      </svg>
+      <figcaption>Всё, что код умеет посчитать, считается <strong>до</strong> шага 4. Поэтому к моменту
+        выбора действия не существует решения, с которым код мог бы не согласиться, — и перерешивать
+        ход нечем. В действующем движке ровно на этом месте стоят три ветки второго вызова модели.</figcaption>
+    </figure>
+
+    <div class="answer">
+      <div class="q">Главное отличие от действующего движка</div>
+      <p class="a">Модель не выбирает действие. Она сообщает, что услышала, — выбор делает таблица правил.</p>
+      <p>В действующем движке первые четыре поля ответа модели (<code>next_action</code>,
+        <code>script_key</code>, <code>instruction</code>, <code>asking</code>) — это уже исход хода.
+        Код может либо согласиться, либо отменить решение, либо переспросить модель. В новом контракте
+        этих полей нет: исход негде выразить.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Контракт <code>Observation</code></h2>
+    <p>Схема: <code>prompts/screening_analyzer/v3/config.yaml</code>, <code>strict: true</code>.
+      Валидация — <code>policy/observation.py</code>.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Поле</th><th>Значение</th><th>Кто читает</th></tr></thead>
+        <tbody>
+          <tr><td class="name">signals</td><td>до 3 сигналов <code>{code, quote}</code> из закрытого списка (22 кода)</td><td>R3, R7, R10</td></tr>
+          <tr><td class="name">focus_answered</td><td><code>substantive</code> · <code>deflection</code> · <code>refusal</code> · <code>none</code> — про НАШ прошлый вопрос</td><td>R3a, R3b, реакции кода</td></tr>
+          <tr><td class="name">persistent</td><td>bool — повторяет то же требование с маркером нажима</td><td>счётчик <code>demand</code></td></tr>
+          <tr><td class="name">facts</td><td><code>candidate_city</code>, <code>format_ready</code>, <code>relocation_ready</code>, <code>geo_blocked</code></td><td>R5, R6, состояние</td></tr>
+          <tr><td class="name">answers</td><td><code>[{key, substantive}]</code> — какие доп-вопросы закрыты</td><td>состояние, R9</td></tr>
+          <tr><td class="name">salary_claim</td><td>9 полей — <strong>1:1 как в действующем движке</strong></td><td>зарплатный блок, R4</td></tr>
+          <tr><td class="name">reply_material</td><td><code>[{kind, text}]</code> — куски ответа по существу вакансии</td><td>сборка instruction</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="answer">
+      <div class="q">Правило 1 · цитата обязательна</div>
+      <p class="a">Сигнал без дословной цитаты, найденной в реплике, отбрасывается целиком — как будто
+        его не было.</p>
+      <p>Цена выдуманного <code>not_interested</code> — необратимо закрытый диалог с живым человеком.
+        Направление отбрасывания выбрано безопасное: без сигнала разговор продолжается.</p>
+      <p><strong>Но цитата — условие необходимое, а не достаточное.</strong> Модель по-прежнему судит,
+        применим ли сигнал к этому кандидату сейчас; код лишь арбитрирует между одновременно
+        применимыми. Иначе «раньше я отвечал “не интересно”, но сейчас ищу» дало бы валидную цитату
+        и ложный отказ.</p>
+    </div>
+
+    <div class="answer">
+      <div class="q">Правило 2 · валидация мягкая</div>
+      <p class="a">Жёстко обязательны два поля: <code>signals</code> и <code>focus_answered</code>.
+        Всё остальное при мусоре чинится дефолтом.</p>
+      <p>Это перенос решения из действующего движка, где <code>salary_claim</code> намеренно не входит
+        в обязательные поля: негодное зарплатное поле не должно стоить трёх перегенераций хода. Здесь
+        то же правило распространено на весь контракт.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Таблица правил: единственное место, где выбирается действие</h2>
+    <p>Код идёт сверху вниз и берёт <strong>первое сработавшее</strong> правило. Ничего похожего на
+      флаг <code>_forced</code>, который в действующем движке протаскивается через четыре блока, здесь
+      нет и быть не может: правило либо сработало, либо нет.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="num">#</th><th>Когда срабатывает</th><th>Исход</th></tr></thead>
+        <tbody>
+          <tr><td class="num">R1</td><td>диалог уже закрыт</td><td>молчим, остаёмся закрытыми</td></tr>
+          <tr><td class="num">R2</td><td>наблюдения нет — сбой модели</td><td><code>REPLY_FALLBACK</code>, диалог продолжается, счётчики не трогаются</td></tr>
+          <tr><td class="num">R3</td><td>пришёл терминальный сигнал</td><td>верхний по приоритету <span class="chip stop">STOP</span></td></tr>
+          <tr><td class="num">R3a</td><td>…но кандидат ответил по сути</td><td>«нет опыта» не исполняется, идём ниже</td></tr>
+          <tr><td class="num">R3b</td><td>…но рядом стоит вопрос по делу</td><td>«не интересно» и «критика» не исполняются</td></tr>
+          <tr><td class="num">R4</td><td>ожидания выше максимума вилки</td><td><code>KO_SALARY</code></td></tr>
+          <tr><td class="num">R5</td><td>гео-ограничение вакансии не выполнено</td><td><code>KO_GEO</code></td></tr>
+          <tr><td class="num">R6</td><td>не готов к формату И не переедет</td><td>ключ выбирает КОД по формату вакансии</td></tr>
+          <tr><td class="num">R7</td><td>исчерпан порог счётчика</td><td><span class="chip stop">STOP</span> по строке бюджета</td></tr>
+          <tr><td class="num">R8</td><td>исчерпан лимит переспросов</td><td>стоп либо «пометить refused и идти дальше»</td></tr>
+          <tr><td class="num">R9</td><td>всё собрано</td><td><code>FINISH</code></td></tr>
+          <tr><td class="num">R9a</td><td>4 хода подряд без прогресса</td><td><code>FINISH</code> либо <code>STOP_PERSISTENT</code></td></tr>
+          <tr><td class="num">R10</td><td>нетерминальный сигнал</td><td>скрипт либо ответ + следующий вопрос</td></tr>
+          <tr><td class="num">R11</td><td>по умолчанию</td><td>вопрос текущего фокуса</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Порядок строк несёт прежние решения буквально</h3>
+    <ul>
+      <li><strong>R3 выше R4</strong> — неденежное терминальное сильнее отсева по деньгам. Нельзя
+        продолжать диалог только потому, что кандидат заодно назвал сумму.</li>
+      <li><strong>R4 выше R7</strong> — зарплатный вердикт выше событийных порогов. Иначе кандидат,
+        который третий раз давит и одновременно назвал сумму выше максимума, получал бы
+        <code>STOP_PERSISTENT</code>, и в отчётности причина отказа была бы не та.</li>
+      <li><strong>R4 выше R9</strong> — <code>ko</code> перебивает <code>FINISH</code>: если тем же
+        ходом кандидат назвал сумму выше максимума, скрининг успешным не был.</li>
+      <li><strong>R9 без исключений</strong> — повестка закрыта, значит финиш, даже если кандидат в
+        той же реплике просит паузу. Решение 28.08.2026, закрывает старый спор «FINISH vs pause».</li>
+    </ul>
+
+    <div class="answer">
+      <div class="q">Что даёт перенос приоритета в код</div>
+      <p class="a">Модель перечисляет всё услышанное, а выбор верхнего делает строка кода.</p>
+      <p>В действующем движке промпт требует: «сначала выпиши ВСЕ сработавшие триггеры, и только потом
+        выбери ОДИН — строго верхний по таблице приоритета». Таблица — 19 позиций, и выбор максимума
+        по ней модель делает в уме. Два известных класса прод-инцидентов — это промахи именно на этом
+        шаге, а не ошибки распознавания.</p>
+    </div>
+
+    <div class="answer warn">
+      <div class="q">Чего перенос НЕ даёт</div>
+      <p class="a">Если модель не отдала сигнал, код не может его исполнить.</p>
+      <p>Весь слой распознавания остался за LLM. Код вправе <strong>не исполнить</strong> услышанное
+        (правила R3a и R3b), но услышать за неё не может. Ошибки вида «не заметила отказ», «спутала
+        критику с уточнением» новый движок не лечит.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Бюджеты завершения</h2>
+    <p>Завершать диалог могут пять механизмов, и они частично ловят одно и то же. Соблазн — слить их
+      в один общий счётчик; так делать нельзя.</p>
+
+    <div class="answer warn">
+      <div class="q">Почему единый счётчик отвергнут</div>
+      <p class="a">Общий пул считает сумму и срабатывает там, где не срабатывает ни один порог.</p>
+      <p>Один «вы бот?» плюс одна просьба о паузе плюс одна бессвязная реплика — это три очка в общий
+        пул и завершение диалога, который сегодня штатно продолжается. Объединён <strong>механизм</strong>:
+        одна таблица данных, один вычислитель, одно место чтения порогов на три порта. Арифметика
+        осталась раздельной.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Счётчик</th><th>Что считает</th><th class="num">Порог</th><th>Срабатывает</th><th>Исход</th></tr></thead>
+        <tbody>
+          <tr><td class="name">gibberish</td><td>бессвязные реплики</td><td class="num">2</td><td>на 2-м</td><td><code>STOP_GIBBERISH_REPEAT</code></td></tr>
+          <tr><td class="name">bot_check</td><td>«вы бот?»</td><td class="num">2</td><td>на 2-м</td><td><code>STOP_BOT_REPEAT</code></td></tr>
+          <tr><td class="name">demand</td><td>настойчивость (поле <code>persistent</code>)</td><td class="num">3</td><td>на 3-м</td><td><code>STOP_PERSISTENT</code></td></tr>
+          <tr><td class="name">contact_source</td><td>требование раскрыть источник</td><td class="num">3</td><td>на 3-м</td><td><code>STOP_PERSISTENT</code></td></tr>
+          <tr><td class="name">pause</td><td>просьбы отложить</td><td class="num">3</td><td>на 3-м</td><td><code>STOP_PAUSE</code></td></tr>
+          <tr><td class="name">salary_info</td><td>требования НАШЕЙ вилки</td><td class="num">—</td><td>никогда</td><td>только выбор шаблона вопроса</td></tr>
+          <tr><td class="name">reask.salary</td><td>переспросы про деньги</td><td class="num">3</td><td>на 3-м</td><td><code>STOP_SALARY_DEMAND</code></td></tr>
+          <tr><td class="name">reask.format</td><td>переспросы про формат</td><td class="num">3</td><td>на 3-м</td><td><code>STOP_PERSISTENT</code></td></tr>
+          <tr><td class="name">reask.question</td><td>переспросы доп-вопроса</td><td class="num">3</td><td>на 3-м</td><td>пометить <code>refused</code>, двигать фокус</td></tr>
+          <tr><td class="name">no_progress</td><td>ходы без нового факта</td><td class="num">4</td><td>4 хода подряд</td><td><code>FINISH</code> либо <code>STOP_PERSISTENT</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="answer">
+      <div class="q">Одна семантика порога вместо двух</div>
+      <p class="a">Число в таблице = порядковый номер срабатывания. «Срабатывает на 3-м» → в таблице
+        стоит <code>3</code>.</p>
+      <p>В действующем движке семантик <strong>две</strong>: событийные счётчики сначала растут, потом
+        сверяются с порогом (значит «порог 2» = срабатывание на 2-м событии), а лимит переспросов
+        наоборот — сверяется, потом растёт («порог 2» = срабатывание на 3-м). Из-за этого сдвига
+        разъехались промпт («завершает диалог на 3-й раз») и код (<code>2</code>).</p>
+      <p><strong>Поведение при переносе не изменилось</strong> — изменилась только запись: порог
+        переспросов записан как <code>3</code>, а сама проверка переехала на строку ниже инкремента.
+        На каждую строку есть офлайн-проверка «на каком по счёту ходе сработало».</p>
+    </div>
+
+    <p>Два изменения в поведении относительно действующего движка, оба в безопасную сторону:</p>
+    <ol>
+      <li><strong>Исчерпанный доп-вопрос больше не требует второго вызова модели.</strong> Пункт
+        помечается <code>refused</code>, фокус едет дальше, следующий вопрос рендерит код.</li>
+      <li><strong><code>last_asking</code> пишет код</strong> — по фокусу, для которого он реально
+        выдал вопрос, а не по самоотчёту модели. Счётчик начинает считать буквально «сколько раз мы
+        задали этот вопрос».</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Зарплата: вердикт до маршрутизации</h2>
+    <p>Порядок внутри хода: <code>claim_status</code> → <code>normalize</code> →
+      <code>compare_with_band</code> → гейты понижения → аудит → таблица правил. Всё это <strong>до</strong>
+      выбора действия, поэтому перерешивать нечего.</p>
+    <p><code>salary.py</code> и <code>salary_rules.py</code> <strong>не менялись</strong>: те же четыре
+      гейта годности claim, та же арифметика, то же правило сравнения — отказ только если нижняя
+      граница ожиданий выше нашего максимума. Изменилось два места: вилка приходит типизированной
+      <code>{min, max, currency}</code> и приводится к рублям, и добавлены гейты понижения.</p>
+
+    <h3>Гейты понижения — строго односторонние</h3>
+    <p>Понижают только вердикт <code>ko</code> до уточняющего вопроса и <strong>никогда не трогают</strong>
+      <code>fits</code>. Асимметрия обязательна: ложный отказ необратим, ложное «проходит» ловится на
+      живом интервью.</p>
+    <div class="cols">
+      <div class="card">
+        <div class="h">Масштаб</div>
+        <p>Модель поставила «тысячи» или «миллионы», а слова-масштаба в цитате нет. Ловит
+          <code>million</code> вместо <code>thousand</code> — ×1000 при правдоподобном числе.</p>
+      </div>
+      <div class="card">
+        <div class="h">Валюта</div>
+        <p>Модель поставила не рубли, а маркера валюты в цитате нет. Ловит <code>USD</code> вместо
+          <code>RUB</code> — ×80.</p>
+      </div>
+      <div class="card">
+        <div class="h">Исключение: раскладка</div>
+        <p>«330000 gross» приходит как <code>330 + thousand</code> — это <strong>раскладка</strong>, а не
+          домножение: произведение равно тому, что кандидат и написал. Гейт молчит, если
+          <code>amount × scale</code> дословно есть в цитате.</p>
+      </div>
+    </div>
+    <p>Третий гейт — «потолок правдоподобия» — обсуждался и <strong>отклонён</strong>: единственная
+      проверка с магической константой, и ошибка в периоде, ради которой она задумывалась, ни в одном
+      прогоне не встречалась.</p>
+
+    <div class="answer warn">
+      <div class="q">Что по-прежнему не ловится</div>
+      <p class="a">Семантическая ошибка в <code>subject</code> — ожидания помечены как текущая зарплата
+        и наоборот.</p>
+      <p>Второго независимого источника истины для этого поля нет. Но ошибка асимметрична в безопасную
+        сторону: «ожидания → текущая» даёт переспрос; «текущая → ожидания» либо пропускает кандидата
+        дальше, либо даёт обоснованный отказ, потому что на новом месте он захочет больше. Ложный отказ
+        возможен только в вырожденном случае — кандидат готов работать за меньше, чем получает сейчас.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Шлюз гардов: механическая работа над строкой</h2>
+    <p>В действующем движке это секция «РАНТАЙМ-САНИТАЙЗЕР» в промпте Интервьюера: модель просят
+      разбить по предложениям, убрать дубли, снять прощальные формулы при наличии вопроса, вырезать
+      служебное <code>END</code>. Она это делает через раз, и проверить невозможно. Здесь то же самое —
+      детерминированно, с записью каждого срабатывания.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="num">#</th><th>Гард</th><th>Класс</th><th>Зачем</th></tr></thead>
+        <tbody>
+          <tr><td class="num">G0</td><td>типографика</td><td>косметика</td><td>длинные тире, двойные пробелы, лишние переносы</td></tr>
+          <tr><td class="num">G1</td><td>служебные строки и <code>END</code></td><td>защитный</td><td>внутренние метки не идут кандидату</td></tr>
+          <tr><td class="num">G2</td><td>формат словами</td><td>косметика</td><td><code>remote</code>/<code>office</code> → «удалённый»/«из офиса»</td></tr>
+          <tr><td class="num">G3</td><td>эмодзи</td><td>защитный</td><td>канарейка prompt injection: ни скрипты, ни промпты эмодзи не используют</td></tr>
+          <tr><td class="num">G4</td><td>дословное цитирование кандидата</td><td>защитный</td><td>вырезает предложение, если цитата занимает ≥60 % его слов</td></tr>
+          <tr><td class="num">G5</td><td>дубли предложений</td><td>косметика</td><td>схлопывание повторов</td></tr>
+          <tr><td class="num">G6</td><td>прощание при вопросе</td><td>защитный</td><td>сообщение не должно прощаться и тут же спрашивать</td></tr>
+          <tr><td class="num">G7</td><td><strong>ссылка: подмена на каноническую</strong></td><td>защитный</td><td>чужой URL заменяется на ссылку вакансии из контекста; своей ссылки нет или компания «СКРЫТО» — предложение режется целиком</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="answer">
+      <div class="q">Чего в шлюзе нет намеренно</div>
+      <p class="a">Гардов на числа зарплатной вилки и на фразы-вердикты нет — им неоткуда сработать.</p>
+      <p>Вилки нет ни в контексте Наблюдателя, ни у Интервьюера (он вакансию не видит вовсе), а
+        миграция вырезает её из контекстов старых диалогов до первого вызова модели. Результатов
+        наших проверок в тексте для Интервьюера тоже нет. Мёртвых предохранителей не держим; утечку
+        вилки продолжает сторожить <code>leak_scan</code> в гейте.</p>
+      <p>Нет и шага «ремонт», который подставлял бы кандидату собранную кодом <code>instruction</code>:
+        это директива в повелительном наклонении, адресованная Интервьюеру, — человек увидел бы
+        внутреннюю кухню вместе с оговорками вроде «вилку не называй». Если после гардов текста не
+        осталось, канал отправляет <code>REPLY_FALLBACK</code>.</p>
+    </div>
+
+    <div class="answer">
+      <div class="q">Зачем деление на классы</div>
+      <p class="a">Косметические не могут навредить ни при каком входе — их включают сразу. Защитные
+        режут содержимое, поэтому включаются после замера доли ложных вырезов.</p>
+      <p>Теневой замер по 1192 записанным сообщениям: тронуто 75 (6,3 %), из них 73 — только
+        косметика. Защитных срабатываний <strong>два</strong>, ложных нет. Оба — то, ради чего G7 и
+        задумывался: выдуманные адреса <code>job.ivi.ru/vacancy/…</code> и
+        <code>examplesoft.com/vacancy</code>, оба подменены на настоящую ссылку вакансии.</p>
+    </div>
+
+    <div class="answer warn">
+      <div class="q">Новый класс ошибок, которого раньше быть не могло</div>
+      <p class="a">Гард может унести полезное.</p>
+      <p>Замер уже поймал три таких дефекта в самих гардах: ремонтный шаг считал безвопросными
+        обычные просьбы в повелительном наклонении; G4 резал законный переспрос с числом кандидата;
+        разбиение на предложения рвало URL по точке — регулярка захватывала хвостовую пунктуацию и
+        съедала конец предложения. Все три исправлены, но класс остаётся.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Реестр причин и завершение диалога</h2>
+    <p>Каждый исход имеет <code>reason_code</code>. Реестр отдаёт по нему текст, признак терминальности
+      и автора — кто вправе этот код произвести.</p>
+
+    <div class="answer">
+      <div class="q">Терминальность из реестра, а не из имени ключа</div>
+      <p class="a">В действующем движке она выводится по префиксу: «всё, что не <code>REPLY_*</code>,
+        завершает диалог». Опечатка в имени нового ключа молча делает его терминальным.</p>
+    </div>
+
+    <p>Три инварианта проверяются <strong>при импорте</strong> и роняют процесс на старте, а не в
+      диалоге с кандидатом:</p>
+    <div class="trace">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body">
+          <div class="what">Текст непустой</div>
+          <div class="why">Чинит <code>STOP_POLITICS</code>, который в действующем реестре отдаёт пустую
+            строку: кандидат не получает вообще ничего, диалог обрывается молча. Текст приведён к общему
+            «Прошу прощения за беспокойство» — так же, как это починено в eggplant.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body">
+          <div class="what">У каждого кода есть производитель</div>
+          <div class="why">Правило таблицы, строка бюджета или сигнал. Убивает <code>STOP_ABROAD</code>:
+            промпт его больше не эмитит, но валидатор действующего движка его ПРИНИМАЕТ — то есть модель
+            может вернуть, а движок завершит им диалог.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body">
+          <div class="what">Коды модели и коды кода не пересекаются</div>
+          <div class="why">Запрет «не выставляй эти ключи никогда» перестаёт быть строкой промпта.
+            В действующем движке валидатор пропускает и <code>KO_SALARY</code>, и
+            <code>STOP_PERSISTENT</code>, и <code>REPLY_FALLBACK</code>.</div>
+        </div>
+      </div>
+    </div>
+
+    <p><strong>Терминальным исходам инструкция не передаётся вообще.</strong> Код берёт готовый текст
+      из реестра и отправляет сам — Интервьюер на терминальном ходе не вызывается. Так же было и в
+      действующем движке.</p>
+  </section>
+
+  <section>
+    <h2>Как собирается сообщение кандидату</h2>
+    <p>Инструкция склеивается из двух источников, и это единственное место, где код и модель пишут
+      текст вместе.</p>
+    <div class="cols">
+      <div class="card">
+        <div class="h"><span class="chip llm">LLM</span> Ответ по существу</div>
+        <p>Что за компания, какие задачи, какой формат, что делать, если данных нет. Пишет модель —
+          контекст вакансии видит только она.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip code">КОД</span> Реакция на сигнал</div>
+        <p>«Скажи, что ты внешний рекрутер» · «мягко отметь, что ответ не по делу» · «признай просьбу
+          отложить». Раньше эти формулировки жили в таблице нетерминальных триггеров промпта.</p>
+      </div>
+      <div class="card">
+        <div class="h"><span class="chip code">КОД</span> Вопрос текущего фокуса</div>
+        <p>Текст доп-вопроса из настроек вакансии, город и формат — готовыми значениями. Вариант
+          вопроса про деньги выбирается по счётчику <code>salary_info</code>.</p>
+      </div>
+    </div>
+
+    <div class="answer">
+      <div class="q">Что это чинит</div>
+      <p class="a">«Директива без значения» — та, на которой Интервьюер выдумал ссылку в прод-инциденте
+        2026-08-17, — для вопросов становится невозможной по построению.</p>
+      <p>В действующем движке Аналитик может написать «укажи ссылку на вакансию», не вставив саму
+        ссылку, и Интервьюер (контекста не видит) её сочиняет. Запрет в промпте максимально прямой и
+        всё равно нарушается — значит дело в адхеренсе, а не в формулировке. Когда вопрос собирает
+        код, он подставляет значение сам: сочинять нечего.</p>
+      <p><strong>Но один путь остаётся открытым, и его закрывает только гард:</strong> Интервьюер
+        может дописать ссылку сам, даже когда в инструкции её нет вовсе. Вакансию он не видит,
+        поэтому любой URL в его тексте — выдумка. Обе находки в записанных прогонах именно такие:
+        в инструкции ссылки не было, модель дописала её, когда кандидат спросил про вакансию.</p>
+      <p>Для <em>ответной</em> части это остаётся проверкой: упомянута ссылка — должен быть URL, иначе
+        часть заменяется на «уточню этот момент у коллег».</p>
+    </div>
+
+    <div class="answer warn">
+      <div class="q">Грабли, на которые уже наступали</div>
+      <p class="a">Две директивы кода могут противоречить друг другу, а отрицательная инструкция
+        исполняется наоборот.</p>
+      <p>Реакция «объясни, почему нужен ответ в чате» склеилась с шаблоном переспроса «ничего не
+        объясняй, только сам вопрос» — инструкция стала самопротиворечивой. А формулировка «не
+        спрашивай, когда именно будет удобно» заставила модель спросить именно об этом. Оба случая
+        исправлены, но при добавлении новых шаблонов их стоит держать в голове.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Диалоги, начатые на прежнем движке</h2>
+    <p>Переключение — <strong>жёсткая подмена</strong>, без параллельного режима: старых и новых
+      диалогов одновременно не бывает, начатые раньше дорабатывают на новом движке. Три вещи в их
+      документах несовместимы с новым контуром и чинятся при первой же загрузке, до вызова модели.</p>
+
+    <div class="trace">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body">
+          <div class="what">Вырезать из контекста строку с зарплатной вилкой</div>
+          <div class="why">Новый промпт короче именно потому, что вилки в контексте нет. Подсунуть ему
+            старый контекст с вилкой — ослабить защиту ровно там, где секрет присутствует. Удаление
+            строки <strong>по метке</strong> безопасно: числа при этом не разбираются.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body">
+          <div class="what">Записать типизированную вилку</div>
+          <div class="why">Если поля нет — разобрать числа из контекста, один раз, здесь же и ДО
+            вырезания строки. Без этого у старых диалогов вилка окажется пустой, сравнение начнёт
+            всегда возвращать «проходит», и <strong>зарплатный отсев отключится тихо</strong> — в
+            отчётности это никак не видно.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body">
+          <div class="what">Обнулить «что спрашивали в прошлый ход»</div>
+          <div class="why">У поля сменился автор: писала модель, станет писать код. Сравнивать новый
+            фокус со старым значением нельзя — счётчик начислит переспрос, которого не было. Обнуление
+            стоит максимум одного несчитанного переспроса: «завершит позже» лучше, чем «раньше».</div>
+        </div>
+      </div>
+    </div>
+
+    <p>Миграция идемпотентна: со второго хода документ уже не трогается. Отдельного скрипта заранее
+      нет намеренно — он оставлял бы окно, в котором старый код ещё создаёт диалоги с вилкой в
+      контексте, а миграция по ним уже прошла.</p>
+  </section>
+
+  <section>
+    <h2>Что проверено, а что нет</h2>
+
+    <div class="cols">
+      <div class="card">
+        <div class="h">Переигрывание записанных трасс</div>
+        <p><strong>523 хода, 0 расхождений</strong> по исходу, завершению и состоянию. Проверяет
+          арифметику и порядок кода. НЕ проверяет качество наблюдения и правила R3a/R3b: старый
+          контракт отдаёт один выбранный сигнал, а не все увиденные.</p>
+      </div>
+      <div class="card">
+        <div class="h">Офлайн-гейт</div>
+        <p><strong>50/50</strong> зарплатного контракта и <strong>18/18</strong> ленивой миграции.
+          Без сети и токенов.</p>
+      </div>
+      <div class="card">
+        <div class="h">Живой прогон</div>
+        <p>77 сценариев, детерминированный вход. Лучший результат <strong>75/77</strong> против
+          76/77 у действующего стека. <strong>Паритет не подтверждён:</strong> замер требует по три
+          прогона на стек, они не делались.</p>
+      </div>
+      <div class="card">
+        <div class="h">Шум гейта</div>
+        <p>Два прогона действующего стека на неизменной версии дали 76 и 74, и ни один сценарий не
+          упал дважды. Разница в 1–2 сценария сама по себе ничего не значит.</p>
+      </div>
+      <div class="card now">
+        <div class="h">НЕ проверено: вариативный вход</div>
+        <p>Прогон <code>--input-mode generated</code> не делался ни разу. Робастность на разных
+          формулировках неизвестна.</p>
+      </div>
+      <div class="card now">
+        <div class="h">НЕ проверено: прод</div>
+        <p>Порт в tgApi ни разу не запускался в своей среде — только компиляция и статическая сверка
+          47 импортов. hh-контур не трогали вовсе.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>Состояние на 29.08.2026.</strong> Парный документ по действующему движку —
+      <a href="mechanics_decision.html">mechanics_decision.html</a>. Сравнение обоих и таблица
+      «известная ошибка → повторится или нет» — <a href="handoff_two_engines.md">handoff_two_engines.md</a>.
+      Обоснование перестройки — <a href="rearchitecture.html">rearchitecture.html</a>, журнал решений
+      Р1–Р14 — <a href="decisions_rearchitecture.md">decisions_rearchitecture.md</a>, открытые пункты —
+      <a href="plan_cross_repo.md">plan_cross_repo.md</a>.</p>
+    <p>Сверено на: <code>ai-agents</code> ветка <code>feat/screening-split-qa</code>,
+      <code>tgApi</code> ветка <code>feat/screening-policy-core</code>,
+      <code>prompts</code> ветка <code>feat/screening-split-prompts</code>. Обновлять вместе с правкой
+      ядра: порядок хода, таблица правил и таблица бюджетов — это контракт, а не иллюстрация.</p>
+  </footer>
+
+</div>
