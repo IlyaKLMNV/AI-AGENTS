@@ -17,7 +17,7 @@ from qa_harness.core import accumulate_usage, blank_usage
 from .. import salary as salary_mod
 from ..errors import AssistantError
 from . import reasons
-from .context import build_observer_context, has_geo_restriction, salary_forms_for
+from .context import build_observer_context, has_geo_restriction
 from .core import DecideContext, decide
 from .guards import GuardSpec, apply_guards
 from .migration import upgrade
@@ -163,18 +163,17 @@ class PolicyEngine:
         url = ((self._vacancy.get("company_info") or {}).get("vacancy_url") or "").strip()
         spec = GuardSpec(
             allow_urls=(url,) if url else (),
-            forbid_tokens=salary_forms_for(ctx.band_min, ctx.band_max),
             candidate_texts=tuple(self._said),
-            require_question=plan.focus is not None,
             hidden_company=(company == "СКРЫТО"),
         )
         result = apply_guards(raw, spec, defensive=self._defensive)
         self.last_guard_trips = result.trips
 
-        if result.needs_fallback or not result.text.strip():
-            # G10: гард унёс слишком много либо Интервьюер промолчал. Кандидату уходит собранная
-            # кодом инструкция как есть — она осмысленна, потому что вопрос в ней написан кодом.
-            return plan.instruction or reasons.render("REPLY_FALLBACK") or ""
+        if not result.text.strip():
+            # Интервьюер промолчал либо гарды не оставили текста. Собранную кодом `instruction`
+            # кандидату отправлять НЕЛЬЗЯ: это директива в повелительном наклонении, адресованная
+            # Интервьюеру, — человек увидел бы нашу внутреннюю кухню.
+            return reasons.render("REPLY_FALLBACK") or ""
         return result.text
 
     def _log_salary(self, conversation_id: Any, observation: Observation, plan: Any) -> None:

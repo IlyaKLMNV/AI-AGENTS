@@ -19,15 +19,16 @@
 
 import argparse
 import glob
-import re
 import json
 import os
+import pathlib
+import re
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from qa_harness.domain.screening_split import state as state_model
 from qa_harness.domain.screening_split.policy import DecideContext, decide
-from qa_harness.domain.screening_split.policy.guards import GuardSpec, apply_guards, salary_forms
+from qa_harness.domain.screening_split.policy.guards import GuardSpec, apply_guards
 from qa_harness.domain.screening_split.policy.adapter import (
     decision_to_observation,
     expected_outcome,
@@ -133,15 +134,39 @@ def _strip_trace(text: str) -> str:
     """Раннер дописывает к сообщению служебную метку трассы — она не часть текста кандидату."""
     return _TRACE_RE.sub("", text).strip()
 
+def _vacancy_urls() -> Dict[int, str]:
+    """index сценария → каноническая ссылка его вакансии.
+
+    Без этого замер подставляет всем сценариям ДЕФОЛТНУЮ ссылку и «подменяет» правильные адреса
+    сценариев со своей вакансией (64/66 — `hh.ru/vacancy/133203750`), завышая число срабатываний.
+    """
+    import yaml
+    path = pathlib.Path("tests/fixtures/generation/screening_scenarios/scenario_vacancies.yaml")
+    if not path.exists():
+        return {}
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    out: Dict[int, str] = {}
+    for item in doc.get("scenarios") or []:
+        url = ((item.get("company_info") or {}).get("vacancy_url") or "").strip()
+        if item.get("index") is not None:
+            out[int(item["index"])] = url
+    return out
+
+
+def _scenario_index(case_id: str) -> Optional[int]:
+    match = re.match(r"scenario:(\d+):", case_id or "")
+    return int(match.group(1)) if match else None
+
+
 def guard_scan(files: List[str], args: Any) -> int:
     """Сколько сообщений гарды тронули бы и какие именно.
 
     Смысл — измерить долю ложных вырезов ДО того, как гарды получат право резать в проде. Косметика
     (G0/G2/G5) считается отдельно: у неё риска нет по построению, и включать её можно сразу.
     """
-    forbidden = tuple(salary_forms(args.band_min) + salary_forms(args.band_max))
+    per_scenario = _vacancy_urls()
     trips: Counter = Counter()
-    touched = cosmetic_only = fallback = total = 0
+    touched = cosmetic_only = total = 0
     samples: List[str] = []
 
     for path in files:
@@ -150,6 +175,8 @@ def guard_scan(files: List[str], args: Any) -> int:
         except (OSError, json.JSONDecodeError):
             continue
         for case in payload.get("cases") or []:
+            index = _scenario_index(case.get("case_id") or "")
+            url = per_scenario.get(index, args.vacancy_url) if index is not None else args.vacancy_url
             said: List[str] = []
             for item in case.get("transcript") or []:
                 if item.get("role") == "candidate":
@@ -160,10 +187,8 @@ def guard_scan(files: List[str], args: Any) -> int:
                     continue
                 total += 1
                 spec = GuardSpec(
-                    allow_urls=(args.vacancy_url,),
-                    forbid_tokens=forbidden,
+                    allow_urls=(url,) if url else (),
                     candidate_texts=tuple(said),
-                    require_question=(item.get("turn_kind") == "interviewer_reply"),
                 )
                 result = apply_guards(text, spec)
                 if not result.trips:
@@ -177,8 +202,6 @@ def guard_scan(files: List[str], args: Any) -> int:
                 elif len(samples) < 8:
                     samples.append({"trips": "; ".join(result.trips),
                                     "before": text[:110], "after": result.text[:110]})
-                if result.needs_fallback:
-                    fallback += 1
 
     print("")
     print(f"сообщений просмотрено: {total}")
@@ -188,7 +211,6 @@ def guard_scan(files: List[str], args: Any) -> int:
     print("-" * 72)
     print(f"тронуто всего: {touched} ({touched / total * 100 if total else 0:.1f}%), "
           f"из них только косметика: {cosmetic_only}")
-    print(f"потребовался бы ремонт шаблоном (G10): {fallback}")
     if samples:
         print("")
         print("примеры защитных срабатываний:")

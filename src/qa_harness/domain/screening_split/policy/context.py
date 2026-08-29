@@ -91,29 +91,3 @@ def facts_from_context(context: str) -> dict:
         facts["company_info"] = {"firm_description": facts.pop("firm_description", ""),
                                  "vacancy_url": facts.pop("vacancy_url", "")}
     return facts
-
-
-def salary_forms_for(band_min: Optional[int], band_max: Optional[int]) -> tuple[str, ...]:
-    """Числовые формы обеих границ вилки — для гарда G9.
-
-    Кандидат мог назвать то же число сам; вычитание его реплик делает сам гард
-    (`guards._effective_forbidden`), здесь только полный набор форм.
-    """
-    from .guards import salary_forms
-    forms: list[str] = []
-    for bound in (band_min, band_max):
-        forms.extend(salary_forms(bound))
-    return tuple(dict.fromkeys(forms))
-
-
-def _typed_band(vacancy_info: dict) -> dict[str, Any]:
-    """Типизированная вилка `{min, max, currency}` вместо строки в контексте.
-
-    Валюта обязательна — это точка починки P11: в hh вилка приходит из `hh_vacancy_data["salary"]`,
-    где поле `currency` есть, но сегодня не читается, и вилка в тенге сравнивается как рублёвая.
-    """
-    return {
-        "min": vacancy_info.get("min_salary"),
-        "max": vacancy_info.get("max_salary"),
-        "currency": vacancy_info.get("salary_currency", "RUB"),
-    }
