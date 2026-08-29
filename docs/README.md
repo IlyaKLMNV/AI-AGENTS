@@ -16,9 +16,10 @@
 | [legacy_runners.md](legacy_runners.md) | reference | Легаси-раннеры `app/` — заморожено до cutover |
 | [screening_split/report_analysis.md](screening_split/report_analysis.md) | playbook | Как читать отчёт split-скрининга: что значит `passed`, атрибуция роли, реальный баг vs дрейф генератора, дерево триажа |
 | [screening_split/mechanics.html](screening_split/mechanics.html) | reference | Механика движка одной страницей (HTML, открывается в браузере): порядок проверок за ход, зарплатный контракт `salary_claim` и перерешивание хода, что считает каждый счётчик, значения по трём портам, трасса инцидента 2026-08-17. Сверено на коммиты в футере — обновлять вместе с правкой движка |
+| [screening_split/handoff_two_engines.md](screening_split/handoff_two_engines.md) | reference | **Два движка рядом:** действующий и новый — контракты, порядок хода, кто что решает, таблица «15 известных ошибок → повторится или нет», что проверено и что нет. Самодостаточный: вставляется в чистый чат целиком |
+| [screening_split/rearchitecture.html](screening_split/rearchitecture.html) | план | Перестройка split-движка (HTML, открывается в браузере): диагноз, принципы, целевые контракты, единый механизм завершения, зарплата без перерешиваний, план релиза |
+| [screening_split/decisions_rearchitecture.md](screening_split/decisions_rearchitecture.md) | план | Журнал решений перестройки Р1–Р15 с мотивировками: что принято, что отклонено и почему, что найдено прогонами |
 | [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md) | план | Кросс-репный план работ по split-скринингу: инвентаризация счётчиков (семантика + значения по портам), порядок исполнения по шагам, решения Д1–Д13, большие задачи Б1–Б5, отложенное. Зарплатный блок оттуда выделен в отдельный файл (строка ниже) |
-| [screening_split/handoff_engine_context.md](screening_split/handoff_engine_context.md) | контекст | Полный контекст split-движка tgApi для передачи в новое обсуждение: цепочка вызовов от telegram-хендлера, все 14 шагов хода, контракт Decision и salary_claim, счётчики и приоритеты решений, промпты, РАСХОЖДЕНИЕ трёх копий и стартовый список из 15 известных проблем |
-| [screening_split/plan_salary_claim.md](screening_split/plan_salary_claim.md) | план | Зарплатный контракт `salary_claim`: почему распознавание ушло в промпт (таблица ложных отсевов регулярки), решения по контракту, что сделано в tgApi/prompts/харнессе и что осталось — релиз, hh-контур, долги и принятые риски |
 | [screening_split/backlog.md](screening_split/backlog.md) | бэклог | ОТКРЫТЫЕ пункты split-скрининга (закрытые — в git-истории и в журналах) |
 | [screening_split/review_20260817.md](screening_split/review_20260817.md) | журнал | Разбор прогона 2026-08-17 (прод-инцидент: выдуманная ссылка + ложное завершение) + аудит закрытых пунктов бэклога |
 
@@ -30,7 +31,9 @@
   соответствующего прогона и удаляем из бэклога.
 - **Выполненные план-документы не храним** — план живёт до внедрения, после чего его место занимают
   код, reference-документ и git-история. (Так были удалены `EXTRACTOR_REDESIGN.md` и
-  `screening_split_review_20260728.md`: оба внедрены полностью.)
+  `screening_split_review_20260728.md`, а 29.08.2026 — `handoff_engine_context.md`,
+  `handoff_salary_block.md` и `plan_salary_claim.md`: первые два отработали как контекст для
+  ревизии, третий внедрён, его открытые пункты перенесены в `screening_split/backlog.md`, п. 1a.)
 - Reference-документы описывают **текущее** состояние, без истории решений и без обоснований «почему мы
   это выбрали» — обоснования уходят в сообщение коммита.
 - **Материалы о продуктовых репо** (`tgApi`, `eggplant-api`, `prompts`) живут здесь — см.
