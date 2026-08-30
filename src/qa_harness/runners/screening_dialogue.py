@@ -156,7 +156,8 @@ class _ScriptedObserver:
             return obs
 
         if focus and focus.startswith("q"):
-            if self.behaviour == "refuser":
+            # refuser упрямится ТОЛЬКО на первом доп-вопросе — как и живой кандидат кейса C.
+            if self.behaviour == "refuser" and focus == "q1":
                 obs.focus_answered = "deflection"   # «всё есть в резюме» — ответа по сути нет
                 return obs
             obs.answers.append({"key": focus, "substantive": True})

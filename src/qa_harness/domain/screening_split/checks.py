@@ -540,6 +540,44 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
              f"каждый доп-вопрос прозвучал: {sorted(asked)}" if questions and not missing
              else f"вопросы закрылись, но ассистент их не задавал: {missing or 'вопросов нет вовсе'}")
 
+    if expect.get("ack_on_progress"):
+        # Ход, на котором кандидат дал новый факт, обязан нести слот `ack` (благодарность). Проверяем
+        # ПО СОСТОЯНИЮ, а не по слову «спасибо» в тексте: вежливость, написанную Интервьюером по своей
+        # инициативе, засчитывать нельзя — завтра он её не напишет, а тест останется зелёным.
+        missed: List[str] = []
+        prev: Optional[Dict[str, Any]] = None
+        for i, t in enumerate(turns, 1):
+            dec = t.get("decision") if isinstance(t, dict) else None
+            now = _state_of(t)
+            if isinstance(dec, dict) and dec.get("next_action") == "ask" \
+                    and _gained_fact(prev, now) and not _refused_between(prev, now):
+                slots = {(p or {}).get("slot") for p in (dec.get("instruction_parts") or [])}
+                if "ack" not in slots:
+                    missed.append(f"ход {i} (asking={dec.get('asking')})")
+            prev = now
+        _add("ack_on_progress", not missed, "принятый ответ всегда с благодарностью" if not missed
+             else "пункт закрылся, а благодарности в инструкции нет — " + ", ".join(missed[:3]))
+
+    if expect.get("reask_varies"):
+        # Переспрос одного пункта обязан звучать иначе, чем предыдущий: код эскалирует (объяснить →
+        # предупредить), и дословный повтор означает, что эскалация схлопнулась. Сравниваем ТОЛЬКО
+        # слот `ask` — часть, которую пишет код; черновик модели и convey варьируются сами и дали бы
+        # ложно-зелёный результат.
+        seen: Dict[str, List[str]] = {}
+        dup: List[str] = []
+        for t in turns:
+            dec = t.get("decision") if isinstance(t, dict) else None
+            if not isinstance(dec, dict) or not dec.get("asking"):
+                continue
+            asks = [(p or {}).get("text", "") for p in (dec.get("instruction_parts") or [])
+                    if (p or {}).get("slot") == "ask"]
+            for text in asks:
+                if text in seen.setdefault(dec["asking"], []):
+                    dup.append(f"{dec['asking']}: «{text[:70]}…»")
+                seen[dec["asking"]].append(text)
+        _add("reask_varies", not dup, "переспросы сформулированы по-разному" if not dup
+             else "инструкция переспроса повторилась дословно — " + "; ".join(dup[:3]))
+
     if expect.get("counters_zero"):
         nonzero = {k: v for k, v in counters.items() if v}
         _add("counters_zero", not nonzero, "счётчики нулевые" if not nonzero
@@ -578,3 +616,30 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
 def _state_of(turn: Any) -> Dict[str, Any]:
     st = turn.get("state") if isinstance(turn, dict) else None
     return st if isinstance(st, dict) else {}
+
+
+# Признак прогресса — тот же, что у ядра (`state.progress_signature`): закрылась зарплата или формат,
+# узнали город, доп-вопрос перестал быть pending. Считаем по снимкам трассы: снимок хода — состояние
+# ПОСЛЕ него, поэтому «что принёс ход i» = разница снимков i-1 и i. Для первого хода предыдущего
+# снимка нет, и сравниваем со стартовым состоянием: всё pending, города нет.
+def _gained_fact(prev: Optional[Dict[str, Any]], now: Dict[str, Any]) -> bool:
+    before = prev if prev is not None else {"salary": "pending", "format_check": "pending",
+                                            "city": None, "questions": {}}
+    if now.get("salary") == "closed" and before.get("salary") != "closed":
+        return True
+    if now.get("format_check") == "closed" and before.get("format_check") != "closed":
+        return True
+    if now.get("city") and not before.get("city"):
+        return True
+    was = before.get("questions") or {}
+    for key, status in (now.get("questions") or {}).items():
+        if status != "pending" and was.get(key, "pending") == "pending":
+            return True
+    return False
+
+
+def _refused_between(prev: Optional[Dict[str, Any]], now: Dict[str, Any]) -> bool:
+    """Ход пометил вопрос `refused` (сработал кап). Прогресс — да, благодарить — не за что."""
+    was = (prev or {}).get("questions") or {}
+    return any(status == "refused" and was.get(key) != "refused"
+               for key, status in (now.get("questions") or {}).items())
