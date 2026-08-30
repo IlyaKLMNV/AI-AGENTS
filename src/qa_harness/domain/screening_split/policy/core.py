@@ -332,6 +332,24 @@ _SIGNAL_CONVEY: dict[str, str] = {
 _CONVEY_ORDER = ("bot_check", "answer_aid", "gibberish", "scheduling", "pause")
 
 
+# Вводная перед ПЕРВЫМ доп-вопросом (Б1). До неё разговор шёл про зарплату и формат, и вопрос по
+# навыкам прилетал кандидату без всякого предупреждения. Утверждение, а НЕ вопрос: «готовы ответить
+# на несколько вопросов?» промптом прямо запрещено, да и правило «в инструкции ровно один вопрос»
+# остаётся в силе. Предупреждение «отвечайте без ИИ» сюда сознательно НЕ входит: оно уже есть
+# реактивной реакцией `answer_aid` и звучит по факту, а не авансом в адрес того, кто ничего не сделал.
+QUESTIONS_INTRO = (
+    "Донеси: дальше будет несколько дополнительных вопросов от команды — они нужны, чтобы "
+    "подтвердить навыки и квалификацию. Это утверждение, а не вопрос: согласия не спрашивай."
+)
+
+
+def _needs_questions_intro(focus: str, state: dict) -> bool:
+    """Первый доп-вопрос за диалог, и вводную ещё не говорили."""
+    if state.get("questions_intro_sent"):
+        return False
+    return any(q.get("key") == focus for q in state.get("questions", []))
+
+
 def _convey_slot(obs: Observation, state: dict, focus: Optional[str]) -> str:
     """Что донести кандидату перед вопросом, помимо ответа модели по существу вакансии.
 
@@ -379,6 +397,10 @@ def _build_instruction(obs: Observation, outcome: Outcome, state: dict,
         if outcome.focus:
             slot = _ask_slot(outcome.focus, state, ctx)
             if slot:
+                # Вводная кладётся ВПЛОТНУЮ к вопросу и только вместе с ним: отдельного хода на неё
+                # нет, иначе кандидат получил бы сообщение без единого вопроса.
+                if _needs_questions_intro(outcome.focus, state):
+                    parts.append({"slot": "intro", "origin": "code", "text": QUESTIONS_INTRO})
                 parts.append({"slot": "ask", "origin": "code", "text": slot})
 
     return " ".join(p["text"] for p in parts).strip(), parts
@@ -442,6 +464,14 @@ def decide(state: dict, observation: Observation, message: str, ctx: DecideConte
     new_state["no_progress"] = _stall_count(new_state, progress_before, no_progress_before)
 
     instruction, parts = _build_instruction(observation, outcome, new_state, ctx)
+
+    # Галочку ставит ФАКТ собранной вводной, а не посчитанный фокус. Фокус может быть уже равен `qN`,
+    # а ход при этом заберёт правило выше по таблице и вопроса в нём не будет: скрипт про источник
+    # контакта (R10), вторая просьба паузы (HOLD_PAUSE), сбой наблюдения (R2) — диалог продолжается,
+    # вопрос уезжает на следующий ход. Поставь галочку по фокусу — вводная сгорит и не прозвучит
+    # никогда.
+    if any(p.get("slot") == "intro" for p in parts):
+        new_state["questions_intro_sent"] = True
 
     if outcome.kind == "ask":
         new_state["last_asked"] = instruction

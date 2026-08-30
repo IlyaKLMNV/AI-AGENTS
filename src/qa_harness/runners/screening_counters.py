@@ -204,7 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Версия screening_analyzer в пакете prompts (иначе pointer.yaml active).")
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument("--timeout", type=int, default=90)
-    add_prompt_source_args(p)
+    # Версия пинится --analyzer-version (компонент здесь один), stored-эквивалента нет.
+    add_prompt_source_args(p, local_only=True, versioned=False)
     return p
 
 

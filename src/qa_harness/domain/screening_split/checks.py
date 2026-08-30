@@ -53,6 +53,10 @@ class CheckResult:
     has_checks: bool
     passed: bool
     details: List[str] = field(default_factory=list)
+    # Те же проверки поштучно — `{rule, passed, detail}` — для `checks[]` в отчёте (REPORT_SCHEMA §
+    # «детерминированный слой»). `details` остаётся плоским текстом для печати в консоль.
+    # Заполняет только `evaluate_dialogue`; у остальных пусто, и отчёт просто не покажет секцию.
+    items: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _norm_words(text: str) -> List[str]:
@@ -92,6 +96,32 @@ def _askings(turns: List[Dict[str, Any]]) -> List[str]:
         if ask:
             out.append(ask)
     return out
+
+
+def _slot_turns(turns: List[Dict[str, Any]], slot: str) -> List[int]:
+    """Номера ходов (с 1), где код положил в инструкцию часть с этим слотом.
+
+    Слоты приезжают из `policy.core._build_instruction` через `instruction_parts` и есть только у
+    ходов-вопросов нового ядра. У старого движка инструкцию пишет модель целиком — там слотов нет,
+    и любая проверка по ним честно даст «не найдено», а не ложный успех.
+    """
+    out: List[int] = []
+    for i, t in enumerate(turns, 1):
+        dec = t.get("decision") if isinstance(t, dict) else None
+        parts = dec.get("instruction_parts") if isinstance(dec, dict) else None
+        if isinstance(parts, list) and any((p or {}).get("slot") == slot for p in parts):
+            out.append(i)
+    return out
+
+
+def _first_question_turn(turns: List[Dict[str, Any]]) -> Optional[int]:
+    """Номер первого хода, на котором код задал доп-вопрос (`asking` = qN)."""
+    for i, t in enumerate(turns, 1):
+        dec = t.get("decision") if isinstance(t, dict) else None
+        ask = dec.get("asking") if isinstance(dec, dict) else None
+        if isinstance(ask, str) and ask.startswith("q"):
+            return i
+    return None
 
 
 def _events(turns: List[Dict[str, Any]]) -> List[str]:
@@ -427,3 +457,124 @@ def leak_scan(turns: List[Dict[str, Any]], vacancy_info: Dict[str, Any]) -> Leak
     if ok:
         details.append("утечек не найдено")
     return LeakResult(passed=ok, details=details, culprit=culprit)
+
+
+# ── Итог диалога целиком: повестка закрыта / чем закончили ────────────────────
+# `evaluate_analyzer` выше судит ОТДЕЛЬНЫЙ ход («на этом ходе сработал такой-то скрипт»). Тесту
+# нормальных диалогов (runners/screening_dialogue) нужен другой срез — итог: закрыты ли приоритеты,
+# добрали ли все доп-вопросы, каким скриптом завершились и не начислили ли лишнего. Инцидент
+# 2026-08-17 (ложное завершение) — ровно про это: отдельные ходы там выглядели законно.
+def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> CheckResult:
+    """Инварианты диалога целиком по трассе. Пустой `expect` → проверок нет (has_checks=False)."""
+    if not expect:
+        return CheckResult(has_checks=False, passed=True, details=[])
+
+    items: List[Dict[str, Any]] = []
+    keys = _script_keys(turns)
+    keys_str = ", ".join(keys) or "—"
+    fstate = _final_state(turns)
+    questions = fstate.get("questions") or {}
+    counters = fstate.get("counters") or {}
+
+    def _add(rule: str, ok: bool, detail: str) -> None:
+        """Имя правила — контролируемый словарь (уходит в `reason_codes` при провале),
+        детали — свободный текст (уходит в `checks[].detail`)."""
+        items.append({"rule": rule, "passed": ok, "detail": detail})
+
+    if expect.get("finish"):
+        hit = "FINISH" in keys
+        _add("finish", hit, "FINISH сработал" if hit
+             else f"FINISH не сработал — повестка не закрыта (скрипты: {keys_str})")
+
+    if expect.get("ended"):
+        ended = bool(turns and turns[-1].get("end"))
+        _add("ended", ended, "диалог завершён" if ended
+             else f"диалог НЕ завершён за {len(turns)} ходов")
+
+    if expect.get("script_any"):
+        want = list(expect["script_any"])
+        hit = [k for k in want if k in keys]
+        _add("script_any", bool(hit), f"сработал {hit[0]} (из {want})" if hit
+             else f"ни один из {want} не сработал (был: {keys_str})")
+
+    if expect.get("script_absent"):
+        bad = [k for k in expect["script_absent"] if k in keys]
+        _add("script_absent", not bad, f"нет {list(expect['script_absent'])}" if not bad
+             else f"сработал запрещённый скрипт: {', '.join(bad)}")
+
+    if expect.get("no_stop"):
+        # Отсев/обрыв там, где диалог обязан доиграться: беда крупнее, чем незакрытый пункт.
+        stops = [k for k in keys if k.startswith("STOP_") or k.startswith("KO_")]
+        _add("no_stop", not stops, "без STOP_*/KO_*" if not stops
+             else f"диалог оборван: {', '.join(stops)}")
+
+    for field_name in ("salary", "format_check"):
+        if expect.get(field_name):
+            want, got = expect[field_name], fstate.get(field_name)
+            _add(field_name, got == want, f"{field_name}={got}" if got == want
+                 else f"{field_name}={got}, ожидалось {want}")
+
+    if expect.get("questions_all"):
+        allowed = set(expect["questions_all"])
+        if not questions:
+            _add("questions_all", False,
+                 f"доп-вопросов в состоянии нет вовсе, ожидались все в {sorted(allowed)}")
+        else:
+            bad = {k: v for k, v in questions.items() if v not in allowed}
+            _add("questions_all", not bad, f"все вопросы в {sorted(allowed)}: {questions}" if not bad
+                 else f"вопросы вне {sorted(allowed)}: {bad}")
+
+    if expect.get("questions_any"):
+        want = expect["questions_any"]
+        hit = [k for k, v in questions.items() if v == want]
+        _add("questions_any", bool(hit), f"со статусом {want}: {hit}" if hit
+             else f"ни одного вопроса со статусом {want} (состояние: {questions})")
+
+    if expect.get("asked_all"):
+        # Анти-вырождение. `questions_all: [closed]` выполняется и тогда, когда кандидат вывалил
+        # ответы на все пункты в первой же реплике: Наблюдатель закрыл их скопом, повестка «пройдена»
+        # за один ход, а ассистент ни одного вопроса не задал. Формально зелено, проверено ничего.
+        asked = {a for a in _askings(turns) if isinstance(a, str) and a.startswith("q")}
+        missing = sorted(set(questions) - asked)
+        _add("asked_all", bool(questions) and not missing,
+             f"каждый доп-вопрос прозвучал: {sorted(asked)}" if questions and not missing
+             else f"вопросы закрылись, но ассистент их не задавал: {missing or 'вопросов нет вовсе'}")
+
+    if expect.get("counters_zero"):
+        nonzero = {k: v for k, v in counters.items() if v}
+        _add("counters_zero", not nonzero, "счётчики нулевые" if not nonzero
+             else f"кооперативному кандидату начислили счётчики: {nonzero}")
+
+    if expect.get("intro_once"):
+        # Б1: вводная перед доп-вопросами звучит РОВНО ОДИН раз и ровно на том ходе, где задан
+        # первый доп-вопрос. Повтор — главный риск правки (при переспросе `q1` фокус тот же, а
+        # признака «уже говорили» у промпта нет), поэтому проверяется не наличие, а единственность.
+        intro_at = _slot_turns(turns, "intro")
+        first_q = _first_question_turn(turns)
+        if first_q is None:
+            _add("intro_once", False,
+                 "доп-вопросов в диалоге не было — проверять вводную не на чем"
+                 if not intro_at else f"вводная была (ход {intro_at[0]}), а доп-вопрос не задан ни разу")
+        elif not intro_at:
+            _add("intro_once", False, f"вводной не было: первый доп-вопрос (ход {first_q}) "
+                                      f"пришёл к кандидату без предупреждения")
+        elif len(intro_at) > 1:
+            _add("intro_once", False, f"вводная повторилась — ходы {intro_at}")
+        elif intro_at[0] != first_q:
+            _add("intro_once", False, f"вводная на ходе {intro_at[0]}, а первый доп-вопрос — {first_q}")
+        else:
+            _add("intro_once", True, f"вводная один раз, на ходе {first_q} — первом с доп-вопросом")
+
+    for name, minimum in (expect.get("counter_min") or {}).items():
+        got = max((int((_state_of(t) or {}).get("counters", {}).get(name, 0)) for t in turns), default=0)
+        _add("counter_min", got >= minimum, f"max({name})={got} ≥ {minimum}" if got >= minimum
+             else f"max(counters.{name})={got}, ожидалось ≥ {minimum} — сигнал не услышан")
+
+    passed = all(i["passed"] for i in items)
+    details = [f"{'OK ' if i['passed'] else 'FAIL'} · {i['detail']}" for i in items]
+    return CheckResult(has_checks=True, passed=passed, details=details, items=items)
+
+
+def _state_of(turn: Any) -> Dict[str, Any]:
+    st = turn.get("state") if isinstance(turn, dict) else None
+    return st if isinstance(st, dict) else {}

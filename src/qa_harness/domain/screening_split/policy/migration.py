@@ -44,6 +44,7 @@ _BAND_VALUES_RE = re.compile(
     r"зарплатная вилка:\s*(?:от\s*([\d\s]+))?(?:[^\d]*до\s*([\d\s]+))?", re.IGNORECASE)
 
 _COUNTER_KEYS = ("bot_check", "gibberish", "salary_info", "demand", "contact_source", "pause")
+_DONE_QUESTION_STATUSES = ("closed", "refused")
 
 
 def _int_or_none(raw: Optional[str]) -> Optional[int]:
@@ -79,6 +80,15 @@ def _upgrade_state(state: dict) -> bool:
         if key not in state:
             state[key] = value if not isinstance(value, list) else []
             changed = True
+
+    if "questions_intro_sent" not in state:
+        # Диалог начат до появления вводной (Б1). Если хоть один доп-вопрос уже закрыт или отказан,
+        # переход к вопросам давно состоялся — вводная посреди опроса выглядела бы нелепее, чем её
+        # отсутствие. Ни одного отработанного вопроса нет — считаем, что вводная ещё впереди.
+        state["questions_intro_sent"] = any(
+            (q or {}).get("status") in _DONE_QUESTION_STATUSES for q in state.get("questions") or []
+        )
+        changed = True
 
     counters = state.setdefault("counters", {})
     for key in _COUNTER_KEYS:

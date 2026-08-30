@@ -50,15 +50,27 @@ def resolve_source(cli_value: Optional[str]) -> str:
     return val
 
 
-def add_prompt_source_args(parser: Any) -> None:
-    """Зарегистрировать общие флаги переключателя источника (единообразно во всех раннерах)."""
+def add_prompt_source_args(parser: Any, *, local_only: bool = False, versioned: bool = True) -> None:
+    """Зарегистрировать общие флаги переключателя источника (единообразно во всех раннерах).
+
+    `local_only=True` — у промпта нет stored-эквивалента (split-семейство): `--prompt-source stored`
+    там всё равно упирается в SystemExit, поэтому и не предлагаем его в choices.
+    `versioned=False` — раннер пинит версии ПОКОМПОНЕНТНО (`--analyzer-version` и т.п.), и общий
+    `--local-prompt-version` он прочитать не может: флаг, который молча ничего не делает, хуже
+    отсутствующего.
+    """
     g = parser.add_argument_group("prompt source (stored ↔ local package `prompts`)")
-    g.add_argument("--prompt-source", choices=list(SOURCES), default=None,
-                   help="Источник промпта-под-тестом: stored (platform.openai.com, дефолт) "
-                        "или local (пакет prompts). Также env QA_HARNESS_PROMPT_SOURCE.")
-    g.add_argument("--local-prompt-version", default=None, metavar="vN",
-                   help="Пин версии в пакете prompts (напр. v51). По умолчанию — pointer.yaml active. "
-                        "Действует только с --prompt-source local.")
+    if local_only:
+        g.add_argument("--prompt-source", choices=[LOCAL], default=LOCAL,
+                       help="Только local (пакет prompts): stored-эквивалента у этого промпта нет.")
+    else:
+        g.add_argument("--prompt-source", choices=list(SOURCES), default=None,
+                       help="Источник промпта-под-тестом: stored (platform.openai.com, дефолт) "
+                            "или local (пакет prompts). Также env QA_HARNESS_PROMPT_SOURCE.")
+    if versioned:
+        g.add_argument("--local-prompt-version", default=None, metavar="vN",
+                       help="Пин версии в пакете prompts (напр. v51). По умолчанию — pointer.yaml active. "
+                            "Действует только с --prompt-source local.")
     g.add_argument("--prompts-path", default=None, metavar="PATH",
                    help="ДЕВ-опция: путь к исходникам репозитория prompts вместо установленного релиза. "
                         "Также env PROMPTS_REPO_PATH. По умолчанию используется установленный пакет (как в проде).")

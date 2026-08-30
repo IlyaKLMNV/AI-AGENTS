@@ -152,8 +152,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--engine", choices=["split", "policy"], default="split",
                    help="split — действующий движок (Decision); policy — новая архитектура "
                         "(Наблюдатель + чистое ядро + гарды). Для policy нужен промпт v3: "
-                        "--local-prompt-version v3")
-    add_prompt_source_args(p)  # --prompt-source/--local-prompt-version/--prompts-path (split — local-only)
+                        "--analyzer-version v3")
+    # local_only/versioned: stored-эквивалента нет, а версии пинятся покомпонентно
+    # (--analyzer-version/--interviewer-version) — общий --local-prompt-version раннер не читает.
+    add_prompt_source_args(p, local_only=True, versioned=False)
     return p
 
 
