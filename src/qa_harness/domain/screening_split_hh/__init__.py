@@ -23,7 +23,15 @@ from qa_harness.domain.screening_split.interviewer_judge import InterviewerJudge
 from qa_harness.domain.screening_split.store import InMemoryStateStore
 
 from .analyzer import ScreeningAnalyzer
-from .checks import CheckResult, LeakResult, evaluate_analyzer, injection_scan, leak_scan, load_checks
+from .checks import (
+    CheckResult,
+    LeakResult,
+    evaluate_analyzer,
+    evaluate_dialogue,
+    injection_scan,
+    leak_scan,
+    load_checks,
+)
 from .context import allowed_formats_of, build_context, build_interviewer_seed, salary_display
 from .conversation import SplitConversation
 from .decision import REQUIRED_FIELDS, parse_and_validate
@@ -55,6 +63,7 @@ __all__ = [
     "AssistantError",
     # детерминированные проверки (слой A/B) — hh
     "evaluate_analyzer",
+    "evaluate_dialogue",
     "injection_scan",
     "leak_scan",
     "load_checks",

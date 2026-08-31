@@ -17,6 +17,7 @@ from typing import Any, Optional
 from .analyzer import ScreeningAnalyzer
 from .engine import ScreeningSplitEngine
 from .interviewer import PolicyInterviewer, ScreeningInterviewer
+from .policy.observation import snapshot as observation_snapshot
 from .store import InMemoryStateStore
 
 
@@ -102,6 +103,8 @@ class SplitConversation:
                 "salary": st.get("salary"),
                 "format_check": st.get("format_check"),
                 "city": st.get("candidate_city"),
+                # Поле кода, а не модели: по нему видно, какой вход правила R6 сработал.
+                "relocation_ready": st.get("relocation_ready"),
                 "questions": {q["key"]: q["status"] for q in st.get("questions", [])},
                 "counters": dict(st.get("counters", {})),
             }
@@ -114,4 +117,7 @@ class SplitConversation:
             if plan is not None:
                 trace["audit"] = plan.audit
                 trace["rule"] = plan.rule
+            obs = getattr(self._engine, "last_observation", None)
+            if obs is not None:
+                trace["observation"] = observation_snapshot(obs)
         return trace

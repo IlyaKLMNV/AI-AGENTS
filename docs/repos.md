@@ -64,6 +64,13 @@
 
 Коммиты: `PO-#### англ. суть (#PR)` либо conventional с номером PR. Всё через PR в `master`.
 
+**Готовый к PR порт policy-ядра** — ветка `feat/screening-policy-engine`, коммит `1374638`
+(`refactor(screening): replace analyzer decisions with in-code policy core`): один коммит поверх
+`origin/master`, 20 файлов `+1702/−462`, не запушен. Прежняя ветка тех же правок семью коммитами —
+`feat/screening-policy-core` (`cdac083`), держим как бэкап истории. Комментариев и докстрингов в
+файлах PR нет намеренно; в файлах PR удалены `ScreeningAnalyzerAssistant.py` и `screening_scripts.py`.
+Контекст для продолжения на hh — [screening_split/handoff_eggplant.md](screening_split/handoff_eggplant.md).
+
 ### eggplant-api (`../eggplant-api`)
 HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + RabbitMQ, Docker Compose).
 Свой порт split-движка — [../eggplant-api/app/assistants/screening/](../eggplant-api/app/assistants/screening/):
@@ -102,10 +109,17 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 владельцев репо (PR2 по кандидатам, задачи 8–12, событийная модель, синк снапшота резюме, уход кандидата
 из воронки HH). Читаем как контекст, задачами здесь не считаем.
 
-**Незакоммиченное в `prompts`** (намеренно, релиз делает человек): `screening_analyzer/v2/` и
-`screening_analyzer_hh/v2/` лежат untracked, оба `pointer.yaml` переключены на `active: v2`. Дельта обеих
-v2 к v1 одна и та же — убраны пояснения-примеры выдуманных значений («подставит выдуманные "XYZ",
-"example.com"», «значения нет → Интервьюер его выдумает») из правил про `instruction`; сами запреты
-на директиву без значения сохранены. В прод уедет только через bump `version` в `pyproject.toml` + релиз.
+**Состояние `prompts`** (ветка `feat/screening-split-prompts`, **релиз 1.2.2 выпущен** 31.08.2026):
+тела v1, v2 и `screening_analyzer/v3` закоммичены и входят в пакет; `screening_analyzer_hh/v3`
+**untracked** — в релиз не попал. **Все четыре split-указателя (`screening_analyzer[_hh]`,
+`screening_interviewer[_hh]`) стоят на `active: v1`** — их вернули на v1 коммитом `05fb729` («ship the
+texts, switch nothing»): v2 отдаёт `salary_claim`, а на `tgApi master` его обработки нет вовсе, она
+только на ветке движка. То есть 1.2.2 привёз тексты и не изменил поведение ни одного потребителя.
 
-Открытые пункты по самому харнессу — [screening_split/backlog.md](screening_split/backlog.md).
+**Следствие для нового ядра:** отдельного релиза промптов ему НЕ нужно. `ScreeningObserver` пинит
+версию по имени (`PROMPT_VERSION = "v3"`), а v3 уже лежит в 1.2.2 — указатель ему не мешает.
+**Тела выпущенных версий не правим:** v3 внутри 1.2.2, и если изменить его текст и выпустить 1.2.3,
+`v3` станет означать два разных текста, а в отчётах прогонов пишется только `local_version: v3` —
+по отчёту перестанет воспроизводиться, что тестировали. Нужен другой текст — это v4.
+
+Открытые пункты — [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md).

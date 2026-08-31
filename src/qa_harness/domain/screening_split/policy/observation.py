@@ -119,6 +119,24 @@ class Observation:
         return [c for c in TERMINAL_PRIORITY if c in seen]
 
 
+def snapshot(obs: Any) -> dict:
+    """Компактный вид наблюдения для трассы отчёта: что модель УСЛЫШАЛА на этом ходе.
+
+    По `decision`/`state` не восстановить, почему выиграло правило: у R6 два входа, и «отказался от
+    формата» неотличимо от «отказался переезжать» (прогон 20260831_203510 — понять, какая ветка
+    сработала, по отчёту было нельзя). Функция канало-независима: читает поля через `getattr`,
+    поэтому годится и для hh-`Observation` с её `formats_ready`.
+    """
+    return {
+        "signals": [s.code for s in getattr(obs, "signals", []) or []],
+        "focus_answered": getattr(obs, "focus_answered", None),
+        "persistent": bool(getattr(obs, "persistent", False)),
+        "facts": dict(getattr(obs, "facts", {}) or {}),
+        "answers": list(getattr(obs, "answers", []) or []),
+        "dropped": list(getattr(obs, "dropped", []) or []),
+    }
+
+
 def _norm(text: str) -> str:
     """Сверка цитаты: регистр, неразрывные пробелы, длинные тире — как в `..salary._norm_text`."""
     t = (text or "").lower().replace(" ", " ").replace(" ", " ")

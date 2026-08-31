@@ -151,8 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--engine", choices=["split", "policy"], default="split",
                    help="split — действующий движок (Decision); policy — новая архитектура "
-                        "(Наблюдатель + чистое ядро + гарды). Для policy нужен промпт v3: "
-                        "--analyzer-version v3")
+                        "(Наблюдатель + чистое ядро + гарды), есть в обоих каналах. Для policy нужен "
+                        "промпт v3 (screening_analyzer[_hh]): --analyzer-version v3")
     # local_only/versioned: stored-эквивалента нет, а версии пинятся покомпонентно
     # (--analyzer-version/--interviewer-version) — общий --local-prompt-version раннер не читает.
     add_prompt_source_args(p, local_only=True, versioned=False)
@@ -427,6 +427,286 @@ def _policy_migration_selfcheck() -> List[tuple]:
     return out
 
 
+def _policy_format_selfcheck() -> List[tuple]:
+    """[(имя, ok, деталь)] — отсев по формату в TG-ядре: вопрос про переезд и достижимость `KO_FORMAT_*`.
+
+    Проверки завелись после разбора 31.08: правило R6 требовало ЯВНОГО отказа от переезда, а код про
+    переезд не спрашивал вовсе. Кандидат, отказавшийся от формата, уходил в переспрос и через кап
+    получал `STOP_PERSISTENT` вместо объяснения — то есть три ключа реестра (`KO_FORMAT_OFFICE`,
+    `_HYBRID`, `_NOCITY`) были живы только на бумаге. Живой сценарий этого не поймал бы: отсев по
+    формату в фикстурах ассертится по `expect_script_prefix: KO_`, а `STOP_PERSISTENT` от
+    `KO_FORMAT_OFFICE` отличается только префиксом, которого там нет.
+    """
+    from qa_harness.domain.screening_split import state as state_model
+    from qa_harness.domain.screening_split.policy import DecideContext, decide
+    from qa_harness.domain.screening_split.policy.geo import same_city
+    from qa_harness.domain.screening_split.policy.observation import Observation
+
+    out: List[tuple] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        out.append((name, bool(ok), detail))
+
+    def obs(**facts) -> Observation:
+        o = Observation()
+        o.facts = {"candidate_city": None, "format_ready": None, "relocation_ready": None,
+                   "geo_blocked": False, **facts}
+        return o
+
+    def ready(work_format: str = "office", **over) -> dict:
+        st = state_model.init_state(work_format, "- Опыт с Python?")
+        st["salary"] = "closed"          # проверяем формат, а не деньги
+        st.update(over)
+        return st
+
+    MSK = DecideContext(band_max=280000, work_format="office", location="Москва")
+
+    # --- 1. форма вопроса: город неизвестен / совпал / не совпал ---
+    plan = decide(ready(), obs(), "ок", MSK)
+    check("город неизвестен — спрашиваем город и формат",
+          "в каком городе" in plan.instruction and "переехать" not in plan.instruction,
+          plan.instruction[:90])
+    plan = decide(ready(candidate_city="Москва"), obs(), "ок", MSK)
+    check("кандидат в городе вакансии — про переезд не спрашиваем",
+          "переехать" not in plan.instruction, plan.instruction[:90])
+    plan = decide(ready(candidate_city="Казань"), obs(), "ок", MSK)
+    check("город другой — спрашиваем и формат, и переезд",
+          "переехать в этот город" in plan.instruction and "в городе Москва" in plan.instruction,
+          plan.instruction[:120])
+    plan = decide(ready(candidate_city="Казань"), obs(),
+                  "ок", DecideContext(band_max=280000, work_format="office"))
+    check("локации у вакансии нет — про переезд не спрашиваем",
+          "переехать" not in plan.instruction, plan.instruction[:90])
+
+    # --- 2. достижимость KO_FORMAT_*: то, что было сломано ---
+    plan = decide(ready(candidate_city="Москва"), obs(candidate_city="Москва", format_ready="no"),
+                  "в офис ездить не буду", MSK)
+    check("в городе вакансии + отказ от формата → KO_FORMAT_OFFICE",
+          plan.reason_code == "KO_FORMAT_OFFICE" and plan.end, f"{plan.rule}/{plan.reason_code}")
+    plan = decide(ready(candidate_city="Казань"), obs(format_ready="no"), "в офис не готов", MSK)
+    check("другой город, про переезд молчит → не отсев, а переспрос",
+          plan.kind == "ask" and plan.focus == "format", f"{plan.rule}/{plan.reason_code}")
+    plan = decide(ready(candidate_city="Казань"), obs(format_ready="no", relocation_ready="no"),
+                  "в офис не готов и переезжать не буду", MSK)
+    check("другой город + отказ от переезда → KO_FORMAT_OFFICE",
+          plan.reason_code == "KO_FORMAT_OFFICE", f"{plan.rule}/{plan.reason_code}")
+    plan = decide(ready("hybrid", candidate_city="Москва"), obs(format_ready="no"),
+                  "гибрид не подходит", DecideContext(band_max=280000, work_format="hybrid",
+                                                      location="Москва"))
+    check("гибридная вакансия → KO_FORMAT_HYBRID", plan.reason_code == "KO_FORMAT_HYBRID",
+          plan.reason_code)
+    plan = decide(ready(candidate_city="Казань"), obs(format_ready="no"), "не готов",
+                  DecideContext(band_max=280000, work_format="office"))
+    check("локации нет + отказ от формата → KO_FORMAT_NOCITY",
+          plan.reason_code == "KO_FORMAT_NOCITY", plan.reason_code)
+
+    # --- 2а. вторая ветка R6: отказ ПРО МЕСТО без слов про формат ---
+    # Дыра, оставшаяся после правки 31.08: `format_ready` не приходит вовсе, и первая ветка молчит.
+    plan = decide(ready(candidate_city="Казань"), obs(relocation_ready="no"),
+                  "переезжать не буду", MSK)
+    check("другой город + отказ от переезда, про формат молчит → KO_FORMAT_OFFICE",
+          plan.reason_code == "KO_FORMAT_OFFICE" and plan.end, f"{plan.rule}/{plan.reason_code}")
+    plan = decide(ready(candidate_city="Москва"), obs(relocation_ready="no"),
+                  "переезжать никуда не собираюсь", MSK)
+    check("кандидат В городе вакансии: отказ от переезда — НЕ отсев",
+          plan.kind == "ask" and plan.focus == "format", f"{plan.rule}/{plan.reason_code}")
+    plan = decide(ready(), obs(relocation_ready="no"), "переезжать не буду", MSK)
+    check("город неизвестен: отказ от переезда — НЕ отсев",
+          plan.kind == "ask" and plan.focus == "format", f"{plan.rule}/{plan.reason_code}")
+    st_remote = state_model.init_state("remote", "- Опыт с Python?")
+    st_remote["salary"] = "closed"
+    plan = decide(st_remote, obs(candidate_city="Казань", relocation_ready="no"),
+                  "переезжать не буду", DecideContext(band_max=280000, work_format="remote",
+                                                      location="Москва"))
+    check("удалённая вакансия: отказ от переезда ничего не отсевает",
+          plan.reason_code != "KO_FORMAT_OFFICE", f"{plan.rule}/{plan.reason_code}")
+
+    # --- 2б. отказ от переезда живёт в СОСТОЯНИИ, а не в наблюдении одного хода ---
+    st = ready(candidate_city="Казань")
+    plan = decide(st, obs(relocation_ready="no"), "переезжать не буду",
+                  DecideContext(band_max=280000, work_format="office"))
+    check("отказ от переезда сохранён в state", plan.state_next.get("relocation_ready") == "no",
+          str(plan.state_next.get("relocation_ready")))
+    plan = decide(plan.state_next, obs(format_ready="no"), "и в офис не готов", MSK)
+    check("отказ от формата СЛЕДУЮЩИМ ходом → KO_FORMAT_OFFICE (факт не забыт)",
+          plan.reason_code == "KO_FORMAT_OFFICE", f"{plan.rule}/{plan.reason_code}")
+    st = ready(candidate_city="Казань", relocation_ready="no")
+    plan = decide(st, obs(relocation_ready="yes"), "хорошо, перееду", MSK)
+    check("кандидат передумал: переезд согласован → формат закрыт, отсева нет",
+          plan.state_next.get("format_check") == "closed" and plan.reason_code != "KO_FORMAT_OFFICE",
+          f"{plan.rule}/{plan.reason_code}")
+
+    # --- 3. сравнение города: локацию пишут шире города ---
+    check("same_city: «Москва» ⊂ «Россия, Москва»", same_city("Москва", "Россия, Москва"))
+    check("same_city: регистр и «ё»", same_city("КОРОЛЁВ", "Королев"))
+    check("same_city: разные города не совпадают", not same_city("Казань", "Москва"))
+
+    return out
+
+
+def _policy_hh_selfcheck() -> List[tuple]:
+    """[(имя, ok, деталь)] — hh-ядро `policy`: мультиформат, ключи отсева, бюджеты канала.
+
+    Это ЕДИНСТВЕННЫЙ гейт на канальную дельту нового ядра: живой сценарий её не добывает (нужно
+    заставить кандидата отказаться ровно от всех допустимых форматов и ровно в нужном порядке), а
+    pytest в этом репозитории не держим. Проверяется то, чего нет в TG: «подходит хотя бы один
+    формат», выбор между `KO_FORMAT` и `KO_LOCATION`, отдельная ветка разъездного формата и то, что
+    переход с одного формата на другой не считается переспросом.
+    """
+    from qa_harness.domain.screening_split_hh import state as hh_state
+    from qa_harness.domain.screening_split_hh.policy import DecideContext, Observation, decide
+    from qa_harness.domain.screening_split_hh.policy import parse_observation, reasons as hh_reasons
+    from qa_harness.domain.screening_split_hh.policy import state_for_prompt as hh_projection
+
+    out: List[tuple] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        out.append((name, bool(ok), detail))
+
+    def obs(*, formats=(), relocation=None, geo=False, city=None, signals=()) -> Observation:
+        o = Observation()
+        o.facts = {"candidate_city": city,
+                   "formats_ready": [{"format": f, "ready": r} for f, r in formats],
+                   "relocation_ready": relocation, "geo_blocked": geo}
+        o.signals = list(signals)
+        return o
+
+    def ready(allowed, **over) -> dict:
+        """Состояние с закрытой зарплатой: проверяем формат, а не деньги."""
+        st = hh_state.init_state(allowed, "- Опыт с Python?")
+        st["salary"] = "closed"
+        st.update(over)
+        return st
+
+    CTX = DecideContext(band_min=200000, band_max=280000, location="Москва")
+
+    # --- 1. инициализация проверок по таблице мультиформата ---
+    st_both = hh_state.init_state(["ON_SITE", "HYBRID"], "- A")
+    st_remote = hh_state.init_state(["REMOTE", "ON_SITE"], "- A")
+    st_field = hh_state.init_state(["FIELD_WORK"], "- A")
+    check("init: [ON_SITE,HYBRID] → format pending / field n/a",
+          st_both["format_check"] == "pending" and st_both["field_work_check"] == "n/a")
+    check("init: REMOTE среди допустимых снимает проверку формата",
+          st_remote["format_check"] == "n/a", st_remote["format_check"])
+    check("init: [FIELD_WORK] → format n/a / field pending",
+          st_field["format_check"] == "n/a" and st_field["field_work_check"] == "pending")
+
+    # --- 2. отказ от ОДНОГО формата: не отсев и не закрытие, вопрос про следующий ---
+    plan = decide(ready(["ON_SITE", "HYBRID"]), obs(formats=[("ON_SITE", "no")]), "в офис не готов", CTX)
+    check("отказ от офиса при [ON_SITE,HYBRID] — не KO",
+          plan.kind == "ask" and plan.focus == "format", f"{plan.rule}/{plan.reason_code}")
+    check("следующим спрашиваем про гибрид", plan.state_next.get("format_asked") == "HYBRID",
+          str(plan.state_next.get("format_asked")))
+    check("гибрид назван в вопросе словами, без сырого id",
+          "гибридный" in plan.instruction and "HYBRID" not in plan.instruction, plan.instruction[:90])
+
+    # --- 3. отказ от ВСЕХ допустимых → KO_FORMAT ---
+    plan = decide(ready(["ON_SITE", "HYBRID"], formats={"ON_SITE": "no"}),
+                  obs(formats=[("HYBRID", "no")]), "гибрид тоже не подходит", CTX)
+    check("отказ от всех допустимых → KO_FORMAT", plan.reason_code == "KO_FORMAT" and plan.end,
+          f"{plan.rule}/{plan.reason_code}")
+
+    # --- 4. согласие на один формат закрывает проверку ---
+    plan = decide(ready(["ON_SITE", "HYBRID"]), obs(formats=[("HYBRID", "yes")]), "гибрид подойдёт", CTX)
+    check("согласие на гибрид закрывает format_check",
+          plan.state_next["format_check"] == "closed", plan.state_next["format_check"])
+
+    # --- 5. разъездной формат: отказ при другом подтверждённом — не KO ---
+    plan = decide(ready(["ON_SITE", "FIELD_WORK"], formats={"ON_SITE": "yes"}, format_check="closed"),
+                  obs(formats=[("FIELD_WORK", "no")]), "разъезды не готов", CTX)
+    check("отказ от разъездов при подтверждённом офисе — не KO",
+          plan.reason_code != "KO_FORMAT" and plan.state_next["field_work_check"] == "closed",
+          f"{plan.reason_code}/{plan.state_next['field_work_check']}")
+
+    # --- 6. разъездной единственный → отказ = KO_FORMAT ---
+    plan = decide(ready(["FIELD_WORK"]), obs(formats=[("FIELD_WORK", "no")]), "разъезды не готов", CTX)
+    check("отказ от единственного FIELD_WORK → KO_FORMAT", plan.reason_code == "KO_FORMAT",
+          plan.reason_code)
+
+    # --- 7. локация: другой город + переезд исключён → KO_LOCATION (не KO_FORMAT) ---
+    plan = decide(ready(["ON_SITE"]), obs(city="Казань", relocation="no"),
+                  "я в Казани, переезжать не буду", CTX)
+    check("другой город + отказ от переезда → KO_LOCATION", plan.reason_code == "KO_LOCATION",
+          plan.reason_code)
+    # Вопрос про переезд: без него `relocation_ready` приходил только самотёком, и правило выше было
+    # недостижимо — кандидат из другого города отсеивался по формату с неверным объяснением.
+    plan = decide(ready(["ON_SITE"], candidate_city="Казань"), obs(), "а что по вакансии?", CTX)
+    check("другой город — спрашиваем формат И переезд",
+          "переехать в этот город" in plan.instruction and "в городе Москва" in plan.instruction,
+          plan.instruction[:130])
+    plan = decide(ready(["ON_SITE"], candidate_city="Москва"), obs(), "ок", CTX)
+    check("город вакансии — про переезд не спрашиваем",
+          "переехать" not in plan.instruction, plan.instruction[:100])
+    plan = decide(ready(["ON_SITE"], candidate_city="Казань"), obs(relocation="yes"),
+                  "готов переехать", CTX)
+    check("согласие на переезд закрывает format_check",
+          plan.state_next["format_check"] == "closed", plan.state_next["format_check"])
+    plan = decide(ready(["ON_SITE"]), obs(city="Москва", relocation="no"),
+                  "я в Москве, переезжать никуда не буду", CTX)
+    check("тот же город: отказ от переезда отсевом не является",
+          plan.reason_code != "KO_LOCATION", plan.reason_code)
+
+    # --- 8. гео-ограничение: только при двойном совпадении (Б3) ---
+    geo_ctx = DecideContext(band_max=280000, location="Россия, только РФ", has_geo_restriction=True)
+    plan = decide(ready(["REMOTE"]), obs(geo=True, city="Берлин"), "я живу в Германии", geo_ctx)
+    check("гео-ограничение + нарушение → KO_LOCATION_GEO", plan.reason_code == "KO_LOCATION_GEO",
+          plan.reason_code)
+    plan = decide(ready(["REMOTE"]), obs(geo=True, city="Берлин"), "я живу в Германии", CTX)
+    check("без ограничения в вакансии заграница отсевом не является",
+          plan.reason_code != "KO_LOCATION_GEO", plan.reason_code)
+
+    # --- 9. смена формата в вопросе — не переспрос, повтор того же формата — переспрос ---
+    base = ready(["ON_SITE", "HYBRID"], last_asking="format", format_asked="ON_SITE")
+    plan = decide(base, obs(formats=[("ON_SITE", "no")]), "в офис не готов", CTX)
+    check("переход офис→гибрид кап переспросов не жжёт", plan.state_next["format_reasks"] == 0,
+          str(plan.state_next["format_reasks"]))
+    plan = decide(base, obs(), "ага", CTX)
+    check("повтор того же формата — переспрос", plan.state_next["format_reasks"] == 1,
+          str(plan.state_next["format_reasks"]))
+
+    # --- 10. кап переспросов разъездного формата (ветки нет в TG) ---
+    plan = decide(ready(["FIELD_WORK"], format_check="n/a", last_asking="field_work",
+                        format_asked="FIELD_WORK", field_work_reasks=2),
+                  obs(), "не понял вопроса", CTX)
+    check("3-й переспрос про разъезды → STOP_PERSISTENT",
+          plan.reason_code == "STOP_PERSISTENT" and plan.end, f"{plan.rule}/{plan.reason_code}")
+
+    # --- 11. реестр причин: канальные ключи есть, TG-шных нет ---
+    check("реестр: KO_LOCATION/KO_LOCATION_GEO/KO_FORMAT есть",
+          all(hh_reasons.is_known(k) for k in ("KO_LOCATION", "KO_LOCATION_GEO", "KO_FORMAT")))
+    check("реестр: TG-ключей (KO_GEO, KO_FORMAT_OFFICE, REPLY_CONTACT_SOURCE) нет",
+          not any(hh_reasons.is_known(k) for k in ("KO_GEO", "KO_FORMAT_OFFICE", "REPLY_CONTACT_SOURCE")))
+    check("реестр: STOP_POLITICS не рендерится в пустоту",
+          bool((hh_reasons.render("STOP_POLITICS") or "").strip()))
+
+    # --- 12. сигнала contact_source в канале нет — парсер его отбрасывает ---
+    parsed, _ = parse_observation(
+        {"signals": [{"code": "contact_source", "quote": "откуда мои данные"}],
+         "focus_answered": "none"}, "откуда мои данные")
+    check("сигнал contact_source отброшен", parsed.codes() == [], str(parsed.codes()))
+
+    # --- 13. вилка в тенге приводится к рублям (P11: сегодня currency не читается) ---
+    kzt = DecideContext(band_min=1_000_000, band_max=1_400_000, band_currency="KZT", location="Москва")
+    claim = {"subject": "own_expectation", "form": "exact", "amount_min": 250, "amount_max": 250,
+             "scale": "thousand", "currency": "RUB", "period": "month", "tax": "net",
+             "quote": "250 тысяч на руки"}
+    o = obs()
+    o.salary_claim = claim
+    plan = decide(ready(["REMOTE"]), o, "250 тысяч на руки", kzt)
+    check("вилка KZT пересчитана — 250к не отсев", plan.reason_code != "KO_SALARY",
+          f"{plan.reason_code}/{(plan.audit.get('salary') or {}).get('verdict')}")
+
+    # --- 14. проекция состояния: служебного модель не видит, форматы видит ---
+    projection = hh_projection(ready(["ON_SITE"], format_asked="ON_SITE"))
+    check("проекция без счётчиков и служебных полей",
+          not ({"counters", "format_reasks", "no_progress", "formats"} & set(projection)),
+          str(sorted(projection)))
+    check("проекция отдаёт allowed_formats и format_asked",
+          projection.get("allowed_formats") == ["ON_SITE"] and projection.get("format_asked") == "ON_SITE")
+
+    return out
+
+
 def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: str = "tg") -> int:
     """Плумбинг + детерминированные проверки кода. Возвращает число провалов (0 = всё зелено)."""
     with_ex = turns = 0
@@ -457,6 +737,22 @@ def _run_offline(args: argparse.Namespace, scenarios: List[Scenario], channel: s
         failed += mig_failed
         print(f"[offline] ленивая миграция под движок policy: {len(mig) - mig_failed}/{len(mig)}")
         for name, ok, detail in mig:
+            if not ok or not args.quiet:
+                print(f"  {'OK  ' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
+
+        fmt = _policy_format_selfcheck()
+        fmt_failed = sum(1 for _, ok, _ in fmt if not ok)
+        failed += fmt_failed
+        print(f"[offline] отсев по формату (вопрос про переезд, KO_FORMAT_*): {len(fmt) - fmt_failed}/{len(fmt)}")
+        for name, ok, detail in fmt:
+            if not ok or not args.quiet:
+                print(f"  {'OK  ' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
+    else:
+        hh = _policy_hh_selfcheck()
+        hh_failed = sum(1 for _, ok, _ in hh if not ok)
+        failed += hh_failed
+        print(f"[offline] hh-ядро policy (мультиформат, ключи отсева, бюджеты): {len(hh) - hh_failed}/{len(hh)}")
+        for name, ok, detail in hh:
             if not ok or not args.quiet:
                 print(f"  {'OK  ' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
     print("[offline] сеть и пакет prompts не дёргались.")
@@ -866,8 +1162,6 @@ def run(args: argparse.Namespace) -> Any:
     # Движок ставится один раз на весь прогон: конструкторов SplitConversation в раннере несколько
     # (scripted/generated), и тащить параметр через все сигнатуры незачем.
     engine_kind = getattr(args, "engine", "split") or "split"
-    if engine_kind == "policy" and channel == "hh":
-        raise SystemExit("--engine policy пока только для канала tg: hh-порт ядра не переносился")
     sp.conversation.DEFAULT_ENGINE = engine_kind
     runner_name = "screening_split_hh" if channel == "hh" else RUNNER
     csv_path = args.csv or fix_dir / "scenarios.csv"

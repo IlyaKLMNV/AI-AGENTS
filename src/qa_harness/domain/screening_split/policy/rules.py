@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .budgets import EVENT_BUDGETS, REASK_BUDGETS, STALL_BUDGET
+from .geo import relocation_pointless
 from .observation import TERMINAL_SIGNAL_REASON
 
 # Исходы, которые не являются ключом реестра скриптов: их разворачивает `core`.
@@ -123,15 +124,41 @@ def r5_geo_ko(f) -> Optional[Outcome]:
     return None
 
 
+def _elsewhere(f) -> bool:
+    """Кандидат назвал город, и это НЕ город вакансии. Город неизвестен → `False`: без него отказ от
+    переезда ещё ничего не значит, и догадка стоила бы ложного отсева."""
+    return bool(f.state.get("candidate_city")) and not relocation_pointless(f.state, f.ctx)
+
+
 def r6_format_ko(f) -> Optional[Outcome]:
-    """Не готов к формату И не готов к переезду. Ключ выводит КОД из формата вакансии и наличия
-    локации — сегодня выбор между `KO_FORMAT_OFFICE`/`_HYBRID`/`_NOCITY` делает модель
-    (`system.md:276-277`), хотя это чистая функция от контекста."""
+    """Не готов к формату, и переезд эту проблему не решает. Ключ выводит КОД из формата вакансии и
+    наличия локации — в v2 выбор между `KO_FORMAT_OFFICE`/`_HYBRID`/`_NOCITY` делала модель
+    (`system.md:276-277`), хотя это чистая функция от контекста.
+
+    Требование «И не готов к переезду» ослаблено до «переезд не спасает»: прежнее условие делало все
+    три ключа практически недостижимыми. Кандидат В ГОРОДЕ вакансии, отказавшийся от формата,
+    отказываться от переезда не может — переезжать ему некуда, — и отсев не срабатывал: ход уходил в
+    переспрос, а через три переспроса кандидат получал `STOP_PERSISTENT` («Прошу прощения за
+    беспокойство») вместо объяснения, что позиция требует присутствия.
+
+    Три ветки «переезд не спасает»: локации у вакансии нет · кандидат уже в ней · он прямо отказался
+    переезжать. Город неизвестен — продолжаем спрашивать, догадка здесь стоила бы ложного отсева.
+
+    ВТОРОЙ вход в отсев — отказ ПРО МЕСТО без слов про формат: кандидат в другом городе сказал только
+    «переезжать не буду». Требование `format_ready == "no"` такой ход не поднимало, и он уходил в
+    переспросы до `STOP_PERSISTENT` — та же дыра, что первая ветка закрыла с другой стороны. В hh это
+    отдельное правило R5a → `KO_LOCATION`; в TG такого ключа в реестре нет, и объяснение даёт тот же
+    `KO_FORMAT_*` («важна работа из города X»). Ложного отсева на удалённых вакансиях быть не может:
+    им `init_state` ставит `format_check: "n/a"`, и правило не проходит первое условие.
+    """
     if f.state.get("format_check") != "pending":
         return None
-    if f.obs.facts.get("format_ready") != "no":
-        return None
-    if f.obs.facts.get("relocation_ready") != "no":
+    refused_format = f.obs.facts.get("format_ready") == "no"
+    refused_relocation = f.state.get("relocation_ready") == "no"
+    if refused_format:
+        if not (refused_relocation or relocation_pointless(f.state, f.ctx)):
+            return None
+    elif not (refused_relocation and _elsewhere(f)):
         return None
     if not f.ctx.location:
         return Outcome("KO_FORMAT_NOCITY", "script")

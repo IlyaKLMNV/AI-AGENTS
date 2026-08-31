@@ -18,6 +18,7 @@ split считает КОД (см. engine), а не LLM, поэтому эта �
       "last_asked": str|None,
       "last_asking": str|None,   # 'salary'|'format'|'qN'|None
       "salary_reasks": int, "format_reasks": int,
+      "relocation_ready": "yes|no|None",
       "questions_intro_sent": bool,   # вводную перед доп-вопросами уже сказали (Б1)
     }
 """
@@ -69,6 +70,10 @@ def init_state(work_format: str, questions_text: str) -> dict:
         "last_asking": None,    # что спрашивали в прошлый ход: 'salary'|'format'|'qN'|None (код-лимит переспросов)
         "salary_reasks": 0,     # сколько раз переспросили зарплату (код форсит STOP после 2)
         "format_reasks": 0,     # сколько раз переспросили формат/локацию
+        # Ответ про переезд хранится, а не читается из наблюдения текущего хода: кандидат отвечает
+        # про место и про формат разными репликами, и на ходе с отказом от формата факт про переезд
+        # уже не приходит. Как в hh-ядре, где это поле state с самого начала.
+        "relocation_ready": None,   # 'yes'|'no'|None
         "no_progress": 0,       # ходов подряд без нового собранного факта (код форсит завершение, см. engine)
         # Вводная фраза перед ПЕРВЫМ доп-вопросом говорится ровно один раз за диалог (Б1). Признак
         # ведёт КОД: у промпта памяти о прошлых ходах нет, а `reask_count` для этого не годится —
@@ -103,6 +108,11 @@ def apply_updates(state: dict, updates: list[dict] | None, event: str | None = N
         elif key == "candidate_city":
             if value:
                 new["candidate_city"] = value
+        elif key == "relocation_ready":
+            # Немонотонно: кандидат вправе передумать, и последнее слово его. Монотонность здесь
+            # заперла бы «переезжать не буду» навсегда — вместе с отсевом по формату.
+            if value in ("yes", "no"):
+                new["relocation_ready"] = value
         elif key in questions_by_key:
             q = questions_by_key[key]
             if q["status"] in _DONE_QUESTION_STATUSES:

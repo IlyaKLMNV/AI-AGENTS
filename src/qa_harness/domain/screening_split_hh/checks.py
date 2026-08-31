@@ -3,6 +3,8 @@
 Дельта к `screening_split/checks.py` (TG):
 - слой A: `evaluate_analyzer` дополнен ключом `expect_field_work` (state.field_work_check) —
   остальные инварианты (salary/format/script_key/asking/event/end/…) общие, берём из TG;
+- итог диалога: `evaluate_dialogue` дополнен ключами `formats` (накопленные ответы по форматам) и
+  `reasks_zero` — мультиформата в TG нет, проверять там это нечем;
 - слой B: `leak_scan` — без ветки утечки ссылки/СКРЫТО (в hh их нет) + новая канарейка
   «сырые id формата (`ON_SITE/REMOTE/HYBRID/FIELD_WORK`) не попадают в текст кандидату»
   (Интервьюер обязан переформулировать по-русски — SPLIT_TG_VS_HH.md §1).
@@ -19,6 +21,7 @@ from qa_harness.domain.screening_split.checks import (  # noqa: F401 — re-expo
     _final_state,
     _salary_variants,
     evaluate_analyzer as _tg_evaluate_analyzer,
+    evaluate_dialogue as _tg_evaluate_dialogue,
     injection_scan,  # noqa: F401 — канарейки prompt injection общие для каналов (чистый текст)
     load_checks,
 )
@@ -40,6 +43,48 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         passed=base.passed and hit,
         details=list(base.details) + [f"field_work_check={want}: {'OK' if hit else f'факт {got}'}"],
     )
+
+
+def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> CheckResult:
+    """Инварианты диалога целиком: общие (TG) + два hh-специфичных ключа `expect`.
+
+    `field_work_check` проверяет общая функция — ключ добавлен в её список полей состояния. Здесь
+    остаётся то, чего в tg нет в принципе:
+
+      formats: {ON_SITE: no, HYBRID: yes}  — накопленные ответы ПО ФОРМАТАМ, сверка подмножеством
+                                             (перечисленное обязано совпасть, лишнее не мешает);
+      reasks_zero: true                    — ни один пункт не переспрашивался. Кооперативному
+                                             кандидату мультиформат обязан обходиться без капа:
+                                             «в офис не готов» → вопрос про гибрид — это НОВЫЙ
+                                             вопрос, а не переспрос, и бюджет жечь не должен.
+    """
+    base = _tg_evaluate_dialogue(turns, expect)
+    extra_keys = [k for k in ("formats", "reasks_zero") if expect.get(k) is not None]
+    if not expect or not extra_keys:
+        return base
+
+    fstate = _final_state(turns)
+    items = list(base.items)
+
+    def _add(rule: str, ok: bool, detail: str) -> None:
+        items.append({"rule": rule, "passed": bool(ok), "detail": detail})
+
+    if expect.get("formats") is not None:
+        want = {str(k).upper(): str(v) for k, v in (expect["formats"] or {}).items()}
+        got = {str(k).upper(): str(v) for k, v in (fstate.get("formats") or {}).items()}
+        bad = {k: got.get(k) for k, v in want.items() if got.get(k) != v}
+        _add("formats", not bad, f"ответы по форматам: {got}" if not bad
+             else f"по форматам ожидалось {want}, факт {got}")
+
+    if expect.get("reasks_zero"):
+        reasks = fstate.get("reasks") or {}
+        nonzero = {k: v for k, v in reasks.items() if v}
+        _add("reasks_zero", not nonzero, "переспросов не было" if not nonzero
+             else f"кооперативному кандидату начислили переспросы: {nonzero}")
+
+    passed = all(i["passed"] for i in items)
+    details = [f"{'OK ' if i['passed'] else 'FAIL'} · {i['detail']}" for i in items]
+    return CheckResult(has_checks=True, passed=passed, details=details, items=items)
 
 
 def leak_scan(turns: List[Dict[str, Any]], vacancy_info: Dict[str, Any]) -> LeakResult:

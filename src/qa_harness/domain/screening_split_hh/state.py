@@ -95,6 +95,14 @@ def init_state(allowed_formats, questions_text: str) -> dict:
         "format_reasks": 0,
         "field_work_reasks": 0,  # новая ветка reask-cap (в tg её нет)
         "no_progress": 0,
+        # Ниже — поля ядра `policy` (старый движок их не читает и не пишет).
+        # `formats` копит ответы ПО ФОРМАТАМ через диалог: Observation отдаёт только сказанное на
+        # этом ходе, а «отказался от всех допустимых» считается по накопленному.
+        "formats": {},          # {'ON_SITE': 'yes'|'no', ...}
+        "format_asked": None,   # формат последнего заданного вопроса — по нему модель относит «да»/«нет»
+        "relocation_ready": None,   # 'yes'|'no'|None — готовность переехать / работать из локации вакансии
+        "questions_intro_sent": False,
+        "last_sent": None,
     }
 
 
@@ -145,12 +153,17 @@ def progress_signature(state: dict) -> tuple:
     """Снимок «что уже собрано» — по нему код видит, продвинулся ли диалог за ход.
 
     Меняется только при новом факте: закрылась зарплата/формат/разъездной, узнали город,
-    доп-вопрос стал closed/refused. `reask_count` не входит (переспрос — не прогресс)."""
+    доп-вопрос стал closed/refused. `reask_count` не входит (переспрос — не прогресс).
+
+    Ответ про КОНКРЕТНЫЙ формат тоже прогресс: «в офис не готов» при допустимых `[ON_SITE, HYBRID]`
+    не закрывает проверку, но снимает один вариант — следующим ходом код спросит про гибрид.
+    У старого движка ключ `formats` не заполняется, и элемент остаётся пустым."""
     return (
         state.get("salary"),
         state.get("format_check"),
         state.get("field_work_check"),
         bool(state.get("candidate_city")),
+        tuple(sorted((state.get("formats") or {}).items())),
         tuple(q.get("status") for q in state.get("questions", [])),
     )
 

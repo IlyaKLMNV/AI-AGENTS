@@ -502,13 +502,33 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
         _add("script_absent", not bad, f"нет {list(expect['script_absent'])}" if not bad
              else f"сработал запрещённый скрипт: {', '.join(bad)}")
 
+    if expect.get("asked_before_end"):
+        # Анти-вырождение для кейсов, где предмет проверки лежит НЕ на первом ходу: скрипт обязан
+        # прийти ОТВЕТОМ на вопрос кода, а не по инициативе кандидата.
+        #
+        # Раньше здесь стоял `turns_min` — порог на число ходов, и он ловил не то. Прогон
+        # 20260831_203510 покрасил E и F за три хода вместо четырёх, хотя код спросил, кандидат
+        # ответил и отсев был объяснён: LLM-кандидат просто выложил город и отказ на ход раньше, чем
+        # его спросили. Вырождение, которого мы боимся, выглядит иначе — кандидат вываливает всё
+        # первой репликой, ядро отсеивает его ходом 1, и вопроса кода в трассе нет вовсе.
+        focus = str(expect["asked_before_end"])
+        asked = [i for i, t in enumerate(turns[:-1], 1)
+                 if ((t.get("decision") or {}).get("asking")) == focus]
+        _add("asked_before_end", bool(asked),
+             f"код спросил {focus} на ходу {asked[0]}, завершение — ответом на это"
+             if asked else
+             f"завершение на ходу {len(turns)}, а вопроса про {focus} не было: кандидат выдал всё "
+             f"сам, проверяемая ветка не отыграна")
+
     if expect.get("no_stop"):
         # Отсев/обрыв там, где диалог обязан доиграться: беда крупнее, чем незакрытый пункт.
         stops = [k for k in keys if k.startswith("STOP_") or k.startswith("KO_")]
         _add("no_stop", not stops, "без STOP_*/KO_*" if not stops
              else f"диалог оборван: {', '.join(stops)}")
 
-    for field_name in ("salary", "format_check"):
+    # `field_work_check` — четвёртый пункт повестки hh-канала; в tg такого ключа в снимке нет, и
+    # проверка просто не заказывается.
+    for field_name in ("salary", "format_check", "field_work_check"):
         if expect.get(field_name):
             want, got = expect[field_name], fstate.get(field_name)
             _add(field_name, got == want, f"{field_name}={got}" if got == want
@@ -629,7 +649,14 @@ def _gained_fact(prev: Optional[Dict[str, Any]], now: Dict[str, Any]) -> bool:
         return True
     if now.get("format_check") == "closed" and before.get("format_check") != "closed":
         return True
+    # hh: разъездной формат — отдельный пункт повестки. В tg-снимке ключа нет, ветка не срабатывает.
+    if now.get("field_work_check") == "closed" and before.get("field_work_check") != "closed":
+        return True
     if now.get("city") and not before.get("city"):
+        return True
+    # hh: ответ про КОНКРЕТНЫЙ формат — тоже новый факт, даже если проверка ещё не закрылась
+    # («в офис не готов» снимает вариант, и следующим ходом код спросит про гибрид).
+    if (now.get("formats") or {}) != (before.get("formats") or {}):
         return True
     was = before.get("questions") or {}
     for key, status in (now.get("questions") or {}).items():

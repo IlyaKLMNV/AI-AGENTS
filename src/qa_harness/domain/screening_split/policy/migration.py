@@ -75,7 +75,8 @@ def _upgrade_state(state: dict) -> bool:
     """State v1 → v2: добавить недостающие поля дефолтами, обнулить `last_asking`."""
     changed = False
     defaults = {"salary_reasks": 0, "format_reasks": 0, "no_progress": 0,
-                "last_asked": None, "last_sent": None, "closed_reason": None}
+                "last_asked": None, "last_sent": None, "closed_reason": None,
+                "relocation_ready": None}
     for key, value in defaults.items():
         if key not in state:
             state[key] = value if not isinstance(value, list) else []

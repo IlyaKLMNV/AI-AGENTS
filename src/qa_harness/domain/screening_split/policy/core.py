@@ -25,6 +25,7 @@ from .. import salary as salary_mod
 from .. import state as state_model
 from . import gates
 from .budgets import EVENT_BUDGETS, REASK_BUDGETS, STALL_BUDGET, config_digest
+from .geo import relocation_pointless
 from . import reasons
 from .observation import SIGNAL_TO_COUNTER, Observation
 from .rules import RESUME_AFTER_REFUSE, RULES, Outcome
@@ -188,9 +189,13 @@ def _updates_from_observation(obs: Observation, state: dict) -> list[dict]:
     if isinstance(city, str) and city.strip():
         updates.append({"key": "candidate_city", "value": city.strip()})
 
+    relocation = obs.facts.get("relocation_ready")
+    if relocation in ("yes", "no"):
+        updates.append({"key": "relocation_ready", "value": relocation})
+
     if state.get("format_check") == "pending" and obs.facts.get("format_ready") == "yes":
         updates.append({"key": "format_check", "value": "closed"})
-    if state.get("format_check") == "pending" and obs.facts.get("relocation_ready") == "yes":
+    if state.get("format_check") == "pending" and relocation == "yes":
         updates.append({"key": "format_check", "value": "closed"})
 
     known = {q["key"] for q in state.get("questions", [])}
@@ -354,8 +359,20 @@ def _ask_slot(focus: str, state: dict, ctx: DecideContext) -> str:
         formats = {"office": "работа из офиса", "hybrid": "гибридный формат"}
         human = formats.get(wf, "требуемый формат работы")
         where = f" в городе {city}" if city else ""
-        ask = ("в каком городе находится кандидат и удобен ли ему такой формат работы."
-               if not state.get("candidate_city") else "удобен ли кандидату такой формат работы.")
+        # Три формы вопроса вместо двух. Третья — про переезд, и без неё отсев по формату был
+        # недостижим: правило R6 требует ОТКАЗА от переезда, а спрашивал код только про формат.
+        # Кандидат из другого города отвечал «в офис не готов», `relocation_ready` оставался `null`,
+        # и ход уходил в переспрос — до капа и `STOP_PERSISTENT` вместо `KO_FORMAT_*`.
+        # Радиус здесь не нужен: спрашиваем не «далеко ли вы», а «готовы ли работать отсюда».
+        if not state.get("candidate_city"):
+            ask = "в каком городе находится кандидат и удобен ли ему такой формат работы."
+        elif not relocation_pointless(state, ctx):
+            # Город назван предыдущей фразой (`where`), поэтому здесь «этот город»: подстановка
+            # названия в падеж дала бы «переехать в Москва».
+            ask = ("удобен ли кандидату такой формат работы и готов ли он переехать в этот город "
+                   "или работать из него.")
+        else:
+            ask = "удобен ли кандидату такой формат работы."
         # «Обязательное требование» с первого же хода звучало ультиматумом («это обязательное
         # требование вакансии» в ответ на только что названную зарплату). Сначала — нейтральное
         # описание условий и вопрос об удобстве; жёсткость приходит ступенью переспроса, когда
