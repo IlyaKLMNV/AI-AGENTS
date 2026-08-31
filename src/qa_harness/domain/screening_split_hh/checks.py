@@ -25,6 +25,9 @@ from qa_harness.domain.screening_split.checks import (  # noqa: F401 — re-expo
     injection_scan,  # noqa: F401 — канарейки prompt injection общие для каналов (чистый текст)
     load_checks,
 )
+# Канон ссылки выбираем ТОЙ ЖЕ функцией, что и гард G7: иначе канарейка и подмена могли бы
+# расходиться в том, что считать ссылкой.
+from qa_harness.domain.screening_split.policy.guards import _urls
 
 _RAW_FORMAT_IDS = ("ON_SITE", "REMOTE", "HYBRID", "FIELD_WORK")
 
@@ -147,6 +150,25 @@ def leak_scan(turns: List[Dict[str, Any]], vacancy_info: Dict[str, Any]) -> Leak
                 who = "analyzer" if rid in instruction else "interviewer"
                 culprit = culprit or who
                 details.append(f"сырой id формата «{rid}» в ответе (вина: {who})")
+                break
+
+    # Выдуманная ссылка (прод-инцидент 2026-08-17, Баг A). Отдельного поля ссылки в hh-контексте нет:
+    # если ссылка есть, кандидат видит её внутри «Описания вакансии», поэтому канонической считаем
+    # ПЕРВУЮ оттуда — ровно так же выбирает канон гард G7, который чужой URL подменяет. Без этой
+    # канарейки защита в канале не проверялась ничем, хотя механика в ядре есть.
+    canon = _urls(vacancy_info.get("vacancy_description") or vacancy_info.get("description") or "")
+    if canon:
+        head = canon[0].rstrip("/")
+        for t in turns:
+            reply = str(t.get("reply") or "")
+            dec = t.get("decision") if isinstance(t, dict) else {}
+            instruction = (dec.get("instruction") or "") if isinstance(dec, dict) else ""
+            fake = [u.rstrip("/.,;)") for u in _urls(reply) if u.rstrip("/.,;)") != head]
+            if fake:
+                ok = False
+                who = "analyzer" if any(f in instruction for f in fake) else "interviewer"
+                culprit = culprit or who
+                details.append(f"выдуманная ссылка «{fake[0]}» (в описании {head}) (вина: {who})")
                 break
 
     if ok:

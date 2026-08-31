@@ -72,7 +72,7 @@
 `domain/screening_split/policy/` (tg) и `domain/screening_split_hh/policy/` (hh, мультиформат +
 `field_work` + `KO_FORMAT`/`KO_LOCATION`/`KO_LOCATION_GEO`; канало-независимое импортирует из tg).
 Для `policy` обязателен промпт **v3** (`--analyzer-version v3`): на v2 каждый ход уйдёт в фолбэк.
-Канальная дельта нового ядра гейтится офлайн (`--channel hh --offline`, 24 проверки).
+Канальная дельта нового ядра гейтится офлайн (`--channel hh --offline`, 27 проверок).
 
 **Режимы входа** (`--input-mode scripted|generated`): scripted — реплики из `candidate_inputs.yaml`
 (детерминированный CI-гейт); generated — адаптивный LLM-кандидат, засеянный из рецепта (`salary_category`/
@@ -84,10 +84,12 @@ demand/contact_source 3, pause 3) + reask-cap (2 переспроса одног
 NB: no_progress-cap ВЖИВУЮ практически недостижим — reask-cap (`refused` = прогресс, сбрасывает счётчик) и
 gibberish-счётчик перехватывают лупы за 2–4 хода; кап — страховка, его код проверяется офлайн.
 
-**Раннер `screening_counters`** — боевой анти-луп-тест (`tests/fixtures/screening_split/counter_loops.yaml`):
-настойчивый переспрашиватель обязан завершиться в пределах кап, кооперативный → `FINISH` без ложного капа
-(`max_no_progress ≤ 2`). Реальный Аналитик + ФЕЙКОВЫЕ Интервьюер/стор (токены тратит только Аналитик — по
-вызову на ход). Отчёт с `token_usage` (per-case + итого) и `turns_total`.
+**Раннер `screening_counters`** — боевой анти-луп-тест: настойчивый переспрашиватель обязан завершиться
+в пределах кап, кооперативный → `FINISH` без ложного капа (`max_no_progress ≤ 2`). Реальный
+Аналитик/Наблюдатель + ФЕЙКОВЫЕ Интервьюер и стор (токены тратит только он — по вызову на ход).
+`--channel tg|hh` (фикстуры `counter_loops.yaml` своего канала; в hh нет кейса про источник контакта,
+зато есть лупы на формате и разъездном) × `--engine split|policy` (для `policy` Аналитик по умолчанию
+**v3** — контракт `Observation`). Отчёт с `token_usage` (per-case + итого) и `turns_total`.
 
 **Раннер `screening_dialogue`** — тест НОРМАЛЬНЫХ диалогов (`tests/fixtures/screening_split/dialogue_cases.yaml`),
 перенос из tgApi (ветка `feat/screening-qa`, `scripts/screening_qa/dialogue_test.py`). Сценариев нет: диалог

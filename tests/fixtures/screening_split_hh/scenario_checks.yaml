@@ -245,3 +245,97 @@ scenarios:
   - index: 60         # format_check=n/a (REMOTE) → KO_LOCATION не ставим, даже на «переезжать не готов»
     expect_no_script_prefix: KO
     expect_end: false
+
+  # ─────────── Зарплатный контракт: непригодный claim → ОДИН уточняющий вопрос (перенос tg 68–71) ───────────
+  # `expect_salary_status: unusable` требует, чтобы Аналитик сумму УВИДЕЛ и честно описал её форму
+  # (нет суммы, чужая, текущая, валюта вне справочника), а не промолчал: молчание тоже даёт pending
+  # без KO, то есть по одному исходу эти случаи неотличимы.
+  - index: 61         # form: not_stated — «обсуждаемо»
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 62         # subject: own_current — названа только текущая ЗП
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 63         # form: relative_only — «+15% к текущей»
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 64         # currency: other — фунты, курса в справочнике нет
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+
+  # ─────────── Распознавание: чьи деньги и какое число ожидание (перенос tg 72–76) ───────────
+  - index: 65         # чужая сумма → пункт НЕ закрывается и отсева нет
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 66         # текущая + ожидаемая → считаем по ОЖИДАЕМОЙ, она выше вилки → отсев
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 67         # две своих суммы → по НИЖНЕЙ границе, она в вилке → без отсева
+    expect_salary_status: actionable
+    expect_salary_effect: [closed, closed_reask_dropped]
+    expect_salary: closed
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+  - index: 68         # порог словами → сумма выше максимума → отсев
+    expect_salary_status: actionable
+    expect_salary_effect: ko_forced
+    expect_script_key: KO_SALARY
+    expect_end: true
+  - index: 69         # сумма внутри условной фразы → распознана, в вилке
+    expect_salary_status: actionable
+    expect_salary_effect: [closed, closed_reask_dropped]
+    expect_salary: closed
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+
+  # Вопрос кандидата не должен теряться из-за того, что код не принял сумму. Вакансия сценария —
+  # удалённая (REMOTE), поэтому ответ про формат виден по слову «удал…» в тексте кандидату.
+  - index: 70         # вопрос + непригодная сумма одним ходом → ответ на вопрос И просьба про сумму
+    expect_salary_status: unusable
+    expect_salary: pending
+    expect_asking: salary
+    expect_reply_contains: "удал"
+    expect_no_script_prefix: [KO, STOP]
+    expect_end: false
+
+  # ─────────── Ссылка на вакансию (перенос tg 66; канон — первая ссылка из «Описания вакансии») ───────────
+  - index: 71         # поручил упомянуть ссылку → в instruction стоит сам URL, иначе Интервьюер выдумает
+    expect_instruction_url_valued: true
+    expect_end: false
+
+  # ─────────── Регрессии инцидента 2026-08-17 (перенос tg 64/65) ───────────
+  - index: 72         # встречные вопросы кандидата не жгут reask-cap → диалог жив
+    expect_no_script_prefix: STOP
+    expect_end: false
+    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
+  - index: 73         # диапазон net + город → salary закрыт, без STOP и без пересказа анкеты
+    expect_salary: closed
+    expect_no_script_prefix: STOP
+    expect_end: false
+    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
+
+  # ─────────── Chain: состояние переживает разрыв ───────────
+  - index: 74         # пауза ПОСЛЕ приоритетов → возобновление → доигрываем доп-вопросы, без STOP
+    expect_salary: closed
+    expect_no_script_prefix: [STOP, KO]
+    expect_end: false
+  - index: 75         # два переспроса доп-вопроса → refused и фокус дальше, диалог не завершаем
+    expect_no_script_prefix: [STOP, KO]
+    expect_end: false
