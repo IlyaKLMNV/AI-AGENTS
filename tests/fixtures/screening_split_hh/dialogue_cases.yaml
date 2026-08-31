@@ -7,6 +7,10 @@
 vacancy:
   allowed_formats: [ON_SITE, HYBRID, FIELD_WORK]
   location: Москва
+  # Канальное: у отклика есть готовое приветствие (в eggplant — колонка `greeting`). Код обязан
+  # приклеить его к ПЕРВОМУ сообщению кандидату и больше никогда.
+  greeting: "Здравствуйте! Меня зовут Анна, я внешний рекрутер. Спасибо за отклик на позицию «Инженер пусконаладки»."
+
   # Четвёртый вопрос (Kubernetes) существует ради кейса B: по нему кандидат честно говорит «опыта нет».
   questions: |-
     - Опыт с Python и фреймворками?
@@ -46,6 +50,8 @@ cases:
       field_work_check: closed
       # Главное канальное утверждение: отказ от ОДНОГО формата вакансию не рубит.
       script_absent: [KO_FORMAT, KO_LOCATION, KO_LOCATION_GEO]
+      # Приветствие: ровно один раз и ровно на первом сообщении. Текст берётся из вакансии.
+      greeting_once: true
       formats: {ON_SITE: "no", HYBRID: "yes", FIELD_WORK: "yes"}
       questions_all: [closed]
       counters_zero: true

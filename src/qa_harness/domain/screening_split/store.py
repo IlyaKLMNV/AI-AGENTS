@@ -28,6 +28,7 @@ class InMemoryStateStore:
         location: Optional[str] = None,
         contact_source: Optional[str] = None,
         salary_band: Optional[dict] = None,
+        greeting: Optional[str] = None,
     ) -> None:
         """Заводит диалог. Движок фиксируется здесь и дальше не меняется."""
         self._docs[conversation_id] = {
@@ -39,6 +40,9 @@ class InMemoryStateStore:
             "location": location or "",
             "contact_source": contact_source or "",
             "salary_band": salary_band or {},
+            # Только hh: готовое приветствие, приклеивается к первому сообщению кандидату.
+            # В tg канале приветствия нет, поле остаётся пустым.
+            "greeting": greeting or "",
         }
 
     def save_state(self, conversation_id: Any, state: dict, *, finished: bool = False) -> None:

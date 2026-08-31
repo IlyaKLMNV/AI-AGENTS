@@ -90,6 +90,9 @@ def init_state(allowed_formats, questions_text: str) -> dict:
         "questions": questions,
         "counters": {k: 0 for k in COUNTER_KEYS},
         "last_asked": None,
+        # Канальное: приветствие приклеивается к ПЕРВОМУ сообщению кандидату и больше никогда.
+        # Флаг ведёт код — у промпта памяти о прошлых ходах нет. В tg приветствия нет вовсе.
+        "greeted": False,
         "last_asking": None,    # 'salary'|'format'|'field_work'|'qN'|None (код-лимит переспросов)
         "salary_reasks": 0,
         "format_reasks": 0,

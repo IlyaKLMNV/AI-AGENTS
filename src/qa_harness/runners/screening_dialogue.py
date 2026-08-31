@@ -287,6 +287,7 @@ class _OfflineConversation:
                  "field_work_check": st.get("field_work_check"),
                  "city": st.get("candidate_city"),
                  "relocation_ready": st.get("relocation_ready"),
+                 "greeted": st.get("greeted"),
                  "formats": dict(st.get("formats") or {}),
                  "questions": {q["key"]: q["status"] for q in st.get("questions", [])},
                  "counters": dict(st.get("counters", {})),
@@ -349,7 +350,12 @@ def _run_case(case: Dict[str, Any], vacancy: Dict[str, Any], *, offline: bool, m
         out["error"] = "empty_dialogue"
         return out
 
-    verdict = sp.evaluate_dialogue(turns, out["expect"])
+    expect = out["expect"]
+    if expect.get("greeting_once") is True:
+        # В фикстуре стоит флаг, а сравнивать надо с текстом — он живёт в вакансии, и держать его
+        # копией в кейсе значит завести второй источник правды.
+        expect = {**expect, "greeting_once": vacancy.get("greeting", "")}
+    verdict = sp.evaluate_dialogue(turns, expect)
     out["passed"], out["details"], out["checks"] = verdict.passed, verdict.details, verdict.items
     return out
 

@@ -83,6 +83,10 @@ class PolicyEngine:
             salary_band={"min": vacancy_info.get("min_salary"),
                          "max": vacancy_info.get("max_salary"),
                          "currency": vacancy_info.get("salary_currency", "RUB")},
+            # В `eggplant-api` это отдельная колонка `greeting`, которую заполняет вызывающий по
+            # источнику кандидата (отклик — приветствуем, поиск — нет). Здесь канальный вход один —
+            # словарь вакансии, поэтому приветствие приходит его полем.
+            greeting=vacancy_info.get("greeting", "") or "",
         )
         self._vacancy = vacancy_info
         return conversation_id
@@ -118,8 +122,16 @@ class PolicyEngine:
 
         text = self._speak(plan, message, ctx, state.get("last_sent") or "")
 
+        # Приветствие — только на ходе, где говорит Интервьюер, и ровно один раз за диалог. На
+        # ход-скрипт не клеим: отсев с первой реплики выглядел бы как «здравствуйте — до свидания»,
+        # и это ровно то поведение, что сегодня в проде hh (`engine._speak`).
+        greeting = doc.get("greeting") or ""
+        if plan.kind == "ask" and text and greeting and not state.get("greeted"):
+            text = f"{greeting}\n\n{text}"
+            plan.state_next["greeted"] = True
+
         # Что реально ушло кандидату: у Интервьюера истории нет, а дословно повторённый переспрос
-        # выглядел бы поломкой.
+        # выглядел бы поломкой. Приветствие входит — это часть отправленного текста.
         if plan.kind == "ask" and text:
             plan.state_next["last_sent"] = text
 

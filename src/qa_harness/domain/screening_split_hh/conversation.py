@@ -81,6 +81,7 @@ class SplitConversation:
                 "field_work_check": st.get("field_work_check"),
                 "city": st.get("candidate_city"),
                 "relocation_ready": st.get("relocation_ready"),
+                "greeted": st.get("greeted"),
                 "allowed_formats": list(st.get("allowed_formats", [])),
                 "formats": dict(st.get("formats", {}) or {}),
                 "questions": {q["key"]: q["status"] for q in st.get("questions", [])},

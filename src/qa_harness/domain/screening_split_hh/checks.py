@@ -56,10 +56,16 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
       reasks_zero: true                    — ни один пункт не переспрашивался. Кооперативному
                                              кандидату мультиформат обязан обходиться без капа:
                                              «в офис не готов» → вопрос про гибрид — это НОВЫЙ
-                                             вопрос, а не переспрос, и бюджет жечь не должен.
+                                             вопрос, а не переспрос, и бюджет жечь не должен;
+      greeting_once: "<текст>"             — приветствие приклеено к ПЕРВОМУ сообщению кандидату и
+                                             больше нигде. Раннер подставляет сюда текст из
+                                             вакансии, в фикстуре стоит `true`. Проверка нужна
+                                             отдельно: приветствия нет ни в tg-ядре, ни в контракте
+                                             Наблюдателя — его ведёт только код канала, и при
+                                             переносе оно теряется молча.
     """
     base = _tg_evaluate_dialogue(turns, expect)
-    extra_keys = [k for k in ("formats", "reasks_zero") if expect.get(k) is not None]
+    extra_keys = [k for k in ("formats", "reasks_zero", "greeting_once") if expect.get(k) is not None]
     if not expect or not extra_keys:
         return base
 
@@ -81,6 +87,25 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
         nonzero = {k: v for k, v in reasks.items() if v}
         _add("reasks_zero", not nonzero, "переспросов не было" if not nonzero
              else f"кооперативному кандидату начислили переспросы: {nonzero}")
+
+    greeting = expect.get("greeting_once")
+    if isinstance(greeting, str) and greeting.strip():
+        head = greeting.strip()
+        hits = [i for i, t in enumerate(turns, 1) if head in str(t.get("reply") or "")]
+        first_ask = next((i for i, t in enumerate(turns, 1)
+                          if (t.get("decision") or {}).get("next_action") == "ask"), None)
+        ok = hits == [first_ask] and fstate.get("greeted") is True
+        if not hits:
+            detail = "приветствие не прозвучало ни разу"
+        elif len(hits) > 1:
+            detail = f"приветствие повторилось на ходах {hits}"
+        elif hits != [first_ask]:
+            detail = f"приветствие на ходу {hits[0]}, а первый вопрос — на {first_ask}"
+        elif fstate.get("greeted") is not True:
+            detail = "текст приклеен, но флаг greeted не выставлен — на следующем ходе повторится"
+        else:
+            detail = f"приветствие ровно один раз, на первом сообщении (ход {hits[0]})"
+        _add("greeting_once", ok, detail)
 
     passed = all(i["passed"] for i in items)
     details = [f"{'OK ' if i['passed'] else 'FAIL'} · {i['detail']}" for i in items]
