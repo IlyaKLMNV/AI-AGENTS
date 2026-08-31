@@ -278,7 +278,7 @@ argmax в уме модели, источник двух известных ин
 
 | файл | что |
 |---|---|
-| `app/common/screening/policy/` | 12 модулей, скопированы с правкой путей импорта |
+| `app/common/screening/policy/` | 11 модулей, скопированы с правкой путей импорта |
 | `ScreeningObserver.py` | новый, с явным пином `v3` |
 | `ScreeningSplitEngine.py` | 378 → 187 строк, ни одной ветки принятия решения |
 | `screening_repository.py` | `+ save_migrated()` |

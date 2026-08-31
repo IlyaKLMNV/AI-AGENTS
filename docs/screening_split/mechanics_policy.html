@@ -368,7 +368,7 @@
       причин, и как диалог, начатый на прежнем движке, доезжает на этом.</p>
     <div class="sources">
       <span class="src">tgApi · app/common/screening/ScreeningSplitEngine.py · 187 строк</span>
-      <span class="src">tgApi · app/common/screening/policy/ · 12 модулей</span>
+      <span class="src">tgApi · app/common/screening/policy/ · 11 модулей</span>
       <span class="src">prompts · screening_analyzer/v3</span>
       <span class="src">qa_harness · domain/screening_split/policy/</span>
     </div>
@@ -961,8 +961,9 @@
       </div>
       <div class="card">
         <div class="h">Офлайн-гейт</div>
-        <p><strong>50/50</strong> зарплатного контракта и <strong>18/18</strong> ленивой миграции.
-          Без сети и токенов.</p>
+        <p><strong>50/50</strong> зарплатного контракта, <strong>18/18</strong> ленивой миграции,
+          <strong>19/19</strong> отсева по формату (tg) и <strong>27/27</strong> канальной дельты
+          (hh). Без сети и токенов.</p>
       </div>
       <div class="card">
         <div class="h">Живой прогон</div>
@@ -975,28 +976,37 @@
         <p>Два прогона действующего стека на неизменной версии дали 76 и 74, и ни один сценарий не
           упал дважды. Разница в 1–2 сценария сама по себе ничего не значит.</p>
       </div>
-      <div class="card now">
-        <div class="h">НЕ проверено: вариативный вход</div>
-        <p>Прогон <code>--input-mode generated</code> не делался ни разу. Робастность на разных
-          формулировках неизвестна.</p>
+      <div class="card">
+        <div class="h">Вариативный вход</div>
+        <p>Прогон <code>--input-mode generated</code> <code>20260829_163434</code>: 154 кейса,
+          145 прошли. Девять провалов <strong>не разобраны</strong>, поэтому «робастность
+          подтверждена» отсюда не следует.</p>
       </div>
       <div class="card now">
-        <div class="h">НЕ проверено: прод</div>
-        <p>Порт в tgApi ни разу не запускался в своей среде — только компиляция и статическая сверка
-          47 импортов. hh-контур не трогали вовсе.</p>
+        <div class="h">НЕ проверено: тракт прода</div>
+        <p>В venv <code>tgApi</code> исполнялось только ядро: импорт, <code>decide()</code> на
+          собранном state, ленивая миграция. Весь тракт — воркер → Mongo → OpenAI, outbox, миграция
+          на реальных документах — не запускался ни разу.</p>
+      </div>
+      <div class="card now">
+        <div class="h">НЕ проверено: hh вживую</div>
+        <p>Ядро канала и промпт <code>screening_analyzer_hh/v3</code> есть только в харнессе, все
+          прогоны hh офлайновые, а офлайн скриптует НАБЛЮДЕНИЕ. В <code>eggplant-api</code> нового
+          ядра нет вовсе.</p>
       </div>
     </div>
   </section>
 
   <footer>
-    <p><strong>Состояние на 29.08.2026.</strong> Парный документ по действующему движку —
+    <p>Парный документ по действующему движку —
       <a href="mechanics_decision.html">mechanics_decision.html</a>. Сравнение обоих и таблица
       «известная ошибка → повторится или нет» — <a href="handoff_two_engines.md">handoff_two_engines.md</a>.
       Обоснование перестройки — <a href="rearchitecture.html">rearchitecture.html</a>, журнал решений
       Р1–Р14 — <a href="decisions_rearchitecture.md">decisions_rearchitecture.md</a>, открытые пункты —
       <a href="plan_cross_repo.md">plan_cross_repo.md</a>.</p>
-    <p>Сверено на: <code>ai-agents</code> ветка <code>feat/screening-split-qa</code>,
-      <code>tgApi</code> ветка <code>feat/screening-policy-core</code>,
+    <p><strong>Состояние на 31.08.2026.</strong> Сверено на: <code>ai-agents</code> ветка
+      <code>feat/screening-split-qa</code>, <code>tgApi</code> ветка
+      <code>feat/screening-policy-engine</code>,
       <code>prompts</code> ветка <code>feat/screening-split-prompts</code>. Обновлять вместе с правкой
       ядра: порядок хода, таблица правил и таблица бюджетов — это контракт, а не иллюстрация.</p>
   </footer>

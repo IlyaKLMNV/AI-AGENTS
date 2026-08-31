@@ -64,8 +64,8 @@
 Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
 **Как читать отчёт — `docs/screening_split/report_analysis.md`** (что значит `passed`, атрибуция, реальный
 баг vs дрейф генератора). Разборы прогонов — `docs/screening_split/review_<дата>.md` (последний —
-`20260817`, прод-инцидент: выдуманная ссылка + ложное завершение); ОТКРЫТЫЕ пункты —
-`docs/screening_split/plan_cross_repo.md`, раздел «Открытая работа» (`backlog.md` удалён, он дублировал план).
+`20260831`: hh-ядро, отсев по локации, правки самого теста); ОТКРЫТЫЕ пункты — только
+`docs/screening_split/plan_cross_repo.md`, состояние репозиториев и веток — только `docs/repos.md`.
 
 **Два ядра в каждом канале** (`--engine split|policy`): `split` — действующее (Аналитик возвращает
 `Decision`); `policy` — новая архитектура (Наблюдатель → чистое ядро `decide()` → гарды), лежит в

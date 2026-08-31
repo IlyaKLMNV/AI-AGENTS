@@ -367,10 +367,15 @@
       <span class="src">prompts · screening_analyzer/v2/system.md</span>
     </div>
     <div class="genre">
-      <strong>Это предложение, а не описание работающего кода.</strong> Как работает движок
-      <em>сегодня</em> — в <a href="mechanics_decision.html">mechanics_decision.html</a>; там же таблицы счётчиков и
-      зарплатного контракта. Здесь описано, что предлагается изменить и почему. Всё, что помечено
-      «проверено на коде», проверялось чтением файлов; остальное — проект.
+      <strong>Документ написан как ПРЕДЛОЖЕНИЕ и держится до релиза.</strong> Ядро с тех пор
+      написано — оно живёт в харнессе (<code>domain/screening_split/policy/</code>, hh-вариант
+      <code>screening_split_hh/policy/</code>) и в ветке PR <code>tgApi</code>, поэтому актуальным
+      здесь остаётся только раздел <em>«План релиза»</em>: выкатки не было. Всё остальное читать как
+      обоснование проекта, а не как описание кода. Текущая механика нового движка —
+      <a href="mechanics_policy.html">mechanics_policy.html</a>, действующего —
+      <a href="mechanics_decision.html">mechanics_decision.html</a>, что проверено и что нет —
+      <a href="handoff_two_engines.md">handoff_two_engines.md</a> §8, открытые пункты —
+      <a href="plan_cross_repo.md">plan_cross_repo.md</a>.
     </div>
   </header>
 
@@ -1301,7 +1306,8 @@
 
 
   <footer>
-    <p><strong>Состояние на 28.08.2026.</strong> Документ описывает предложение, а не текущий код.
+    <p><strong>Написан 28.08.2026, сверен 31.08.2026.</strong> Документ описывает предложение; из него
+      актуален раздел «План релиза» — остальное реализовано и описано в reference-доках.
       Механика сегодняшнего движка — <a href="mechanics_decision.html">mechanics_decision.html</a>; открытые пункты —
       <a href="plan_cross_repo.md">plan_cross_repo.md</a> (там же большие задачи Б1–Б3); принятые решения Р1–Р14 и Д1–Д7 —
       <a href="decisions_rearchitecture.md">decisions_rearchitecture.md</a>; как читать отчёт раннера —

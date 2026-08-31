@@ -37,7 +37,7 @@
 документации — [README.md](README.md).
 
 ### prompts (`../prompts`)
-Пакет тел промптов (`pyproject.toml`, версия пакета `1.2.1`), релизится wheel'ом через
+Пакет тел промптов (`pyproject.toml`, версия пакета `1.2.2`), релизится wheel'ом через
 `.github/workflows/publish.yml` в GHCR-образ `ghcr.io/podbor/prompts`. Структура на компонент:
 `prompts/<component>/pointer.yaml` (ключ `active` = боевая версия) + `<vN>/system.md` (тело) +
 `<vN>/config.yaml` (параметры модели). Старые версии не удаляются — это мгновенный откат.
@@ -52,7 +52,7 @@
 релиз отдельным `chore(release): bump version to X.Y.Z`. Ветка сейчас — `feat/screening-split-prompts`.
 
 ### tgApi (`../tgApi`)
-Телеграм-канал. Скрининг живёт в [../tgApi/app/common/screening/](../tgApi/app/common/screening/):
+Телеграм-канал. Скрининг живёт в [../../tgApi/app/common/screening/](../../tgApi/app/common/screening/):
 `ScreeningSplitEngine.py`, `ScreeningAnalyzerAssistant.py`, `ScreeningInterviewer.py`,
 `screening_context.py`, `screening_scripts.py`, `screening_state.py`, `screening_repository.py`.
 Воркеры — `consumers/run_*.py`, API — `api/`, БД — Mongo, всё в Docker (`docker/`).
@@ -64,16 +64,22 @@
 
 Коммиты: `PO-#### англ. суть (#PR)` либо conventional с номером PR. Всё через PR в `master`.
 
-**Готовый к PR порт policy-ядра** — ветка `feat/screening-policy-engine`, коммит `1374638`
-(`refactor(screening): replace analyzer decisions with in-code policy core`): один коммит поверх
-`origin/master`, 20 файлов `+1702/−462`, не запушен. Прежняя ветка тех же правок семью коммитами —
-`feat/screening-policy-core` (`cdac083`), держим как бэкап истории. Комментариев и докстрингов в
-файлах PR нет намеренно; в файлах PR удалены `ScreeningAnalyzerAssistant.py` и `screening_scripts.py`.
-Контекст для продолжения на hh — [screening_split/handoff_eggplant.md](screening_split/handoff_eggplant.md).
+**Порт policy-ядра — ветка `feat/screening-policy-engine`, два коммита поверх `origin/master`
+(`19c2514`):**
+
+| коммит | что | состояние |
+|---|---|---|
+| `1374638` | `refactor(screening): replace analyzer decisions with in-code policy core` — 20 файлов `+1702/−462` | **запушен**, PR открыт, не смерджен |
+| `9c2faea` | `fix(screening): ask about relocation and make format KO reachable` — вопрос про переезд, два входа R6, `relocation_ready` в состоянии | **локальный**, не запушен: ждём приёмки hh (разбор — [screening_split/review_20260831.md](screening_split/review_20260831.md)) |
+
+Прежняя ветка тех же правок семью коммитами — `feat/screening-policy-core` (`3232bfb`), держим как
+бэкап истории. Комментариев и докстрингов в файлах PR нет намеренно; удалены
+`ScreeningAnalyzerAssistant.py` и `screening_scripts.py`. Контекст для продолжения на hh —
+[screening_split/handoff_eggplant.md](screening_split/handoff_eggplant.md).
 
 ### eggplant-api (`../eggplant-api`)
 HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + RabbitMQ, Docker Compose).
-Свой порт split-движка — [../eggplant-api/app/assistants/screening/](../eggplant-api/app/assistants/screening/):
+Свой порт split-движка — [../../eggplant-api/app/assistants/screening/](../../eggplant-api/app/assistants/screening/):
 `engine.py`, `assistants.py`, `context.py`, `scripts.py`, `state.py`. В отличие от tgApi здесь есть
 юнит-тесты движка: `app/tests/assistants/test_screening_engine.py`, `test_screening_scripts.py`,
 `test_screening_state.py` (гонять из этого репо, не отсюда).
@@ -89,9 +95,10 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 
 | Роль | Где | Заметки |
 |---|---|---|
-| прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник |
-| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный |
-| QA | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | порт 1:1 из tgApi (HEAD `e733095`); `engine/state/scripts/context/decision/conversation` + чисто тестовые `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
+| прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник. Новое ядро — `app/common/screening/policy/` на ветке PR (см. выше) |
+| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Нового ядра нет вовсе |
+| QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | порт 1:1 из tgApi (HEAD `e733095`); `engine/state/scripts/context/decision/conversation` + новое ядро `policy/` (14 модулей) + чисто тестовые `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
+| QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальный порт: старый движок + новое ядро `policy/` (10 модулей, канало-независимое импортирует из tg). **Это исходник переноса в `eggplant-api`** |
 
 Правка поведения в одном порте — повод сразу проверить два других: правило «каналы держим сходящимися».
 
