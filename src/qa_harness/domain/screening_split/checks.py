@@ -327,6 +327,37 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         evs_str = ", ".join(evs) or "—"
         details.append(f"event={want} (хоть раз): {'OK' if hit else 'не было (были: ' + evs_str + ')'}")
 
+    if spec.get("expect_guard_trips_lacks"):
+        # ВТОРОЙ уровень канарейки. Первый (текст кандидату) под новым ядром зелёный почти всегда:
+        # шлюз гардов чинит нарушение ДО того, как его увидит проверка — G3 срезает эмодзи, G7
+        # подменяет выдуманную ссылку канонической, G2 разворачивает сырой id формата. Само
+        # срабатывание гарда и есть факт нарушения, поэтому канарейка смотрит на `guard_trips`.
+        # Третий уровень — офлайн-тест самих гардов (`policy/selfcheck/guards.py`): он ловит случай
+        # «гард убрали, а модель в этом прогоне не нарушила», когда молчат оба первых.
+        want = spec["expect_guard_trips_lacks"]
+        wants = [want] if isinstance(want, str) else list(want)
+        bad: List[str] = []
+        for i, t in enumerate(turns, 1):
+            for trip in (t.get("guard_trips") or []):
+                text = str(trip)
+                if any(str(w).lower() in text.lower() for w in wants):
+                    bad.append(f"ход {i}: {text}")
+        hit = not bad
+        ok = ok and hit
+        details.append("гарды не чинили ответ ("
+                       + "/".join(str(w) for w in wants) + "): "
+                       + ("OK" if hit else "сработали — " + "; ".join(bad)))
+
+    if spec.get("expect_state"):
+        # Точечная сверка полей ИТОГОВОГО состояния. Заведено под Р18: `relocation_check` отличает
+        # «кандидат в городе вакансии» от «в другом городе» — по одному лишь `asking` эти случаи
+        # неразличимы, и сценарии про локацию проверяли одно и то же.
+        for key, want in (spec["expect_state"] or {}).items():
+            got = fstate.get(key)
+            hit = got == want
+            ok = ok and hit
+            details.append(f"state.{key}={want}: {'OK' if hit else f'факт {got}'}")
+
     if "expect_end" in spec:
         want = bool(spec["expect_end"])
         hit = (ended == want)
