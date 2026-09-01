@@ -48,39 +48,57 @@
   `passed = contract & semantic & mapping`; step3 — информация (count), не pass/fail.
 
 ## Split-скрининг (`screening_split` + `screening_counters`)
-Раздельный скрининг: вместо монолита — **Аналитик** (`screening_analyzer`, строгий JSON `Decision`) +
-**Интервьюер** (`screening_interviewer`, одно сообщение) + КОД-оркестратор, портированный 1:1 из tgApi
-(HEAD e733095) в `domain/screening_split/` (engine/state/scripts/context/decision/conversation; порт НЕ
-импортирует `app`). **LOCAL-only** (stored-эквивалента нет) — тела промптов из репо `prompts`, гоняем `--prompts-path ../prompts`.
+Раздельный скрининг: вместо монолита — **Наблюдатель** (`screening_analyzer`, строгий JSON
+`Observation`: что услышал, без решения) + **Интервьюер** (`screening_interviewer`, одно сообщение) +
+КОД-оркестратор `domain/screening_split[_hh]/policy/` (порт НЕ импортирует `app`). **LOCAL-only**
+(stored-эквивалента нет) — тела промптов из репо `prompts`, гоняем `--prompts-path ../prompts`.
 
 **Раннер `screening_split`** — отчёт как у всех (review.md у split отключён). Три слоя оценки с атрибуцией
 ошибки (какая роль):
-- **A (Аналитик):** детерминированные инварианты `Decision`/state по трассе (`scenario_checks.yaml`:
-  `expect_script_key/prefix`, `salary/format`, `asking`, `event`, `end`, `last_instruction_lacks`,
-  `reply_contains`, `instruction_url_valued`). LLM-судьи нет.
-- **B (Интервьюер):** `leak_scan` (скрипт: нет утечки вилки/ссылки) + `InterviewerJudge` (LLM: верно ли передал
-  СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
-- **C:** `ScenarioJudge` (LLM) — только для сценариев БЕЗ инварианта.
+- **A (Наблюдатель):** детерминированные инварианты хода по трассе (`scenario_checks.yaml`:
+  `expect_script_key`, `salary/format`, `state`, `asking`, `event`, `end`, `instruction_lacks`,
+  `reply_contains`, `instruction_url_valued`, `guard_trips_lacks`). LLM-судьи нет. Ключ ассертим
+  ТОЧНЫЙ: `expect_script_prefix` снят — под префиксом STOP лежат 13 разных причин.
+- **B (Интервьюер):** `leak_scan` (нет утечки вилки/ссылки/сырого id формата) + `InterviewerJudge` (LLM:
+  верно ли передал СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
+  Канарейки трёхуровневые: текст кандидату · `expect_guard_trips_lacks` (гард починил = нарушение
+  было) · офлайн-тест самих гардов (`selfcheck/guards.py` — ловит пропажу гарда, когда молчат оба).
+- **C:** `ScenarioJudge` (LLM) — для сценариев БЕЗ инварианта. Сейчас таких нет ни одного: гейт
+  во всех сценариях обоих каналов детерминированный, судья диалога не зовётся.
 Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
+Сценариев после ревизии 01.09: **tg 57** (было 77), **hh 61** (было 75); нумерация сплошная, карта
+`старый → новый` — в `docs/screening_split/review_20260901.md`. Индексы связывают ПЯТЬ файлов на
+канал (`scenarios.csv`, `scenario_checks.yaml`, `candidate_inputs.yaml` + `generation/<канал>/
+{scenario_vacancies,constraints}.yaml`); их связность гейтится офлайном — расхождение тихое, сценарий
+просто взял бы дефолтную вакансию и перестал проверять то, ради чего заведён.
 **Как читать отчёт — `docs/screening_split/report_analysis.md`** (что значит `passed`, атрибуция, реальный
 баг vs дрейф генератора). Разборы прогонов — `docs/screening_split/review_<дата>.md` (последний —
-`20260831`: hh-ядро, отсев по локации, правки самого теста); ОТКРЫТЫЕ пункты — только
+`20260901`: снятие старого ядра, офлайн-набор 253 проверки, ревизия сценариев + карта индексов);
+ОТКРЫТЫЕ пункты — только
 `docs/screening_split/plan_cross_repo.md`, состояние репозиториев и веток — только `docs/repos.md`.
 
-**Два ядра в каждом канале** (`--engine split|policy`): `split` — действующее (Аналитик возвращает
-`Decision`); `policy` — новая архитектура (Наблюдатель → чистое ядро `decide()` → гарды), лежит в
-`domain/screening_split/policy/` (tg) и `domain/screening_split_hh/policy/` (hh, мультиформат +
+**Ядро одно** (01.09.2026 старое `split` удалено): Наблюдатель → чистое ядро `decide()` → гарды,
+лежит в `domain/screening_split/policy/` (tg) и `domain/screening_split_hh/policy/` (hh, мультиформат +
 `field_work` + `KO_FORMAT`/`KO_LOCATION`/`KO_LOCATION_GEO`; канало-независимое импортирует из tg).
-Для `policy` обязателен промпт **v3** (`--analyzer-version v3`): на v2 каждый ход уйдёт в фолбэк.
-Канальная дельта нового ядра гейтится офлайн (`--channel hh --offline`, 33 проверки).
+Контракт `Observation` есть только в промпте **v3** — он и стоит дефолтом во всех раннерах семейства.
+Тела v1/v2 в пакете `prompts` остаются (откат), но отсюда больше не тестируются: разбирать `Decision`
+нечем.
+
+**Офлайн-гейт ядра — `domain/screening_split[_hh]/selfcheck/`** (рядом с `policy/`, а НЕ внутри:
+`policy/` целиком переносится в продуктовые репо, тестовый код туда не едет). Контракт набора —
+`checks() -> [(имя, ok, деталь)]`, реестр — `SUITES` в `selfcheck/__init__.py`, печатает раннер.
+`--offline` гоняет наборы ОБОИХ каналов независимо от `--channel` (код один, регрессия обязана
+краснеть в любом прогоне) плюс связность фикстур выбранного канала: **253 проверки**.
 
 **Режимы входа** (`--input-mode scripted|generated`): scripted — реплики из `candidate_inputs.yaml`
 (детерминированный CI-гейт); generated — адаптивный LLM-кандидат, засеянный из рецепта (`salary_category`/
 `convey`/`turn_convey` — пер-ходовые сиды для chain-хореографии), Аналитик-инвариант гейтит так же.
 
-**Счётчики завершения — в КОДЕ движка, не LLM:** событийные пороги `_EVENT_STOP` (gibberish/bot 2,
-demand/contact_source 3, pause 3) + reask-cap (2 переспроса одного `asking` → STOP/`refused`) + универсальный
-**`no_progress`-cap** (4 хода без прогресса `progress_signature` → `STOP_PERSISTENT`/`FINISH`; порт tgApi).
+**Счётчики завершения — в КОДЕ, не LLM, и таблицей, а не расстановкой `if`** (`policy/budgets.py`,
+семантика Р3: `fires_on_nth` = порядковый номер срабатывания). Событийные: gibberish/bot 2,
+demand/contact_source 3, pause 3, `salary_info` без порога. Переспросы: все пункты повестки 3, у
+доп-вопроса исход `REFUSE_AND_ADVANCE` (пункт `refused`, фокус дальше). Универсальный
+**`no_progress`-cap** — 4 хода без прогресса `progress_signature` → `STOP_PERSISTENT`/`FINISH`.
 NB: no_progress-cap ВЖИВУЮ практически недостижим — reask-cap (`refused` = прогресс, сбрасывает счётчик) и
 gibberish-счётчик перехватывают лупы за 2–4 хода; кап — страховка, его код проверяется офлайн.
 
@@ -88,8 +106,7 @@ gibberish-счётчик перехватывают лупы за 2–4 хода
 в пределах кап, кооперативный → `FINISH` без ложного капа (`max_no_progress ≤ 2`). Реальный
 Аналитик/Наблюдатель + ФЕЙКОВЫЕ Интервьюер и стор (токены тратит только он — по вызову на ход).
 `--channel tg|hh` (фикстуры `counter_loops.yaml` своего канала; в hh нет кейса про источник контакта,
-зато есть лупы на формате и разъездном) × `--engine split|policy` (для `policy` Аналитик по умолчанию
-**v3** — контракт `Observation`). Отчёт с `token_usage` (per-case + итого) и `turns_total`.
+зато есть лупы на формате и разъездном). Отчёт с `token_usage` (per-case + итого) и `turns_total`.
 
 **Повестка хода (решение Р18):** `зарплата → город → формат → (hh: разъездной) → переезд → доп-вопросы`.
 Город спрашивается ВСЕГДА, включая удалённые вакансии — иначе гео-ограничение не отсеивает никого, кто
@@ -202,8 +219,8 @@ Backend на `searchBool` возвращает JSON **`{count, profiles: [...]}`
 - **`store=False` во всех вызовах харнесса** (`core.llm_client.STORE_RESPONSES`): в Responses API
   `store` по умолчанию **`true`**, поэтому прогоны засоряли `platform.openai.com/logs`, где смотрят
   ПРОД. `store: true` из `config.yaml` пакета `prompts` намеренно НЕ прокидываем — это ретеншн, на
-  вывод модели не влияет. **Исключение — мультитёрн через `conversation=`** (`domain/screening`,
-  `domain/screening_split/interviewer.py`): при `store=false` ответ приходит, но новые input/output
+  вывод модели не влияет. **Исключение — мультитёрн через `conversation=`** (монолитный
+  `domain/screening`; в split-ядре Интервьюер stateless, там store гасится): ответ приходит, но новые input/output
   НЕ дописываются в conversation → история ходов теряется. Там store остаётся продовым (логи будут).
 - `prompt_id`/`version` — **только из `model.yaml`** (источник правды); env/CLI-override опционально,
   а `screening_scenarios_runner`/`screening_guardrails_runner` override игнорируют.

@@ -106,8 +106,8 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 |---|---|---|
 | прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник. Новое ядро — `app/common/screening/policy/` на ветке PR (см. выше) |
 | прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, лежит в рабочем дереве незакоммиченным (см. выше) |
-| QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | порт 1:1 из tgApi (HEAD `e733095`); `engine/state/scripts/context/decision/conversation` + новое ядро `policy/` (14 модулей) + чисто тестовые `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
-| QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальный порт: старый движок + новое ядро `policy/` (10 модулей, канало-независимое импортирует из tg). **Это исходник переноса в `eggplant-api`** |
+| QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | только новое ядро `policy/` (14 модулей) — старое удалено 01.09.2026; рядом `state/context/salary/store/conversation` и чисто тестовые `selfcheck/`, `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
+| QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальное ядро `policy/` (10 модулей, канало-независимое импортирует из tg) + `selfcheck/` на канальную дельту. **Это исходник переноса в `eggplant-api`** |
 
 Правка поведения в одном порте — повод сразу проверить два других: правило «каналы держим сходящимися».
 

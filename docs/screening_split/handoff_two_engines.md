@@ -35,20 +35,17 @@
 > `_forced`, `_EVENT_STOP` и три вызова `analyzer.run`; в новом — `decide(`, `upgrade(doc)`,
 > `apply_guards` и ровно один вызов `self.observer.run`. Каталога `policy/` в старом нет вовсе.
 >
-> **В харнессе оба движка лежат рядом и никуда не делись:** старый — `engine.py`, новый —
-> `policy/`. Если нужен просто код для чтения, берите оттуда: ветки переключать не надо.
+> **В харнессе старого движка больше НЕТ** (удалён 01.09.2026, см.
+> [review_20260901.md](review_20260901.md)): там осталось только новое ядро `policy/`. Читать старый
+> код — только из `tgApi` по команде выше; пути на файлы харнесса в таблице ниже поэтому исторические.
 
 ### Действующий движок
 
 | что | файл |
 |---|---|
 | движок (прод) | `tgApi` ветка **`feat/screening-salary-parser`**, коммит `fb1d34d`: `app/common/screening/ScreeningSplitEngine.py` — 378 строк |
-| движок (QA-порт, 1:1) | [engine.py](../../src/qa_harness/domain/screening_split/engine.py) — 438 строк |
-| контракт `Decision` | [decision.py](../../src/qa_harness/domain/screening_split/decision.py) — 58 строк |
-| Аналитик | [analyzer.py](../../src/qa_harness/domain/screening_split/analyzer.py) — 81 строка |
-| Интервьюер | [interviewer.py](../../src/qa_harness/domain/screening_split/interviewer.py) |
-| состояние | [state.py](../../src/qa_harness/domain/screening_split/state.py) — 147 строк |
-| скрипты | [scripts.py](../../src/qa_harness/domain/screening_split/scripts.py) — 127 строк |
+| движок, контракт `Decision`, Аналитик, скрипты | в харнессе удалены 01.09.2026 — читать из `tgApi` командой выше |
+| состояние | [state.py](../../src/qa_harness/domain/screening_split/state.py) — общий для обоих ядер |
 | зарплата | [salary.py](../../src/qa_harness/domain/screening_split/salary.py) · [salary_rules.py](../../src/qa_harness/domain/screening_split/salary_rules.py) |
 | контекст вакансии | [context.py](../../src/qa_harness/domain/screening_split/context.py) |
 | **промпт Аналитика** | `prompts/prompts/screening_analyzer/v2/system.md` — **355 строк, 40 тыс. символов** + `config.yaml` (JSON-схема `Decision`) |
@@ -114,14 +111,15 @@
 
 **Ключевое:** первые четыре поля — это уже ИСХОД хода. Модель выбирает действие.
 
-Валидация — [decision.py](../../src/qa_harness/domain/screening_split/decision.py): 6 обязательных
+Валидация — `tgApi/app/common/screening/ScreeningAnalyzerAssistant.py` (в харнессе удалена): 6 обязательных
 полей (`salary_claim` в список не входит), `next_action` в перечислении, при `script` ключ известен
 реестру, при `ask` непустая `instruction`. Невалидно → до 3 попыток → `AssistantError` →
 `REPLY_FALLBACK`.
 
 ### 3.2. Порядок одного хода
 
-Файл: [engine.py](../../src/qa_harness/domain/screening_split/engine.py), метод `add_message_and_run`.
+Файл: `tgApi/app/common/screening/ScreeningSplitEngine.py` (коммит `fb1d34d`), метод
+`add_message_and_run`. В харнессе этого кода больше нет.
 
 ```
 0.  store.load(cid)                      нет записи → REPLY_FALLBACK · finished → молчим
