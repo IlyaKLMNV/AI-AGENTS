@@ -120,8 +120,17 @@ def _vacancy_for(case: Dict[str, Any], defaults: Dict[str, Any],
 # Наблюдатель, здесь решаем мы сами. Кейс, чей предмет проверки — само наблюдение (B), в офлайн не
 # допускается вовсе: `modes` в фикстуре, пропуск виден в отчёте как skipped.
 
+# `out_of_town` — иногородний, которому не подходит ФОРМАТ (кейс E: отсев по формату).
+# `out_of_town_stays` — иногородний, который к формату готов, но переезжать отказывается
+# (кейс F в tg и кейс E в hh: отсев по ЛОКАЦИИ). Разделение появилось с Р18: формат и локация — разные
+# требования, поэтому и кейса два.
 _OFFLINE_BEHAVIOUR = {"A": "cooperative", "C": "refuser", "D": "demander", "E": "out_of_town",
-                      "F": "out_of_town_silent"}
+                      "F": "out_of_town_stays"}
+# В hh кейса про отказ ОТ ФОРМАТА в этой фикстуре нет (он покрыт сценариями и офлайн-гейтом канала),
+# зато кейс E — про локацию: формат подтверждён, переезжать кандидат не будет.
+# В hh кейс E — про локацию (формат подтверждён, переезжать не будет), а F — про формат: кандидат
+# отказывается от каждого допустимого формата по очереди, и ключ обязан быть KO_FORMAT.
+_OFFLINE_BEHAVIOUR_HH = {**_OFFLINE_BEHAVIOUR, "E": "out_of_town_stays", "F": "out_of_town"}
 _DIGITS_RE = re.compile(r"\d[\d\s]*\d|\d")
 
 
@@ -146,13 +155,13 @@ class _EchoInterviewer:
         return "Уточните, пожалуйста.", blank_usage()
 
 
-def _asked_about_relocation(state: dict) -> bool:
-    """Спрашивал ли код прошлым ходом про переезд — по инструкции, которую он сам же и собрал."""
-    return "переехать" in (state.get("last_asked") or "")
-
-
 class _ScriptedObserver:
-    """«Уши» без модели: отвечает на ТЕКУЩИЙ фокус, который код положил в `state.last_asking`."""
+    """«Уши» без модели: отвечает на ТЕКУЩИЙ пункт повестки из `state.last_asking`.
+
+    С решения Р18 пунктов пять: `salary` → `city` → `format` (в hh ещё `field_work`) →
+    `relocation` → `qN`. Заглушка отвечает ровно на заданный вопрос и ничего не выдаёт авансом:
+    иначе тест проверял бы не то, что код спросил, а то, что мы сами ему подсунули.
+    """
 
     def __init__(self, behaviour: str, city: str = "Москва", channel: str = "tg") -> None:
         self.behaviour = behaviour
@@ -183,25 +192,24 @@ class _ScriptedObserver:
                 obs.focus_answered = "substantive"
             return obs
 
+        if focus == "city":
+            obs.focus_answered = "substantive"
+            obs.facts["candidate_city"] = self.city
+            return obs
+
+        if focus == "relocation":
+            obs.focus_answered = "substantive"
+            # Отказ про МЕСТО — только у того, кто именно за это и отказывается (кейс с KO_LOCATION).
+            obs.facts["relocation_ready"] = "no" if self.behaviour == "out_of_town_stays" else "yes"
+            return obs
+
         if focus in ("format", "field_work"):
             if self.channel == "hh":
                 return self._hh_formats(obs, state, focus)
             obs.focus_answered = "substantive"
-            if self.behaviour.startswith("out_of_town"):
-                # Сначала только город. Отказ от переезда приходит ТОЛЬКО если код про переезд
-                # спросил: заглушка отвечает на заданный вопрос, а не выдаёт факты авансом. Без
-                # этого условия кейс проверял бы выбор ключа, но не саму правку («код обязан
-                # спросить»), и регрессия вопроса осталась бы незамеченной.
-                if not state.get("candidate_city"):
-                    obs.facts["candidate_city"] = self.city
-                elif _asked_about_relocation(state):
-                    # `_silent` не высказывается про формат вовсе — второй вход в R6 (кейс F).
-                    if self.behaviour != "out_of_town_silent":
-                        obs.facts["format_ready"] = "no"
-                    obs.facts["relocation_ready"] = "no"
-                return obs
-            obs.facts["format_ready"] = "yes"
-            obs.facts["candidate_city"] = self.city
+            # Формат — самостоятельное требование (Р18): «не подходит» отсевает сразу, без оглядки на
+            # город и переезд. Кандидат, у которого проблема в локации, формат ПОДТВЕРЖДАЕТ.
+            obs.facts["format_ready"] = "no" if self.behaviour == "out_of_town" else "yes"
             return obs
 
         if focus and focus.startswith("q"):
@@ -226,16 +234,17 @@ class _ScriptedObserver:
         if focus == "field_work":
             obs.facts["formats_ready"] = [{"format": "FIELD_WORK", "ready": "yes"}]
             return obs
-        if self.behaviour == "out_of_town":
-            # Сначала называет только город, и лишь на вопрос про переезд отвечает отказом: так
-            # проверяется, что код САМ спросил про переезд, а не получил ответ авансом.
-            if not state.get("candidate_city"):
-                obs.facts["candidate_city"] = self.city
-            elif _asked_about_relocation(state):
-                obs.facts["relocation_ready"] = "no"
-            return obs
-        obs.facts["candidate_city"] = self.city
         asked = state.get("format_asked")
+        if self.behaviour == "out_of_town":
+            # Проблема в самом формате: отказ по тому формату, о котором спросили.
+            if asked:
+                obs.facts["formats_ready"] = [{"format": asked, "ready": "no"}]
+            return obs
+        if self.behaviour == "out_of_town_stays":
+            # Формат подходит, дальше упрётся в вопрос про переезд.
+            if asked:
+                obs.facts["formats_ready"] = [{"format": asked, "ready": "yes"}]
+            return obs
         if asked:
             obs.facts["formats_ready"] = [{"format": asked,
                                            "ready": "no" if asked == "ON_SITE" else "yes"}]
@@ -287,13 +296,18 @@ class _OfflineConversation:
                  "field_work_check": st.get("field_work_check"),
                  "city": st.get("candidate_city"),
                  "relocation_ready": st.get("relocation_ready"),
+                 "city_check": st.get("city_check"),
+                 "relocation_check": st.get("relocation_check"),
                  "greeted": st.get("greeted"),
                  "formats": dict(st.get("formats") or {}),
                  "questions": {q["key"]: q["status"] for q in st.get("questions", [])},
                  "counters": dict(st.get("counters", {})),
+                 "format_asked": st.get("format_asked"),
                  "reasks": {"salary": st.get("salary_reasks", 0),
                             "format": st.get("format_reasks", 0),
-                            "field_work": st.get("field_work_reasks", 0)}} if st else None
+                            "field_work": st.get("field_work_reasks", 0),
+                            "city": st.get("city_reasks", 0),
+                            "relocation": st.get("relocation_reasks", 0)}} if st else None
         plan = self._engine.last_plan
         obs = getattr(self._engine, "last_observation", None)
         return sp.TurnResult(
@@ -316,7 +330,8 @@ def _run_case(case: Dict[str, Any], vacancy: Dict[str, Any], *, offline: bool, m
     """Один диалог до завершения или до `max_turns`, затем детерминированный вердикт по трассе."""
     key = case.get("key", "?")
     if offline:
-        conv: Any = _OfflineConversation(vacancy, _OFFLINE_BEHAVIOUR.get(key, "cooperative"), channel)
+        behaviours = _OFFLINE_BEHAVIOUR_HH if channel == "hh" else _OFFLINE_BEHAVIOUR
+        conv: Any = _OfflineConversation(vacancy, behaviours.get(key, "cooperative"), channel)
         agent: Any = _ScriptedCandidate(case.get("fallback") or [])
     else:
         conv = sp.SplitConversation(client=client, analyzer_client=analyzer_client,

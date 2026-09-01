@@ -24,6 +24,8 @@ REASK_BUDGETS: dict[str, Budget] = {
     "salary":     Budget(counter="salary_reasks",     fires_on_nth=3, reason="STOP_SALARY_DEMAND", persist_on_fire=False),
     "format":     Budget(counter="format_reasks",     fires_on_nth=3, reason="STOP_PERSISTENT",    persist_on_fire=False),
     "field_work": Budget(counter="field_work_reasks", fires_on_nth=3, reason="STOP_PERSISTENT",    persist_on_fire=False),
+    "city":       Budget(counter="city_reasks",       fires_on_nth=3, reason="STOP_PERSISTENT",  persist_on_fire=False),
+    "relocation": Budget(counter="relocation_reasks", fires_on_nth=3, reason="STOP_PERSISTENT",  persist_on_fire=False),
     "question":   Budget(counter="reask_count",       fires_on_nth=3, reason="REFUSE_AND_ADVANCE", persist_on_fire=False),
 }
 

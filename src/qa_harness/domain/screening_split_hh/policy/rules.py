@@ -30,7 +30,6 @@ from qa_harness.domain.screening_split.policy.rules import (
     r11_ask_focus,
 )
 
-from qa_harness.domain.screening_split.policy.geo import same_city
 
 from . import formats
 from .budgets import EVENT_BUDGETS, STALL_BUDGET
@@ -53,31 +52,31 @@ def r5_geo_ko(f) -> Optional[Outcome]:
 
 
 def r5a_location_ko(f) -> Optional[Outcome]:
-    """Кандидат в другом городе и явно не готов ни переезжать, ни работать из нужной локации.
+    """Кандидат не поедет туда, где нужно присутствовать (Р18).
 
-    Ключ выбирается по СМЫСЛУ отказа, как того требует KO-2 промпта v2: отказ про место нахождения →
-    `KO_LOCATION`, отказ про сам формат → `KO_FORMAT` (R6). Здесь же условие «Локация заполнена»:
-    сравнивать не с чем — значит и отсева по локации нет.
+    Пункт `relocation_check` открывается кодом только когда присутственный или разъездной формат УЖЕ
+    подтверждён, город известен и не совпадает с локацией вакансии, — поэтому проверять здесь больше
+    нечего, кроме самого отказа. Прежняя версия правила требовала `format_check == "pending"` и
+    поэтому не срабатывала никогда, если кандидат отказывался от формата и от переезда одной
+    репликой: `format_check` к моменту таблицы уже был закрыт, и ход забирало R6 с ключом
+    `KO_FORMAT` (живой прогон 20260831_215941, кейс E).
     """
-    if f.state.get("format_check") != "pending":
+    if f.state.get("relocation_check") != "pending":
         return None
     if f.state.get("relocation_ready") != "no":
         return None
-    if not f.ctx.location or not f.state.get("candidate_city"):
-        return None
-    if same_city(f.state.get("candidate_city") or "", f.ctx.location):
-        return None
-    if formats.confirmed_any(f.state):
-        return None  # готов к допустимому формату — вопрос переезда снят
     return Outcome("KO_LOCATION", "script")
 
 
 def r6_format_ko(f) -> Optional[Outcome]:
-    """Отказался от ВСЕХ допустимых форматов вакансии.
+    """Отказался от ВСЕХ допустимых форматов вакансии. Точка (Р18).
 
     Мультиформат целиком в этой строке: пока среди допустимых есть формат, о котором кандидат не
     высказался, правило молчит и ход уходит в вопрос про этот формат (`core._ask_slot`). Отказ от
     разъездного формата при другом подтверждённом сюда не попадает — и не должен.
+
+    От города и готовности к переезду правило не зависит: формат — самостоятельное требование, а
+    локацию проверяет R5a на своём пункте повестки.
     """
     if formats.refused_all(f.state):
         return Outcome("KO_FORMAT", "script")

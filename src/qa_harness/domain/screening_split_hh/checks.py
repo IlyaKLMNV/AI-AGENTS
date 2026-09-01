@@ -56,10 +56,19 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
 
       formats: {ON_SITE: no, HYBRID: yes}  — накопленные ответы ПО ФОРМАТАМ, сверка подмножеством
                                              (перечисленное обязано совпасть, лишнее не мешает);
-      reasks_zero: true                    — ни один пункт не переспрашивался. Кооперативному
-                                             кандидату мультиформат обязан обходиться без капа:
-                                             «в офис не готов» → вопрос про гибрид — это НОВЫЙ
-                                             вопрос, а не переспрос, и бюджет жечь не должен;
+      formats_asked: [ON_SITE, HYBRID]     — код СПРОСИЛ про каждый перечисленный формат отдельным
+                                             вопросом. Анти-вырождение лестницы: `formats` смотрит
+                                             на итог и зеленеет, даже если кандидат перечислил все
+                                             форматы одной репликой и лестницы не было вовсе
+                                             (прогон 20260831_215941, кейс A) — ровно та же дыра,
+                                             от которой у доп-вопросов завели `asked_all`;
+      reasks_zero: [format, field_work]    — по перечисленным пунктам переспросов НЕ было; `true`
+                                             значит «ни по одному». Список нужен потому, что смысл
+                                             проверки узкий: мультиформат не должен жечь бюджет на
+                                             честных ответах («в офис не готов» → вопрос про гибрид
+                                             это НОВЫЙ вопрос, а не переспрос). Зарплата сюда не
+                                             входит: вежливая отписка кандидата — законный переспрос,
+                                             и `true` краснел на верном поведении движка;
       greeting_once: "<текст>"             — приветствие приклеено к ПЕРВОМУ сообщению кандидату и
                                              больше нигде. Раннер подставляет сюда текст из
                                              вакансии, в фикстуре стоит `true`. Проверка нужна
@@ -68,7 +77,8 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
                                              переносе оно теряется молча.
     """
     base = _tg_evaluate_dialogue(turns, expect)
-    extra_keys = [k for k in ("formats", "reasks_zero", "greeting_once") if expect.get(k) is not None]
+    extra_keys = [k for k in ("formats", "formats_asked", "reasks_zero", "greeting_once")
+                  if expect.get(k) is not None]
     if not expect or not extra_keys:
         return base
 
@@ -85,10 +95,25 @@ def evaluate_dialogue(turns: List[Dict[str, Any]], expect: Dict[str, Any]) -> Ch
         _add("formats", not bad, f"ответы по форматам: {got}" if not bad
              else f"по форматам ожидалось {want}, факт {got}")
 
+    if expect.get("formats_asked") is not None:
+        want_asked = [str(f).upper() for f in (expect["formats_asked"] or [])]
+        # Про какой формат спрашивал код, знает он сам: `state.format_asked` пишется на ходе с
+        # вопросом (`core:484`) и лежит в снимке состояния каждого хода.
+        asked = [str(t.get("state", {}).get("format_asked") or "").upper()
+                 for t in turns if (t.get("state") or {}).get("format_asked")]
+        missing = [f for f in want_asked if f not in asked]
+        _add("formats_asked", not missing,
+             f"код спросил про каждый формат: {asked}" if not missing
+             else f"не спросили про {missing} (спрашивали: {asked or '—'}): кандидат высказался "
+                  f"сам, лестница мультиформата не отыграна")
+
     if expect.get("reasks_zero"):
         reasks = fstate.get("reasks") or {}
-        nonzero = {k: v for k, v in reasks.items() if v}
-        _add("reasks_zero", not nonzero, "переспросов не было" if not nonzero
+        want_zero = expect["reasks_zero"]
+        keys = [str(k) for k in want_zero] if isinstance(want_zero, list) else list(reasks)
+        nonzero = {k: v for k, v in reasks.items() if v and k in keys}
+        _add("reasks_zero", not nonzero,
+             f"переспросов нет по пунктам {keys}" if not nonzero
              else f"кооперативному кандидату начислили переспросы: {nonzero}")
 
     greeting = expect.get("greeting_once")

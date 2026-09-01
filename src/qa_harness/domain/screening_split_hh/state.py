@@ -85,6 +85,12 @@ def init_state(allowed_formats, questions_text: str) -> dict:
         "salary": "pending",
         "format_check": format_check,       # pending | closed | n/a
         "field_work_check": field_work_check,  # pending | closed | n/a
+        # Город спрашиваем ВСЕГДА, включая вакансии с REMOTE: без него гео-ограничение вакансии не
+        # отсеивает никого, кто сам не сказал, что за границей (Р18).
+        "city_check": "pending",
+        # Переезд — только когда присутственный формат подтверждён, город известен и не совпадает с
+        # локацией. Разъездной формат считается присутственным (Р18).
+        "relocation_check": "n/a",
         "candidate_city": None,
         "allowed_formats": af,              # нормализован кодом — единственный источник правды о форматах
         "questions": questions,
@@ -97,6 +103,8 @@ def init_state(allowed_formats, questions_text: str) -> dict:
         "salary_reasks": 0,
         "format_reasks": 0,
         "field_work_reasks": 0,  # новая ветка reask-cap (в tg её нет)
+        "city_reasks": 0,
+        "relocation_reasks": 0,
         "no_progress": 0,
         # Ниже — поля ядра `policy` (старый движок их не читает и не пишет).
         # `formats` копит ответы ПО ФОРМАТАМ через диалог: Observation отдаёт только сказанное на
@@ -165,6 +173,8 @@ def progress_signature(state: dict) -> tuple:
         state.get("salary"),
         state.get("format_check"),
         state.get("field_work_check"),
+        state.get("city_check"),
+        state.get("relocation_check"),
         bool(state.get("candidate_city")),
         tuple(sorted((state.get("formats") or {}).items())),
         tuple(q.get("status") for q in state.get("questions", [])),
@@ -190,5 +200,10 @@ def is_field_work_done(state: dict) -> bool:
 def is_complete(state: dict) -> bool:
     """Все приоритеты (зарплата/формат/разъездной) закрыты и по каждому [questions] есть closed/refused."""
     if not is_salary_done(state) or not is_format_done(state) or not is_field_work_done(state):
+        return False
+    # Локация — такой же пункт повестки, как формат (Р18): без города повестка не собрана.
+    if state.get("city_check") not in ("n/a", "closed"):
+        return False
+    if state.get("relocation_check") not in ("n/a", "closed"):
         return False
     return all(q.get("status") in _DONE_QUESTION_STATUSES for q in state.get("questions", []))

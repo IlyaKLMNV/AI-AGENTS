@@ -81,8 +81,16 @@
 HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + RabbitMQ, Docker Compose).
 Свой порт split-движка — [../../eggplant-api/app/assistants/screening/](../../eggplant-api/app/assistants/screening/):
 `engine.py`, `assistants.py`, `context.py`, `scripts.py`, `state.py`. В отличие от tgApi здесь есть
-юнит-тесты движка: `app/tests/assistants/test_screening_engine.py`, `test_screening_scripts.py`,
-`test_screening_state.py` (гонять из этого репо, не отсюда).
+юнит-тесты движка: `app/tests/assistants/test_screening_engine.py`, `test_screening_state.py`,
+`test_screening_policy.py`, `test_screening_salary.py`, `test_screening_counter_loops.py`
+(гонять из этого репо, не отсюда).
+
+**В рабочем дереве ветки `feat/screening-policy-engine` лежит НЕЗАКОММИЧЕННЫЙ порт нового ядра**:
+`app/assistants/screening/policy/` (13 модулей), `salary.py` + `salary_rules.py`, Alembic-ревизия
+`f1a2b3c4d5e6_screening_dialogues_salary_band`, три новых тест-файла; `scripts.py` и
+`test_screening_scripts.py` удалены. Порт написан **не в сессиях этого штаба** — при работе с ним
+сначала читать код, а не доверять этому описанию. Поверх него 01.09 донесено решение Р18 (локация
+отдельным пунктом повестки) и поправлены его тесты.
 
 У репозитория **свой** `CLAUDE.md` (архитектурный курс «тонкий прокси над HH»), `TASKS.md`, `TECH_DEBT.md`
 — при работе с его файлами они главнее. Split пришёл в `Feature/po screening split (#110)`.
@@ -96,7 +104,7 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 | Роль | Где | Заметки |
 |---|---|---|
 | прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник. Новое ядро — `app/common/screening/policy/` на ветке PR (см. выше) |
-| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Нового ядра нет вовсе |
+| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, лежит в рабочем дереве незакоммиченным (см. выше) |
 | QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | порт 1:1 из tgApi (HEAD `e733095`); `engine/state/scripts/context/decision/conversation` + новое ядро `policy/` (14 модулей) + чисто тестовые `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
 | QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальный порт: старый движок + новое ядро `policy/` (10 модулей, канало-независимое импортирует из tg). **Это исходник переноса в `eggplant-api`** |
 
@@ -125,8 +133,10 @@ texts, switch nothing»): v2 отдаёт `salary_claim`, а на `tgApi master`
 
 **Следствие для нового ядра:** отдельного релиза промптов ему НЕ нужно. `ScreeningObserver` пинит
 версию по имени (`PROMPT_VERSION = "v3"`), а v3 уже лежит в 1.2.2 — указатель ему не мешает.
-**Тела выпущенных версий не правим:** v3 внутри 1.2.2, и если изменить его текст и выпустить 1.2.3,
-`v3` станет означать два разных текста, а в отчётах прогонов пишется только `local_version: v3` —
-по отчёту перестанет воспроизводиться, что тестировали. Нужен другой текст — это v4.
+**Тела v3 правим на месте, пока прод на них не работал** (решение Р19 от 01.09.2026): указатели
+стоят на `active: v1`, новое ядро пинит версию по имени, поэтому двух разных «v3 в проде» не будет.
+Цена принята сознательно: отчёты прогонов 29–31.08 писали `local_version: v3` до правки текста, и
+теперь это имя означает два разных текста — при разборе старых прогонов сверяться по дате.
+**В 1.2.2 лежит текст ДО правки, нужен релиз 1.2.3.**
 
 Открытые пункты — [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md).

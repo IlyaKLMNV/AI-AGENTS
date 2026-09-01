@@ -56,7 +56,9 @@ scenarios:
   - index: 13         # «за границей» без гео-ограничения (REMOTE) → не терминально
     expect_no_script_prefix: STOP
     expect_end: false
-  - index: 14         # вне радиуса, не готов к переезду (ON_SITE) → KO_LOCATION
+  # Кейс про КЛЮЧ: формат кандидат подтвердил, отказ идёт про место. `KO_FORMAT` здесь означал бы,
+  # что код (или промпт) снова смешал формат с локацией — разбор 01.09, решения Р18 и Р19.
+  - index: 14         # формат подтверждён, переезжать не готов (ON_SITE) → KO_LOCATION
     expect_script_key: KO_LOCATION
     expect_end: true
 

@@ -76,7 +76,11 @@ def _upgrade_state(state: dict) -> bool:
     changed = False
     defaults = {"salary_reasks": 0, "format_reasks": 0, "no_progress": 0,
                 "last_asked": None, "last_sent": None, "closed_reason": None,
-                "relocation_ready": None}
+                "relocation_ready": None,
+                # Пункты повестки, появившиеся с Р18. У старого диалога города могло и не быть
+                # спрошено вовсе, поэтому `city_check` стартует как `pending`: спросим один раз.
+                "city_check": "pending", "relocation_check": "n/a",
+                "city_reasks": 0, "relocation_reasks": 0}
     for key, value in defaults.items():
         if key not in state:
             state[key] = value if not isinstance(value, list) else []
@@ -96,6 +100,12 @@ def _upgrade_state(state: dict) -> bool:
         if key not in counters:
             counters[key] = 0
             changed = True
+
+    # Город у старого диалога мог быть уже назван (модель писала его в `candidate_city`) — тогда
+    # переспрашивать нечего, пункт сразу закрыт.
+    if state.get("candidate_city") and state.get("city_check") == "pending":
+        state["city_check"] = "closed"
+        changed = True
 
     if state.get("last_asking") is not None:
         state["last_asking"] = None

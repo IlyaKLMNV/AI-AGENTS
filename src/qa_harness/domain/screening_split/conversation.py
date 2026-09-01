@@ -105,6 +105,8 @@ class SplitConversation:
                 "city": st.get("candidate_city"),
                 # Поле кода, а не модели: по нему видно, какой вход правила R6 сработал.
                 "relocation_ready": st.get("relocation_ready"),
+                "city_check": st.get("city_check"),
+                "relocation_check": st.get("relocation_check"),
                 "questions": {q["key"]: q["status"] for q in st.get("questions", [])},
                 "counters": dict(st.get("counters", {})),
             }

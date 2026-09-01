@@ -12,6 +12,8 @@ split считает КОД (см. engine), а не LLM, поэтому эта �
     {
       "salary": "pending|closed",
       "format_check": "n/a|pending|closed",
+      "city_check": "pending|closed",          # город спрашиваем ВСЕГДА, даже на удалёнке (Р18)
+      "relocation_check": "n/a|pending|closed",
       "candidate_city": str|None,
       "questions": [ {"key","text","status":"pending|closed|refused","reask_count":int} ],
       "counters": {"bot_check":0,"gibberish":0,"salary_info":0,"demand":0,"contact_source":0,"pause":0},
@@ -63,13 +65,24 @@ def init_state(work_format: str, questions_text: str) -> dict:
     return {
         "salary": "pending",
         "format_check": format_check,
+        # Город — САМОСТОЯТЕЛЬНЫЙ пункт повестки и спрашивается всегда, включая удалённые вакансии
+        # (Р18). Раньше он жил внутри вопроса про формат, и на удалёнке (`format_check: n/a`) не
+        # спрашивался вовсе — значит гео-ограничение вакансии не отсеивало никого, кто сам не сказал,
+        # что находится за границей.
+        "city_check": "pending",
+        # Переезд имеет смысл ТОЛЬКО когда формат подтверждён, город известен и не совпадает с
+        # локацией вакансии. До этого пункт не существует, поэтому стартует как `n/a` и переводится
+        # в `pending` кодом по ходу диалога.
+        "relocation_check": "n/a",
         "candidate_city": None,
         "questions": questions,
         "counters": {k: 0 for k in COUNTER_KEYS},
         "last_asked": None,
         "last_asking": None,    # что спрашивали в прошлый ход: 'salary'|'format'|'qN'|None (код-лимит переспросов)
         "salary_reasks": 0,     # сколько раз переспросили зарплату (код форсит STOP после 2)
-        "format_reasks": 0,     # сколько раз переспросили формат/локацию
+        "format_reasks": 0,     # сколько раз переспросили формат
+        "city_reasks": 0,       # сколько раз переспросили город
+        "relocation_reasks": 0,  # сколько раз переспросили про переезд
         # Ответ про переезд хранится, а не читается из наблюдения текущего хода: кандидат отвечает
         # про место и про формат разными репликами, и на ходе с отказом от формата факт про переезд
         # уже не приходит. Как в hh-ядре, где это поле state с самого начала.
@@ -102,9 +115,13 @@ def apply_updates(state: dict, updates: list[dict] | None, event: str | None = N
         if key == "salary":
             if value == "closed" and new.get("salary") != "closed":
                 new["salary"] = "closed"
-        elif key == "format_check":
-            if value == "closed" and new.get("format_check") == "pending":
-                new["format_check"] = "closed"
+        elif key in ("format_check", "city_check", "relocation_check"):
+            if value == "closed" and new.get(key) == "pending":
+                new[key] = "closed"
+            elif value == "pending" and new.get(key) == "n/a":
+                # Только для `relocation_check`: пункт появляется по ходу диалога, когда выяснилось,
+                # что кандидат не в городе вакансии. Обратно (closed → pending) не откатывается.
+                new[key] = "pending"
         elif key == "candidate_city":
             if value:
                 new["candidate_city"] = value
@@ -139,6 +156,8 @@ def progress_signature(state: dict) -> tuple:
     return (
         state.get("salary"),
         state.get("format_check"),
+        state.get("city_check"),
+        state.get("relocation_check"),
         bool(state.get("candidate_city")),
         tuple(q.get("status") for q in state.get("questions", [])),
     )
@@ -156,8 +175,14 @@ def is_format_done(state: dict) -> bool:
     return state.get("format_check") in ("n/a", "closed")
 
 
+def is_location_done(state: dict) -> bool:
+    """Локация собрана: город назван и вопрос переезда либо не возникал, либо закрыт (Р18)."""
+    return (state.get("city_check") in ("n/a", "closed")
+            and state.get("relocation_check") in ("n/a", "closed"))
+
+
 def is_complete(state: dict) -> bool:
     """Все приоритеты закрыты и по каждому [questions] есть closed/refused."""
-    if not is_salary_done(state) or not is_format_done(state):
+    if not is_salary_done(state) or not is_format_done(state) or not is_location_done(state):
         return False
     return all(q.get("status") in _DONE_QUESTION_STATUSES for q in state.get("questions", []))

@@ -81,6 +81,8 @@ class SplitConversation:
                 "field_work_check": st.get("field_work_check"),
                 "city": st.get("candidate_city"),
                 "relocation_ready": st.get("relocation_ready"),
+                "city_check": st.get("city_check"),
+                "relocation_check": st.get("relocation_check"),
                 "greeted": st.get("greeted"),
                 "allowed_formats": list(st.get("allowed_formats", [])),
                 "formats": dict(st.get("formats", {}) or {}),
@@ -88,9 +90,14 @@ class SplitConversation:
                 "counters": dict(st.get("counters", {})),
                 # Переспросы приоритетных пунктов: по ним видно, не сжёг ли мультиформат бюджет на
                 # честных ответах кандидата («в офис не готов» → вопрос про гибрид — не переспрос).
+                # Какой формат спрашивали последним: по нему Наблюдатель относит короткое «да»/«нет»,
+                # и по нему же проверка `formats_asked` видит, отыграна ли лестница мультиформата.
+                "format_asked": st.get("format_asked"),
                 "reasks": {"salary": st.get("salary_reasks", 0),
                            "format": st.get("format_reasks", 0),
-                           "field_work": st.get("field_work_reasks", 0)},
+                           "field_work": st.get("field_work_reasks", 0),
+                           "city": st.get("city_reasks", 0),
+                           "relocation": st.get("relocation_reasks", 0)},
             }
         trace: dict[str, Any] = {"decision": decision, "state": state_snap,
                                  "salary": getattr(self._engine, "last_salary", None)}

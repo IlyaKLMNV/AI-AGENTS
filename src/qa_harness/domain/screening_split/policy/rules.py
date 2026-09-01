@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .budgets import EVENT_BUDGETS, REASK_BUDGETS, STALL_BUDGET
-from .geo import relocation_pointless
 from .observation import TERMINAL_SIGNAL_REASON
 
 # Исходы, которые не являются ключом реестра скриптов: их разворачивает `core`.
@@ -124,41 +123,35 @@ def r5_geo_ko(f) -> Optional[Outcome]:
     return None
 
 
-def _elsewhere(f) -> bool:
-    """Кандидат назвал город, и это НЕ город вакансии. Город неизвестен → `False`: без него отказ от
-    переезда ещё ничего не значит, и догадка стоила бы ложного отсева."""
-    return bool(f.state.get("candidate_city")) and not relocation_pointless(f.state, f.ctx)
+def r5a_location_ko(f) -> Optional[Outcome]:
+    """Кандидат не поедет туда, где нужно присутствовать (Р18).
+
+    Пункт `relocation_check` открывается кодом только когда формат УЖЕ подтверждён, город известен и
+    не совпадает с локацией вакансии, — поэтому здесь речь именно про место, а не про формат, и
+    отдельных проверок на город тут не нужно.
+    """
+    if f.state.get("relocation_check") != "pending":
+        return None
+    if f.state.get("relocation_ready") != "no":
+        return None
+    return Outcome("KO_LOCATION", "script")
 
 
 def r6_format_ko(f) -> Optional[Outcome]:
-    """Не готов к формату, и переезд эту проблему не решает. Ключ выводит КОД из формата вакансии и
-    наличия локации — в v2 выбор между `KO_FORMAT_OFFICE`/`_HYBRID`/`_NOCITY` делала модель
-    (`system.md:276-277`), хотя это чистая функция от контекста.
+    """Формат работы кандидату не подходит. Точка (Р18).
 
-    Требование «И не готов к переезду» ослаблено до «переезд не спасает»: прежнее условие делало все
-    три ключа практически недостижимыми. Кандидат В ГОРОДЕ вакансии, отказавшийся от формата,
-    отказываться от переезда не может — переезжать ему некуда, — и отсев не срабатывал: ход уходил в
-    переспрос, а через три переспроса кандидат получал `STOP_PERSISTENT` («Прошу прощения за
-    беспокойство») вместо объяснения, что позиция требует присутствия.
+    Раньше правило требовало вдобавок, чтобы «переезд не спасал», а согласие переехать закрывало
+    `format_check` — и кандидат «в офис не готов, но перееду» проверку формата проходил. Формат и
+    локация — разные требования: отказ от формата отсевает независимо от города и готовности к
+    переезду, а локацию проверяет отдельный пункт повестки (R5a).
 
-    Три ветки «переезд не спасает»: локации у вакансии нет · кандидат уже в ней · он прямо отказался
-    переезжать. Город неизвестен — продолжаем спрашивать, догадка здесь стоила бы ложного отсева.
-
-    ВТОРОЙ вход в отсев — отказ ПРО МЕСТО без слов про формат: кандидат в другом городе сказал только
-    «переезжать не буду». Требование `format_ready == "no"` такой ход не поднимало, и он уходил в
-    переспросы до `STOP_PERSISTENT` — та же дыра, что первая ветка закрыла с другой стороны. В hh это
-    отдельное правило R5a → `KO_LOCATION`; в TG такого ключа в реестре нет, и объяснение даёт тот же
-    `KO_FORMAT_*` («важна работа из города X»). Ложного отсева на удалённых вакансиях быть не может:
-    им `init_state` ставит `format_check: "n/a"`, и правило не проходит первое условие.
+    Ключ выводит КОД из формата вакансии и наличия локации — в v2 выбор между
+    `KO_FORMAT_OFFICE`/`_HYBRID`/`_NOCITY` делала модель (`system.md:276-277`), хотя это чистая
+    функция от контекста.
     """
     if f.state.get("format_check") != "pending":
         return None
-    refused_format = f.obs.facts.get("format_ready") == "no"
-    refused_relocation = f.state.get("relocation_ready") == "no"
-    if refused_format:
-        if not (refused_relocation or relocation_pointless(f.state, f.ctx)):
-            return None
-    elif not (refused_relocation and _elsewhere(f)):
+    if f.obs.facts.get("format_ready") != "no":
         return None
     if not f.ctx.location:
         return Outcome("KO_FORMAT_NOCITY", "script")
@@ -252,7 +245,8 @@ RULES: tuple[Rule, ...] = (
     Rule("R3.terminal_signal",    r3_terminal_signal,    "терминальный сигнал, с исключениями R3a/R3b"),
     Rule("R4.salary_ko",          r4_salary_ko,          "ожидания выше максимума вилки"),
     Rule("R5.geo_ko",             r5_geo_ko,             "гео-ограничение вакансии"),
-    Rule("R6.format_ko",          r6_format_ko,          "не готов ни к формату, ни к переезду"),
+    Rule("R5a.location_ko",       r5a_location_ko,       "присутствие невозможно: переезд отвергнут"),
+    Rule("R6.format_ko",          r6_format_ko,          "формат работы не подходит"),
     Rule("R7.event_threshold",    r7_event_threshold,    "порог событийного счётчика"),
     Rule("R8.reask_cap",          r8_reask_cap,          "лимит переспросов"),
     Rule("R9.agenda_complete",    r9_agenda_complete,    "всё собрано"),

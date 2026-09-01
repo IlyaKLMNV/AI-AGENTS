@@ -25,7 +25,7 @@ from .. import salary as salary_mod
 from .. import state as state_model
 from . import gates
 from .budgets import EVENT_BUDGETS, REASK_BUDGETS, STALL_BUDGET, config_digest
-from .geo import relocation_pointless
+from .geo import same_city
 from . import reasons
 from .observation import SIGNAL_TO_COUNTER, Observation
 from .rules import RESUME_AFTER_REFUSE, RULES, Outcome
@@ -188,6 +188,7 @@ def _updates_from_observation(obs: Observation, state: dict) -> list[dict]:
     city = obs.facts.get("candidate_city")
     if isinstance(city, str) and city.strip():
         updates.append({"key": "candidate_city", "value": city.strip()})
+        updates.append({"key": "city_check", "value": "closed"})
 
     relocation = obs.facts.get("relocation_ready")
     if relocation in ("yes", "no"):
@@ -195,8 +196,12 @@ def _updates_from_observation(obs: Observation, state: dict) -> list[dict]:
 
     if state.get("format_check") == "pending" and obs.facts.get("format_ready") == "yes":
         updates.append({"key": "format_check", "value": "closed"})
-    if state.get("format_check") == "pending" and relocation == "yes":
-        updates.append({"key": "format_check", "value": "closed"})
+
+    # Согласие переехать закрывает ПУНКТ ПРО ПЕРЕЕЗД и только его (Р18). Раньше оно закрывало
+    # `format_check`, и кандидат «в офис не готов, но перееду» проходил проверку формата: переезд
+    # отвечал на вопрос, которого ему не задавали. Формат и локация — разные требования.
+    if relocation == "yes" and state.get("relocation_check") == "pending":
+        updates.append({"key": "relocation_check", "value": "closed"})
 
     known = {q["key"] for q in state.get("questions", [])}
     for answer in obs.answers:
@@ -204,6 +209,23 @@ def _updates_from_observation(obs: Observation, state: dict) -> list[dict]:
         if key in known and answer.get("substantive"):
             updates.append({"key": key, "value": "closed"})
     return updates
+
+
+def _open_relocation_check(state: dict, ctx: "DecideContext") -> dict:
+    """Переводит `relocation_check` в `pending`, когда вопрос про переезд стал осмысленным (Р18).
+
+    Условия все четыре: формат подтверждён кандидатом · город известен · у вакансии есть локация ·
+    город не совпадает с локацией. На удалённой вакансии `format_check` остаётся `n/a`, поэтому пункт
+    не откроется никогда — переезжать некуда, локация там важна только для гео-ограничения (R5).
+    """
+    if state.get("relocation_check") != "n/a":
+        return state
+    if state.get("format_check") != "closed":
+        return state
+    city = state.get("candidate_city")
+    if not city or not ctx.location or same_city(city, ctx.location):
+        return state
+    return state_model.apply_updates(state, [{"key": "relocation_check", "value": "pending"}])
 
 
 def _stall_count(state: dict, progress_before: tuple, before: int) -> int:
@@ -249,13 +271,22 @@ def _charge_counter(obs: Observation, state: dict) -> tuple[dict, Optional[str],
 # ── шаг 4: фокус и переспросы ─────────────────────────────────────────────────
 
 def _focus_of(state: dict) -> Optional[str]:
-    """Первый незакрытый приоритет: зарплата → формат → доп-вопросы. Порядок сегодня описан прозой в
-    промпте (`system.md:307-316`) вместе с исключением «пункт закроет код»; исключение исчезает,
-    потому что к моменту вычисления фокуса код уже посчитал."""
+    """Первый незакрытый пункт повестки: зарплата → город → формат → переезд → доп-вопросы (Р18).
+
+    Порядок сегодня описан прозой в промпте (`system.md:307-316`) вместе с исключением «пункт закроет
+    код»; исключение исчезает, потому что к моменту вычисления фокуса код уже посчитал.
+
+    Город стоит ПЕРЕД форматом, но отсев по формату от этого не зависит: правило R6 срабатывает на
+    отказе от формата в любой момент, даже если город ещё не назван.
+    """
     if state.get("salary") != "closed":
         return "salary"
+    if state.get("city_check") == "pending":
+        return "city"
     if state.get("format_check") == "pending":
         return "format"
+    if state.get("relocation_check") == "pending":
+        return "relocation"
     pending = state_model.pending_questions(state)
     return pending[0]["key"] if pending else None
 
@@ -277,6 +308,14 @@ def _reask_candidate(state_before: dict, state_now: dict, focus: Optional[str]) 
         if state_now.get("format_check") != "pending":
             return None
         return "format", REASK_BUDGETS["format"], state_now.get("format_reasks", 0)
+    if focus == "city":
+        if state_now.get("city_check") != "pending":
+            return None
+        return "city", REASK_BUDGETS["city"], state_now.get("city_reasks", 0)
+    if focus == "relocation":
+        if state_now.get("relocation_check") != "pending":
+            return None
+        return "relocation", REASK_BUDGETS["relocation"], state_now.get("relocation_reasks", 0)
     question = next((q for q in state_now.get("questions", []) if q["key"] == focus), None)
     if question is None or question.get("status") != "pending":
         return None
@@ -302,6 +341,12 @@ _SALARY_WHY = {
     False: "Объясни: сумма нужна, чтобы сверить ожидания с бюджетом позиции.",
 }
 
+# Город спрашивается всегда, в том числе на удалённых вакансиях (Р18), поэтому вопрос «а зачем вам
+# мой город» законен и ответ на него обязан быть правдивым. Ни вилку, ни гео-ограничение вакансии
+# объяснение не раскрывает: причины настоящие и нейтральные.
+_CITY_WHY = ("Объясни: город нужен, чтобы понимать часовой пояс для созвонов и возможность "
+             "оформления.")
+
 # Кандидат назвал сумму/город/ответил на вопрос — и тут же получал следующее требование без единого
 # слова признания. Благодарность поручается КОДОМ, а не оставляется на усмотрение Интервьюера: судья
 # слоя B сверяет текст с инструкцией и незаказанную вежливость засчитал бы как отсебятину.
@@ -315,6 +360,7 @@ ACKNOWLEDGE = "Коротко поблагодари кандидата за о�
 _LAST_CALL = {
     "salary": "Предупреди: без ориентира по сумме продолжить скрининг не сможем.",
     "format": "Предупреди: без ответа про формат продолжить скрининг не сможем.",
+    "city": "Предупреди: без ответа на этот вопрос продолжить скрининг не получится.",
     # Доп-вопрос диалог не рубит — кап помечает его `refused` и едет дальше, об этом и предупреждаем.
     "question": ("Предупреди: если ответа не будет, отметим вопрос как оставшийся без ответа "
                  "и перейдём к следующему."),
@@ -328,6 +374,10 @@ def _reasks_of(focus: str, state: dict) -> int:
         return int(state.get("salary_reasks", 0))
     if focus == "format":
         return int(state.get("format_reasks", 0))
+    if focus == "city":
+        return int(state.get("city_reasks", 0))
+    if focus == "relocation":
+        return int(state.get("relocation_reasks", 0))
     question = next((q for q in state.get("questions", []) if q["key"] == focus), None)
     return int((question or {}).get("reask_count", 0))
 
@@ -353,26 +403,41 @@ def _ask_slot(focus: str, state: dict, ctx: DecideContext) -> str:
             parts.append(_LAST_CALL["salary"])
         parts.append("Конкретных чисел вилки не называй.")
         return " ".join(parts)
+    if focus == "city":
+        # Отдельный пункт повестки, а не часть вопроса про формат (Р18). Ступени: нейтральный вопрос →
+        # объяснение зачем → предупреждение. Кап (3-й переспрос) завершает диалог: без города нет ни
+        # гео-отсева, ни понимания, как оформлять.
+        parts = []
+        if reasks >= 1:
+            parts.append(_CITY_WHY)
+        if reasks >= 2:
+            parts.append(_LAST_CALL["city"])
+        parts.append(("Спроси, " if reasks == 0 else "Переспроси, ")
+                     + "в каком городе кандидат сейчас находится.")
+        return " ".join(parts)
+    if focus == "relocation":
+        # Пункт открывается только когда формат ПОДТВЕРЖДЁН, а город кандидата не совпадает с
+        # локацией вакансии. Поэтому здесь речь именно про место, а не про формат.
+        city = ctx.location or ""
+        parts = [f"Донеси: работа предполагает присутствие в городе {city}." if city else ""]
+        parts = [x for x in parts if x]
+        if reasks >= 1:
+            parts.append("Объясни: без ответа про локацию мы не сможем двигаться дальше.")
+        if reasks >= 2:
+            parts.append(_LAST_CALL["format"])
+        parts.append(("Спроси, " if reasks == 0 else "Переспроси, ")
+                     + "готов ли кандидат переехать в этот город или работать из него.")
+        return " ".join(parts)
     if focus == "format":
         city = ctx.location or ""
         wf = (ctx.work_format or "").strip().lower()
         formats = {"office": "работа из офиса", "hybrid": "гибридный формат"}
         human = formats.get(wf, "требуемый формат работы")
         where = f" в городе {city}" if city else ""
-        # Три формы вопроса вместо двух. Третья — про переезд, и без неё отсев по формату был
-        # недостижим: правило R6 требует ОТКАЗА от переезда, а спрашивал код только про формат.
-        # Кандидат из другого города отвечал «в офис не готов», `relocation_ready` оставался `null`,
-        # и ход уходил в переспрос — до капа и `STOP_PERSISTENT` вместо `KO_FORMAT_*`.
-        # Радиус здесь не нужен: спрашиваем не «далеко ли вы», а «готовы ли работать отсюда».
-        if not state.get("candidate_city"):
-            ask = "в каком городе находится кандидат и удобен ли ему такой формат работы."
-        elif not relocation_pointless(state, ctx):
-            # Город назван предыдущей фразой (`where`), поэтому здесь «этот город»: подстановка
-            # названия в падеж дала бы «переехать в Москва».
-            ask = ("удобен ли кандидату такой формат работы и готов ли он переехать в этот город "
-                   "или работать из него.")
-        else:
-            ask = "удобен ли кандидату такой формат работы."
+        # Только про формат: город спрашивает пункт `city`, переезд — пункт `relocation` (Р18).
+        # Прежняя склейка «формат + город + переезд» в одном вопросе и была причиной того, что
+        # согласие переехать закрывало проверку формата.
+        ask = "удобен ли кандидату такой формат работы."
         # «Обязательное требование» с первого же хода звучало ультиматумом («это обязательное
         # требование вакансии» в ответ на только что названную зарплату). Сначала — нейтральное
         # описание условий и вопрос об удобстве; жёсткость приходит ступенью переспроса, когда
@@ -514,6 +579,9 @@ def decide(state: dict, observation: Observation, message: str, ctx: DecideConte
         salary.effect = "closed"
 
     working, charged, counter_before = _charge_counter(observation, working)
+    # Пункт про переезд открывается ПОСЛЕ применения фактов: он зависит и от подтверждённого формата,
+    # и от названного города, а оба могут прийти этим же ходом (Р18).
+    working = _open_relocation_check(working, ctx)
 
     focus = _focus_of(working)
     reask = _reask_candidate(state_before, working, focus)
