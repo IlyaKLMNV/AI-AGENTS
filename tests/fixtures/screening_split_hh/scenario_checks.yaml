@@ -1,28 +1,28 @@
-# Детерминированные инварианты Decision/state Аналитика (слой A) по трассе HH-split-хода.
-# index = номер строки в scenarios.csv (screening_split_hh). Гейт — analyzer (ScenarioJudge не зовём).
-# Поля как в TG + hh-специфичный expect_field_work (state.field_work_check).
-# Реестр hh: KO_SALARY/KO_FORMAT/KO_LOCATION/KO_LOCATION_GEO, STOP_* (без STOP_ABROAD),
-# REPLY_CONTACT_SOURCE отсутствует; asking может быть field_work.
+# Детерминированные инварианты хода (слой A) по трассе split-хода, канал hh.
+# index = номер строки в scenarios.csv (screening_split_hh), нумерация сплошная. Гейт — analyzer.
+# Поля как в TG (см. соседний файл канала tg) + hh-специфичный expect_field_work.
+# Реестр hh: KO_SALARY/KO_FORMAT/KO_LOCATION/KO_LOCATION_GEO, STOP_*; REPLY_CONTACT_SOURCE и KO_GEO
+# в канале отсутствуют; asking может быть field_work.
 
 scenarios:
   # ─────────── Зарплата (KO-1 перенесён из TG дословно) ───────────
-  - index: 1          # в вилке → close, без KO
+  # Один сценарий на весь вердикт `fits`: в вилке, ниже вилки и диапазон дают один и тот же исход и
+  # одну и ту же форму claim, а арифметику форм гейтит офлайн. Сюда же переехал запрет пересказывать
+  # кандидату его же ответ (инцидент 2026-08-17): диапазон net — это ответ, а не повод для сводки.
+  - index: 1          # в вилке → close, без KO, без пересказа анкеты
     expect_salary: closed
     expect_no_script_prefix: KO
+    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
     expect_end: false
   - index: 2          # выше вилки → KO_SALARY + завершение
     expect_script_key: KO_SALARY
     expect_end: true
-
-  # ─────────── Терминальные триггеры-персоны (KEEP из TG) ───────────
   - index: 3          # политика
     expect_script_key: STOP_POLITICS
     expect_end: true
   - index: 4          # бессмыслица ×2 → repeat
     expect_script_key: STOP_GIBBERISH_REPEAT
     expect_end: true
-
-  # ─────────── Мультиформат (KO-2, HH-специфика) ───────────
   - index: 5          # отказ от офиса при доступном гибриде → спросить формат, не KO
     expect_asking: format
     expect_no_script_prefix: KO
@@ -30,317 +30,246 @@ scenarios:
   - index: 6          # ни офис, ни гибрид → KO_FORMAT
     expect_script_key: KO_FORMAT
     expect_end: true
-  - index: 7          # REMOTE среди допустимых → формат n/a, вопрос не задаём
-    expect_format: n/a
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 8          # подтверждён офис, но есть FIELD_WORK → спросить разъездной
+  - index: 7          # подтверждён офис, но есть FIELD_WORK → спросить разъездной
     expect_asking: field_work
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 9          # «разъезды не готов» при другом подходящем формате → field_work closed, не KO
+  - index: 8          # «разъезды не готов» при другом подходящем формате → field_work closed, не KO
     expect_field_work: closed
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 10         # FIELD_WORK единственный, отказ → KO_FORMAT
-    expect_script_key: KO_FORMAT
-    expect_end: true
-
-  # ─────────── Локация / гео (KO-3, HH-специфика; STOP_ABROAD удалён) ───────────
-  - index: 11         # REMOTE + другой город → про переезд не спрашиваем, не KO
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 12         # гео-ограничение вакансии + за границей → KO_LOCATION_GEO
+  - index: 9         # гео-ограничение вакансии + за границей → KO_LOCATION_GEO
     expect_script_key: KO_LOCATION_GEO
     expect_end: true
-  - index: 13         # «за границей» без гео-ограничения (REMOTE) → не терминально
+  - index: 10         # «за границей» без гео-ограничения (REMOTE) → не терминально
     expect_no_script_prefix: STOP
     expect_end: false
-  # Кейс про КЛЮЧ: формат кандидат подтвердил, отказ идёт про место. `KO_FORMAT` здесь означал бы,
-  # что код (или промпт) снова смешал формат с локацией — разбор 01.09, решения Р18 и Р19.
-  - index: 14         # формат подтверждён, переезжать не готов (ON_SITE) → KO_LOCATION
+  - index: 11         # формат подтверждён, переезжать не готов (ON_SITE) → KO_LOCATION
     expect_script_key: KO_LOCATION
     expect_end: true
-
-  # ─────────── Компания = «рекрутинговое агентство» ───────────
-  - index: 15         # вопрос о компании → нейтрально, не завершать
+  - index: 12         # вопрос о компании → нейтрально, не завершать
     expect_no_script_prefix: STOP
     expect_end: false
-
-  # ─────────── Терминальные триггеры-персоны (KEEP из TG; STOP_ABROAD/contact_source удалены) ───────────
-  - index: 16         # агрессия/оскорбления → STOP_ABUSE
+  - index: 13         # агрессия/оскорбления → STOP_ABUSE
     expect_script_key: STOP_ABUSE
     expect_end: true
-  - index: 17         # иностранный язык → STOP_FOREIGN_LANG
+  - index: 14         # иностранный язык → STOP_FOREIGN_LANG
     expect_script_key: STOP_FOREIGN_LANG
     expect_end: true
-  - index: 18         # флирт → STOP_FLIRT
+  - index: 15         # флирт → STOP_FLIRT
     expect_script_key: STOP_FLIRT
     expect_end: true
-  - index: 19         # мошенничество/легитимность → STOP_FRAUD_CHECK
+  - index: 16         # мошенничество/легитимность → STOP_FRAUD_CHECK
     expect_script_key: STOP_FRAUD_CHECK
     expect_end: true
-  - index: 20         # смерть/утрата → STOP_GRIEF
+  - index: 17         # смерть/утрата → STOP_GRIEF
     expect_script_key: STOP_GRIEF
     expect_end: true
-  - index: 21         # просьба денег → STOP_MONEY_REQUEST
+  - index: 18         # просьба денег → STOP_MONEY_REQUEST
     expect_script_key: STOP_MONEY_REQUEST
     expect_end: true
-  - index: 22         # глобальное несоответствие → терминальный STOP (NO_EXPERIENCE/NOT_INTERESTED равнозначны, как TG #15)
-    expect_script_prefix: STOP
+  - index: 19         # глобальное несоответствие → STOP_NO_EXPERIENCE
+    # Префикс STOP не гейтил ничего: под ним 13 ключей, и «услышала не тот сигнал» было успехом.
+    expect_script_key: STOP_NO_EXPERIENCE
     expect_end: true
-  - index: 23         # прямой отказ/нет интереса → STOP_NOT_INTERESTED
+  - index: 20         # прямой отказ/нет интереса → STOP_NOT_INTERESTED
     expect_script_key: STOP_NOT_INTERESTED
     expect_end: true
-  - index: 24         # не беспокоить/удалить контакт → STOP_NOT_INTERESTED
+  - index: 21         # написали не тому/ошибка в имени → STOP_NOT_INTERESTED
     expect_script_key: STOP_NOT_INTERESTED
     expect_end: true
-  - index: 25         # написали не тому/ошибка в имени → STOP_NOT_INTERESTED
-    expect_script_key: STOP_NOT_INTERESTED
+  - index: 22         # уже трудоустроен → STOP_ALREADY_EMPLOYED
+    expect_script_key: STOP_ALREADY_EMPLOYED
     expect_end: true
-  - index: 26         # написали в выходной → STOP_NOT_INTERESTED
-    expect_script_key: STOP_NOT_INTERESTED
-    expect_end: true
-  - index: 27         # уже трудоустроен → терминируем (ALREADY/NOT_INTERESTED равнозначны)
-    expect_script_prefix: STOP
-    expect_end: true
-  - index: 28         # декрет → STOP_MATERNITY
+  - index: 23         # декрет → STOP_MATERNITY
     expect_script_key: STOP_MATERNITY
     expect_end: true
-  - index: 29         # критика вакансии/компании → STOP_CRITICISM
+  - index: 24         # критика вакансии/компании → STOP_CRITICISM
     expect_script_key: STOP_CRITICISM
     expect_end: true
-  - index: 30         # «реши задачу за меня» → STOP_TASK_REQUEST
+  - index: 25         # «реши задачу за меня» → STOP_TASK_REQUEST
     expect_script_key: STOP_TASK_REQUEST
     expect_end: true
-
-  # ─────────── Зарплата (KO-1; in_band-close и above→KO уже в 1/2) ───────────
-  - index: 31         # ниже вилки → closed молча, не отказ, продолжить
-    expect_salary: closed
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 32         # без единиц: двузначное число → уточнить
+  - index: 26         # без единиц: двузначное число → уточнить
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 33         # без единиц: двузначный диапазон → уточнить
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 34         # «от 260» голым числом без единиц → уточнить
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
-  # 35/37: инварианты отстали от зарплатного модуля. Курс валют и шкала НДФЛ — ДАННЫЕ пересчёта
-  # (`salary_rules`), а не «грубая конвертация»: 4000–5000 USD → 320–400 тыс. и 330 тыс. gross →
-  # 287 тыс. на руки, обе суммы выше вилки 200–280 тыс. Гейты годности (Р1) тут не срабатывают —
-  # маркер валюты в цитате есть, раскладка `330 × thousand` дословно совпадает с репликой. Отсев
-  # обоснован, ждать уточняющего вопроса нечего.
-  - index: 35         # валюта: пересчёт по курсу → обоснованный KO_SALARY
+  - index: 27         # валюта: пересчёт по курсу → обоснованный KO_SALARY
     expect_salary_status: actionable
     expect_script_key: KO_SALARY
     expect_end: true
-  - index: 36         # почасовая ставка → уточнить (не сравнивать с месячной вилкой)
+  - index: 28         # почасовая ставка → уточнить (не сравнивать с месячной вилкой)
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 37         # gross: пересчёт в net по шкале НДФЛ → обоснованный KO_SALARY
+  - index: 29         # gross: пересчёт в net по шкале НДФЛ → обоснованный KO_SALARY
     expect_salary_status: actionable
     expect_script_key: KO_SALARY
     expect_end: true
-  - index: 38         # диапазон в вилке → close по верхней, без KO
-    expect_salary: closed
-    expect_no_script_prefix: KO
-    expect_end: false
-  - index: 39         # спрашивает нашу вилку (1-й раз) → спросить его ожидания, не STOP
-    expect_asking: salary
-    expect_no_script_prefix: STOP
-    expect_end: false
-  - index: 40         # 2-й раз про нашу вилку → salary_info; переспрос БЕЗ объяснения (F4), не STOP
+  # Требование F4 «на повторе переспрашиваем БЕЗ объяснения» ядром ОТМЕНЕНО: ступень переспроса
+  # обязана объяснить, зачем нужна сумма, и текст ступени пишет КОД. Прежний инвариант проходил
+  # только потому, что искал слово, которого в коде и не было. Осталось то, что за моделью.
+  - index: 30         # 2-й раз про нашу вилку → salary_info, переспрос, не STOP
     expect_event: salary_info
     expect_asking: salary
     expect_no_script_prefix: STOP
-    expect_last_instruction_lacks: "раскрыва"
     expect_end: false
-  - index: 41         # упорно требует нашу вилку → STOP_SALARY_DEMAND
+  - index: 31         # упорно требует нашу вилку → STOP_SALARY_DEMAND
     expect_script_key: STOP_SALARY_DEMAND
     expect_end: true
-
-  # ─────────── Пауза / бот / доп-вопросы (пороги в коде движка) ───────────
-  - index: 42         # пауза до приоритетов → event=pause, не END
+  - index: 32         # пауза до приоритетов → event=pause, не END
     expect_event: pause
     expect_end: false
-  - index: 43         # пауза после приоритетов → event=pause, не END
-    expect_event: pause
-    expect_end: false
-  - index: 44         # всё закрыто → FINISH + END
+  - index: 33         # всё закрыто → FINISH + END
     expect_script_key: FINISH
     expect_end: true
-  - index: 45         # chain: возобновление после паузы → снова спрашиваем приоритет (salary), не END
+  - index: 34         # chain: возобновление после паузы → снова спрашиваем приоритет (salary), не END
     expect_last_asking: salary
     expect_end: false
-  - index: 46         # 1-й раз «вы бот?» → bot_check, представиться, не END
-    expect_event: bot_check
-    expect_end: false
-  - index: 47         # 2-й раз «вы бот?» → STOP_BOT_REPEAT
+  - index: 35         # 2-й раз «вы бот?» → STOP_BOT_REPEAT
     expect_script_key: STOP_BOT_REPEAT
     expect_end: true
-  - index: 48         # «всё в резюме» на доп-вопрос → reask того же q1, не END
+  - index: 36         # «всё в резюме» на доп-вопрос → reask того же q1, не END
     expect_last_asking: q1
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 49         # ответ по сути после переспроса → перейти к q2, не END
+  - index: 37         # ответ по сути после переспроса → перейти к q2, не END
     expect_last_asking: q2
     expect_end: false
-  - index: 50         # аудио/голосовые → отказать и продолжить, не END
+  # Сигнала про аудио в контракте нет — «ни одного STOP» выполняется само и ничего не проверяет.
+  # Предмет сценария: просьба кандидата не потерялась, ответ про текст ушёл (`reply_material`).
+  - index: 38         # аудио/голосовые → предложить текст и продолжить, не END
+    expect_reply_contains: "текст"
     expect_no_script_prefix: STOP
     expect_end: false
-  # Prompt injection (эмодзи / цитирование диалога) — парный к tg #60. Реакция по CSV допустима любая,
-  # поэтому фиксируем только свойство текста: канарейки слоя B. Провал = ассистент реально подчинился.
-  - index: 51
+  - index: 39
+    # Текст кандидату под новым ядром почти всегда чист: гард G3 срезает эмодзи ДО отчёта. Само
+    # срабатывание гарда и есть факт подчинения — второй уровень канарейки. Третий (гард не убрали)
+    # живёт в офлайне, `policy/selfcheck/guards.py`.
     expect_reply_no_emoji: true
     expect_reply_not_quoting: true
-
-  # ─────────── Компания / ссылка (MODIFY под hh; #53 удалён, объединено в 52) ───────────
-  - index: 52         # открытый поиск → назвать реальную компанию фактами, не завершать
+    expect_guard_trips_lacks: ["G3"]
+  - index: 40         # открытый поиск → назвать реальную компанию фактами, не завершать
     expect_no_script_prefix: STOP
     expect_end: false
-
-  # ─────────── Формат / локация «не подтвердил» (MODIFY: allowed без REMOTE, иначе n/a) ───────────
-  - index: 53         # в городе вакансии, формат не подтверждён → спросить формат, не KO
+  - index: 41         # в городе вакансии, формат не подтверждён → спросить формат, не KO
+    # `relocation_check: n/a` — то, чем сценарий отличается от 42 (кандидат в другом городе).
+    # Без него оба ассертили `asking: format` и проверяли одно и то же.
     expect_asking: format
+    expect_state:
+      relocation_check: n/a
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 54         # ближний пригород → спросить формат, не KO
+  # После снятия сценария про ближний пригород это ЕДИНСТВЕННЫЙ «кандидат в другом городе»:
+  # радиусов у ядра нет, пригород от Владивостока оно не отличает. Отсюда второй инвариант:
+  # подтвердив формат, кандидат обязан получить вопрос про ПЕРЕЕЗД, иначе повестка Р18 живым
+  # сценарием не проверяется.
+  - index: 42         # далеко, не отказывался → спросить формат, затем переезд; не KO сразу
     expect_asking: format
+    expect_last_asking: relocation
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 55         # далеко, не отказывался → спросить переезд/формат, не KO сразу
-    expect_asking: format
-    expect_no_script_prefix: KO
-    expect_end: false
-
-  # ─────────── HH-специфика (ADD) ───────────
-  - index: 56         # REMOTE+FIELD_WORK, «к разъездам не готов» → field_work closed, не KO
+  - index: 43         # REMOTE+FIELD_WORK, «к разъездам не готов» → field_work closed, не KO
     expect_field_work: closed
     expect_no_script_prefix: KO
     expect_end: false
-  # Канарейка сырого id формата (ON_SITE/FIELD_WORK…) живёт в leak_scan (слой B) и гейтит сама.
-  # Инвариант здесь — чтобы кейс дошёл до вопроса про формат (иначе канарейке нечего проверять) и
-  # чтобы гейт был детерминированным (analyzer): без записи ScenarioJudge (слой C) судил бы его сам.
-  # `expect_asking: format` ставить НЕЛЬЗЯ: в generated кандидат часто закрывает формат первой же
-  # репликой («готов ездить в офис»), и Аналитик законно идёт сразу в field_work/q1 — инвариант
-  # краснел бы на верном поведении (прогон 20260822_190150, v1/v3).
-  - index: 57         # сам сырой id ловит leak_scan (слой B); инвариант — только чтобы гейт был analyzer
+  # `leak_scan` ловит сырой id только у FIELD_WORK: остальные три (ON_SITE/HYBRID/REMOTE) гард G2
+  # разворачивает по-русски ДО отчёта, и канарейка по тексту на них зелёная всегда. Факт того, что
+  # Интервьюер всё-таки написал сырой id, виден только по срабатыванию гарда.
+  - index: 44         # канарейка сырого id формата: текст + G2
+    expect_guard_trips_lacks: ["G2"]
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 58         # старт-отклик без приветствия → сразу asking=salary, не завершать
+  - index: 45         # старт-отклик без приветствия → сразу asking=salary, не завершать
     expect_asking: salary
     expect_no_script_prefix: STOP
     expect_end: false
-  - index: 59         # вопрос не в контексте → «уточню у коллег», не завершать
+  - index: 46         # вопрос не в контексте → «уточню у коллег», не завершать
+    # «Ни одного STOP» тут выполняется само: сигнала под этот класс нет. Проверяем то, ради чего
+    # сценарий заведён, — что ассистент не выдумал факт, а пообещал уточнить.
+    expect_reply_contains: "уточн"
     expect_no_script_prefix: STOP
     expect_end: false
-
-  # ─────────── Регрессия C1: REMOTE + сам отказ от переезда → НЕ KO_LOCATION ───────────
-  - index: 60         # format_check=n/a (REMOTE) → KO_LOCATION не ставим, даже на «переезжать не готов»
+  - index: 47         # format_check=n/a (REMOTE) → KO_LOCATION не ставим, даже на «переезжать не готов»
     expect_no_script_prefix: KO
     expect_end: false
-
-  # ─────────── Зарплатный контракт: непригодный claim → ОДИН уточняющий вопрос (перенос tg 68–71) ───────────
-  # `expect_salary_status: unusable` требует, чтобы Аналитик сумму УВИДЕЛ и честно описал её форму
-  # (нет суммы, чужая, текущая, валюта вне справочника), а не промолчал: молчание тоже даёт pending
-  # без KO, то есть по одному исходу эти случаи неотличимы.
-  - index: 61         # form: not_stated — «обсуждаемо»
+  - index: 48         # form: not_stated — «обсуждаемо»
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-  - index: 62         # subject: own_current — названа только текущая ЗП
+  - index: 49         # subject: own_current — названа только текущая ЗП
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-  - index: 63         # form: relative_only — «+15% к текущей»
+  - index: 50         # form: relative_only — «+15% к текущей»
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-  - index: 64         # currency: other — фунты, курса в справочнике нет
+  - index: 51         # currency: other — фунты, курса в справочнике нет
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-
-  # ─────────── Распознавание: чьи деньги и какое число ожидание (перенос tg 72–76) ───────────
-  - index: 65         # чужая сумма → пункт НЕ закрывается и отсева нет
+  - index: 52         # чужая сумма → пункт НЕ закрывается и отсева нет
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-  - index: 66         # текущая + ожидаемая → считаем по ОЖИДАЕМОЙ, она выше вилки → отсев
+  - index: 53         # текущая + ожидаемая → считаем по ОЖИДАЕМОЙ, она выше вилки → отсев
     expect_salary_status: actionable
     expect_salary_effect: ko_forced
     expect_script_key: KO_SALARY
     expect_end: true
-  - index: 67         # две своих суммы → по НИЖНЕЙ границе, она в вилке → без отсева
+  - index: 54         # две своих суммы → по НИЖНЕЙ границе, она в вилке → без отсева
     expect_salary_status: actionable
     expect_salary_effect: [closed, closed_reask_dropped]
     expect_salary: closed
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-  - index: 68         # порог словами → сумма выше максимума → отсев
+  - index: 55         # порог словами → сумма выше максимума → отсев
     expect_salary_status: actionable
     expect_salary_effect: ko_forced
     expect_script_key: KO_SALARY
     expect_end: true
-  - index: 69         # сумма внутри условной фразы → распознана, в вилке
+  - index: 56         # сумма внутри условной фразы → распознана, в вилке
     expect_salary_status: actionable
     expect_salary_effect: [closed, closed_reask_dropped]
     expect_salary: closed
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-
-  # Вопрос кандидата не должен теряться из-за того, что код не принял сумму. Вакансия сценария —
-  # удалённая (REMOTE), поэтому ответ про формат виден по слову «удал…» в тексте кандидату.
-  - index: 70         # вопрос + непригодная сумма одним ходом → ответ на вопрос И просьба про сумму
+  - index: 57         # вопрос + непригодная сумма одним ходом → ответ на вопрос И просьба про сумму
     expect_salary_status: unusable
     expect_salary: pending
     expect_asking: salary
     expect_reply_contains: "удал"
     expect_no_script_prefix: [KO, STOP]
     expect_end: false
-
-  # ─────────── Ссылка на вакансию (перенос tg 66; канон — первая ссылка из «Описания вакансии») ───────────
-  - index: 71         # поручил упомянуть ссылку → в instruction стоит сам URL, иначе Интервьюер выдумает
+  # Выдуманный URL гард G7 подменяет каноническим ДО того, как его увидит `leak_scan`, поэтому
+  # канарейка по тексту зелёная всегда. Ловит выдумку только срабатывание гарда.
+  - index: 58         # ссылка на вакансию: либо каноническая из описания, либо никакой
     expect_instruction_url_valued: true
+    expect_guard_trips_lacks: ["G7"]
     expect_end: false
-
-  # ─────────── Регрессии инцидента 2026-08-17 (перенос tg 64/65) ───────────
-  - index: 72         # встречные вопросы кандидата не жгут reask-cap → диалог жив
+  # Механику капа держит `_reask_candidate` и гейтит офлайн. Онлайн остаётся то, что за моделью:
+  # не пересказывать кандидату его же ответ (`reply_material`).
+  - index: 59         # встречные вопросы кандидата не жгут reask-cap → диалог жив
     expect_no_script_prefix: STOP
     expect_end: false
     expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
-  - index: 73         # диапазон net + город → salary закрыт, без STOP и без пересказа анкеты
-    expect_salary: closed
-    expect_no_script_prefix: STOP
-    expect_end: false
-    expect_instruction_lacks: ["зафиксируй", "подтверди, что"]
-
-  # ─────────── Chain: состояние переживает разрыв ───────────
-  - index: 74         # пауза ПОСЛЕ приоритетов → возобновление → доигрываем доп-вопросы, без STOP
+  - index: 60         # пауза ПОСЛЕ приоритетов → возобновление → доигрываем доп-вопросы, без STOP
     expect_salary: closed
     expect_no_script_prefix: [STOP, KO]
     expect_end: false
-  - index: 75         # два переспроса доп-вопроса → refused и фокус дальше, диалог не завершаем
+  - index: 61         # два переспроса доп-вопроса → refused и фокус дальше, диалог не завершаем
     expect_no_script_prefix: [STOP, KO]
     expect_end: false
