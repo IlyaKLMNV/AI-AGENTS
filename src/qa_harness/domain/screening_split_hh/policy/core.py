@@ -229,16 +229,24 @@ def _charge_counter(obs: Observation, state: dict) -> tuple[dict, Optional[str],
 def _open_relocation_check(state: dict, ctx) -> dict:
     """Переводит `relocation_check` в `pending`, когда вопрос про переезд стал осмысленным (Р18).
 
-    Присутствие требуется, если подтверждён присутственный формат ЛИБО разъездной: объекты заказчика
-    вокруг города вакансии, поэтому локация для `FIELD_WORK` важна так же, как для офиса. На вакансии
-    только с `REMOTE` оба пункта стоят `n/a`, и переезд не спрашивается никогда — там локация нужна
-    лишь для гео-ограничения (R5).
+    Два условия про формат, и оба узкие:
+
+    - **удалёнки нет среди допустимых.** Есть `REMOTE` — присутствие не требуется вообще, и пункта
+      переезда не существует; локация там нужна только гео-ограничению (R5);
+    - **какой-то допустимый формат ПОДТВЕРЖДЁН** (`formats.confirmed_any`), а не «проверка закрыта».
+      Закрытие ещё не значит согласие: `field_work_check` закрывается и отказом — по правилу канала
+      отказ от разъездного при другом допустимом формате отсевом не является. Первая версия правки
+      читала это закрытие как подтверждение присутствия и отсевала кандидата по локации на вакансии
+      `[REMOTE, FIELD_WORK]` — прогон 20260901_181013, сценарий 56 в обоих вариантах.
+
+    Разъездной формат при этом остаётся присутственным: подтверждённый `FIELD_WORK` без удалёнки
+    среди допустимых открывает вопрос про переезд так же, как офис (объекты вокруг города вакансии).
     """
     if state.get("relocation_check") != "n/a":
         return state
-    presence_confirmed = (state.get("format_check") == "closed"
-                          or state.get("field_work_check") == "closed")
-    if not presence_confirmed:
+    if "REMOTE" in formats.allowed(state):
+        return state
+    if not formats.confirmed_any(state):
         return state
     city = state.get("candidate_city")
     if not city or not ctx.location or same_city(city, ctx.location):

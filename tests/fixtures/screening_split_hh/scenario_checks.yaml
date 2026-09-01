@@ -134,21 +134,24 @@ scenarios:
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 35         # валюта → уточнить (не конвертировать грубо)
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
+  # 35/37: инварианты отстали от зарплатного модуля. Курс валют и шкала НДФЛ — ДАННЫЕ пересчёта
+  # (`salary_rules`), а не «грубая конвертация»: 4000–5000 USD → 320–400 тыс. и 330 тыс. gross →
+  # 287 тыс. на руки, обе суммы выше вилки 200–280 тыс. Гейты годности (Р1) тут не срабатывают —
+  # маркер валюты в цитате есть, раскладка `330 × thousand` дословно совпадает с репликой. Отсев
+  # обоснован, ждать уточняющего вопроса нечего.
+  - index: 35         # валюта: пересчёт по курсу → обоснованный KO_SALARY
+    expect_salary_status: actionable
+    expect_script_key: KO_SALARY
+    expect_end: true
   - index: 36         # почасовая ставка → уточнить (не сравнивать с месячной вилкой)
     expect_salary: pending
     expect_asking: salary
     expect_no_script_prefix: KO
     expect_end: false
-  - index: 37         # gross/процент сверху → уточнить net, не KO по gross
-    expect_salary: pending
-    expect_asking: salary
-    expect_no_script_prefix: KO
-    expect_end: false
+  - index: 37         # gross: пересчёт в net по шкале НДФЛ → обоснованный KO_SALARY
+    expect_salary_status: actionable
+    expect_script_key: KO_SALARY
+    expect_end: true
   - index: 38         # диапазон в вилке → close по верхней, без KO
     expect_salary: closed
     expect_no_script_prefix: KO

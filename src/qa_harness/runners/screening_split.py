@@ -710,6 +710,25 @@ def _policy_hh_selfcheck() -> List[tuple]:
     check("разъездной подтверждён + другой город → пункт про переезд открывается",
           plan.state_next.get("relocation_check") == "pending",
           str(plan.state_next.get("relocation_check")))
+    # Регрессия прогона 20260901_181013, сценарий 56: `[REMOTE, FIELD_WORK]`, кандидат отказался от
+    # разъездов (по правилу канала это НЕ отсев, `field_work_check` закрывается) и переезжать не
+    # готов. Первая версия Р18 читала это закрытие как подтверждение присутствия и отсевала по
+    # локации — на вакансии, где есть удалёнка и ехать никуда не надо.
+    st_rf = ready(["REMOTE", "FIELD_WORK"], candidate_city="Новосибирск", city_check="closed")
+    plan = decide(st_rf, obs(formats=[("FIELD_WORK", "no")]), "к разъездам не готов", CTX)
+    check("есть REMOTE: отказ от разъездов не открывает пункт переезда",
+          plan.state_next.get("relocation_check") == "n/a" and plan.focus != "relocation",
+          f"{plan.state_next.get('relocation_check')}/{plan.focus}")
+    plan = decide(plan.state_next, obs(relocation="no"), "переезжать не буду", CTX)
+    check("есть REMOTE: отказ переезжать не отсевает",
+          plan.reason_code != "KO_LOCATION" and not plan.end, f"{plan.rule}/{plan.reason_code}")
+    # Второй промах того же условия: «проверка закрыта» ≠ «формат подтверждён».
+    st_of = ready(["ON_SITE", "FIELD_WORK"], candidate_city="Казань", city_check="closed")
+    plan = decide(st_of, obs(formats=[("FIELD_WORK", "no")]), "разъезды не готов", CTX)
+    check("закрытие разъездного ОТКАЗОМ присутствия не подтверждает",
+          plan.state_next.get("relocation_check") == "n/a",
+          str(plan.state_next.get("relocation_check")))
+
     # Удалённая вакансия: формат не спрашиваем, а город — обязательно, иначе гео-отсев мёртв.
     plan = decide(ready(["REMOTE"], city_check="pending"), obs(), "здравствуйте", CTX)
     check("удалёнка: город всё равно спрашиваем",
