@@ -65,16 +65,18 @@
 
 Коммиты: `PO-#### англ. суть (#PR)` либо conventional с номером PR. Всё через PR в `master`.
 
-**Порт policy-ядра — ветка `feat/screening-policy-engine`, три коммита поверх `origin/master`
-(`19c2514`); запушен из них только первый:**
+**Порт policy-ядра — ветка `feat/screening-policy-engine`, один коммит поверх `origin/master`
+(`19c2514`), он же запушен:**
 
 | коммит | что | состояние |
 |---|---|---|
-| `1374638` | `refactor(screening): replace analyzer decisions with in-code policy core` — 20 файлов `+1702/−462` | **запушен**, PR открыт, не смерджен |
-| `9c2faea` | `fix(screening): ask about relocation and make format KO reachable` — вопрос про переезд, два входа R6, `relocation_ready` в состоянии | **локальный**, не запушен: ждём приёмки hh (разбор — [screening_split/review_20260831.md](screening_split/review_20260831.md)) |
-| `a24ba67` | `feat(screening): rework location agenda, signal priority and scheduling` — 8 файлов `+108/−46`: решения Р18, Р20 и Р21 | **локальный**, не запушен |
+| `1374638` | `refactor(screening): replace analyzer decisions with in-code policy core` — 20 файлов `+1702/−462` | **запушен**, PR открыт, отревьюен, не смерджен |
 
-Рабочее дерево чистое: на пуше уедут ДВА непушенных коммита, а не один.
+**Поверх него в рабочем дереве лежат НЕЗАКОММИЧЕННЫЕ правки** — 8 файлов `+127/−26`: решения Р18
+(город и переезд отдельными пунктами), Р20 (порядок `TERMINAL_PRIORITY`) и Р21 (реакция на
+`scheduling`). Держатся одним коммитом сознательно: в PR уходит одна порция сверху ревью, а не три.
+Прежние локальные коммиты `9c2faea` и `a24ba67` сброшены в дерево 02.09 — на них не ссылаться.
+**`policy/geo.py` среди них НОВЫЙ файл**: `git commit -a` его пропустит, нужен `git add -A`.
 
 Прежняя ветка тех же правок семью коммитами — `feat/screening-policy-core` (`3232bfb`), держим как
 бэкап истории. Комментариев и докстрингов в файлах PR нет намеренно; удалены
