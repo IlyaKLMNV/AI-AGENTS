@@ -30,7 +30,7 @@ from .observation import Observation
 
 
 class PolicyResult:
-    """Результат хода. По смыслу совместим с `..engine.ConversationResult`."""
+    """Результат хода: что отправить кандидату и закрыт ли диалог."""
 
     __slots__ = ("response", "conversation_end")
 

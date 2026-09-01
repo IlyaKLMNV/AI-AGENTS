@@ -1,29 +1,23 @@
-"""Драйвер разговора поверх hh-движка split (аналог `screening_split/conversation.py`).
+"""Драйвер разговора поверх ядра `policy` (HH-канал).
 
-Тот же мини-интерфейс start()/respond()->TurnResult, но крутит hh-движок. Движков два, как и в TG:
-`split` (действующий, Аналитик возвращает `Decision`) и `policy` (Наблюдатель + чистое ядро + гарды,
-пакет `.policy`). Стор канало-независим, Интервьюер тоже — берём TG-классы: stateful для старого
-движка, stateless `PolicyInterviewer` для нового. contact_source в hh нет, поэтому accounts/source_type
-здесь не участвуют.
+Тот же мини-интерфейс start()/respond()->TurnResult, что в TG, но крутит hh-ядро. Стор и Интервьюер
+канало-независимы — берём TG-классы. `contact_source` в hh нет, поэтому accounts/source_type здесь
+не участвуют.
 """
 
 from typing import Any, Optional
 
 from qa_harness.domain.screening_split.conversation import TurnResult  # канало-независим
-from qa_harness.domain.screening_split.interviewer import PolicyInterviewer, ScreeningInterviewer
+from qa_harness.domain.screening_split.interviewer import PolicyInterviewer
 from qa_harness.domain.screening_split.policy.observation import snapshot as observation_snapshot
 from qa_harness.domain.screening_split.store import InMemoryStateStore
 
-from .analyzer import ScreeningAnalyzer
-from .engine import ScreeningSplitEngine
-
-# Какой движок поднимать по умолчанию: "split" (действующий) | "policy" (новая архитектура).
-# Ставится раннером один раз из флага --engine; параметр конструктора её перекрывает.
-DEFAULT_ENGINE = "split"
+from .policy.engine import PolicyEngine
+from .policy.observer import ScreeningObserver
 
 
 class SplitConversation:
-    """start()/respond() поверх hh-движка с local-промптами (`screening_analyzer_hh`)."""
+    """start()/respond() поверх hh-ядра с local-промптами (`screening_analyzer_hh`)."""
 
     def __init__(
         self,
@@ -34,19 +28,9 @@ class SplitConversation:
         vacancy_info: dict,
         recruiter_name: str,
         candidate_name: str,
-        engine: Optional[str] = None,
     ) -> None:
-        engine = engine or DEFAULT_ENGINE
-        store = InMemoryStateStore()
-        if engine == "policy":
-            from .policy.engine import PolicyEngine
-            from .policy.observer import ScreeningObserver as PolicyObserver
-            self._engine = PolicyEngine(store, PolicyObserver(analyzer_client),
-                                        PolicyInterviewer(interviewer_spec, client), client)
-        else:
-            self._engine = ScreeningSplitEngine(store, ScreeningAnalyzer(analyzer_client),
-                                                ScreeningInterviewer(interviewer_spec, client), client)
-        self._engine_kind = engine
+        self._engine = PolicyEngine(InMemoryStateStore(), ScreeningObserver(analyzer_client),
+                                    PolicyInterviewer(interviewer_spec, client), client)
         self._vacancy_info = vacancy_info
         self._recruiter = recruiter_name
         self._candidate = candidate_name
@@ -66,12 +50,7 @@ class SplitConversation:
         )
 
     def _trace(self) -> dict:
-        """Снимок хода для отчёта: решение Аналитика + компактное hh-состояние (+ field_work_check).
-
-        У `policy` добавляются трасса ядра (какое правило выиграло, что видел Наблюдатель, что срезали
-        гарды) и зарплатный разбор: иначе «гард вырезал» неотличимо от «Интервьюер так и написал».
-        """
-        decision = self._engine.last_decision
+        """Снимок хода: решение, hh-состояние (+ `field_work_check`), зарплатный разбор, трасса ядра."""
         st = self._engine.last_state
         state_snap = None
         if st:
@@ -99,15 +78,14 @@ class SplitConversation:
                            "city": st.get("city_reasks", 0),
                            "relocation": st.get("relocation_reasks", 0)},
             }
-        trace: dict[str, Any] = {"decision": decision, "state": state_snap,
-                                 "salary": getattr(self._engine, "last_salary", None)}
-        if self._engine_kind == "policy":
-            trace["guard_trips"] = list(getattr(self._engine, "last_guard_trips", []) or [])
-            plan = getattr(self._engine, "last_plan", None)
-            if plan is not None:
-                trace["audit"] = plan.audit
-                trace["rule"] = plan.rule
-            obs = getattr(self._engine, "last_observation", None)
-            if obs is not None:
-                trace["observation"] = observation_snapshot(obs)
+        trace: dict[str, Any] = {"decision": self._engine.last_decision, "state": state_snap,
+                                 "salary": getattr(self._engine, "last_salary", None),
+                                 "guard_trips": list(getattr(self._engine, "last_guard_trips", []) or [])}
+        plan = getattr(self._engine, "last_plan", None)
+        if plan is not None:
+            trace["audit"] = plan.audit
+            trace["rule"] = plan.rule
+        obs = getattr(self._engine, "last_observation", None)
+        if obs is not None:
+            trace["observation"] = observation_snapshot(obs)
         return trace

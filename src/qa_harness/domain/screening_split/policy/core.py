@@ -13,7 +13,7 @@
     5. таблица правил R1–R11: первое сработавшее выигрывает
     6. сборка инструкции: черновик модели + вопрос из шаблона кода
 
-Чего в этом файле НЕТ и быть не может (порт `..engine` держит всё это ради компенсации порядка):
+Чего в этом файле НЕТ и быть не может (прежний движок держал всё это ради компенсации порядка):
 `_gate_salary_update`, `_assumes_salary_closed`, `_release_money_stop`, `_SALARY_REWIND_NOTE`, флаг
 `_forced` и три ветки второго вызова Аналитика.
 """
@@ -144,7 +144,7 @@ def _resolve_salary(obs: Observation, message: str, ctx: DecideContext) -> Salar
     value = salary_mod.normalize(claim)
     if value is None:
         # Пересчёт дал противоречие (обе границы пусты либо min > max) — это уточняющий вопрос,
-        # а не отсев. Порт `..engine:234-238`.
+        # а не отсев. Порт прежнем движке.
         res.status = salary_mod.UNUSABLE
         return res
 
@@ -243,7 +243,7 @@ def _stall_count(state: dict, progress_before: tuple, before: int) -> int:
 def _charge_counter(obs: Observation, state: dict) -> tuple[dict, Optional[str], int]:
     """Начисляет РОВНО ОДИН счётчик за ход и возвращает (state, ключ, значение до хода).
 
-    Отложенный инкремент (`..engine:322-326`) больше не нужен: вызов Аналитика один, и «увидеть
+    Отложенный инкремент больше не нужен: вызов Аналитика один, и «увидеть
     счётчик одинаковым» второму вызову неоткуда.
 
     `demand` приходит не сигналом, а флагом `persistent`: в таблице приоритета триггеров его нет
@@ -600,7 +600,7 @@ def decide(state: dict, observation: Observation, message: str, ctx: DecideConte
     outcome, rule_name = _walk(frame, start=0)
 
     # `REFUSE_AND_ADVANCE` — единственное место, где сегодня уходит ВТОРОЙ вызов Аналитика
-    # (`..engine:385-398`). Здесь пункт помечается refused, фокус едет дальше, и ход дорешивается
+    #. Здесь пункт помечается refused, фокус едет дальше, и ход дорешивается
     # тем же проходом по таблице: модель не участвует.
     refused_now = outcome.reason_code == REFUSE_AND_ADVANCE
     if refused_now:
@@ -611,7 +611,7 @@ def decide(state: dict, observation: Observation, message: str, ctx: DecideConte
         frame.reask_fired = None
         frame.reask_candidate = None
         # Ветка refused меняет состояние, значит и прогресс: пересчитываем до возобновления прохода,
-        # как это делает действующий движок (`..engine:402-407` — после ветки, до проверки капа).
+        # как это делает действующий движок (прежнем движке — после ветки, до проверки капа).
         frame.no_progress_now = _stall_count(frame.state, progress_before, no_progress_before)
         outcome, rule_name = _walk(frame, start=RESUME_AFTER_REFUSE)
 

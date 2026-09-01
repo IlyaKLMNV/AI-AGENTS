@@ -67,10 +67,6 @@ ANALYZER_COMPONENT, INTERVIEWER_COMPONENT = "screening_analyzer", "screening_int
 # фолбэк. Поэтому это дефолт, а не то, что нужно помнить и дописывать в команду руками.
 ANALYZER_VERSION = "v3"
 RECRUITER, CANDIDATE = "Анна", "Кандидат"
-# Ядро прибито намеренно. Пороги кейсов C/D выведены из `policy/budgets.py` (reask-cap 3,
-# у salary_info порога нет), у прежнего движка split они другие — тот же прогон на нём
-# ассертил бы не то, что происходит, и «FAIL» означал бы рассинхрон фикстуры, а не баг.
-ENGINE = "policy"
 DEFAULT_GEN_MODEL = "gpt-4.1-mini"
 
 DEFAULT_VACANCY: Dict[str, Any] = {
@@ -456,7 +452,7 @@ def run(args: argparse.Namespace) -> None:
         # Промпта под тестом в офлайне нет вовсе — не даём отчёту утверждать обратное.
         put.update({"local_component": "— (офлайн: наблюдение скриптовано)", "local_version": "—",
                     "model": "—", "prompt_id": None, "prompt_version": None})
-        print(f"[dialogue] ОФЛАЙН · канал {channel} · ядро {ENGINE} на заглушках · кейсов: {len(cases)}")
+        print(f"[dialogue] ОФЛАЙН · канал {channel} · ядро на заглушках · кейсов: {len(cases)}")
     else:
         source = resolve_source(args.prompt_source or os.environ.get("QA_HARNESS_PROMPT_SOURCE") or LOCAL)
         if source != LOCAL:
@@ -477,7 +473,7 @@ def run(args: argparse.Namespace) -> None:
         if a_spec.version != ANALYZER_VERSION:
             # Ядро policy читает Observation, а его отдаёт только v3. На v2 наблюдение развалится
             # в валидации — все ходы уйдут в фолбэк, и это будет выглядеть поломкой ядра.
-            print(f"  ВНИМАНИЕ: ядру {ENGINE} нужен {analyzer_component} {ANALYZER_VERSION}, "
+            print(f"  ВНИМАНИЕ: ядру нужен {analyzer_component} {ANALYZER_VERSION}, "
                   f"взят {a_spec.version} — ходы уйдут в фолбэк")
         setup.update(client=client, analyzer_client=analyzer_client, interviewer_spec=interviewer_spec,
                      gen_client=ModelClient(args.gen_model, timeout=args.timeout, temperature=args.temperature),
@@ -492,9 +488,8 @@ def run(args: argparse.Namespace) -> None:
                     "prompt_id": None, "prompt_version": None})
         print(f"[dialogue] канал {channel} · Аналитик {a_spec.version}/{a_spec.model} · Интервьюер "
               f"{interviewer_spec.version}/{interviewer_spec.model} · кандидат {args.gen_model} · "
-              f"ядро {ENGINE} · кейсов: {len(cases)}")
+              f"кейсов: {len(cases)}")
 
-    sp.conversation.DEFAULT_ENGINE = ENGINE
     started = datetime.datetime.now()
     run_id = started.strftime("%Y%m%d_%H%M%S")
 
@@ -502,7 +497,7 @@ def run(args: argparse.Namespace) -> None:
     rb = ReportBuilder(runner=runner_name, prompt_under_test=put, run_id=run_id,
                        started_at=started.isoformat(timespec="seconds"), models=models,
                        seed=args.seed,
-                       args={"engine": ENGINE, "channel": channel, "offline": bool(args.offline),
+                       args={"channel": channel, "offline": bool(args.offline),
                              "max_turns": args.max_turns, "cases": len(cases)})
 
     total_usage = blank_usage()

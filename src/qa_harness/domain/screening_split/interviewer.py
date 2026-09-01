@@ -1,21 +1,15 @@
-"""Интервьюер split-скрининга — «рот». Две реализации: легаси и новая.
+"""Интервьюер split-скрининга — «рот». Формулирует РОВНО ОДНО сообщение кандидату по инструкции
+Наблюдателя; решений по существу не принимает, END не пишет.
 
-Обе формулируют РОВНО ОДНО сообщение кандидату по инструкции Аналитика; решений по существу не
-принимают, END не пишут. Разница только в том, откуда берётся контекст хода.
-
-`ScreeningInterviewer` — **stateful**, порт из tgApi под СТАРЫЙ движок (`..engine`,
-`screening_split_hh`). Работает в OpenAI-conversation, историю ведёт сервер. Не трогаем: старый
-движок гоняется до cutover, и его поведение должно оставаться записанным.
-
-`PolicyInterviewer` — **stateless**, для нового движка (`policy.engine`). Истории не видит: всё, что
-нужно сказать, приходит в инструкции этого хода, а код добавляет ровно два факта — сид с именами
-участников и предыдущее отправленное сообщение (чтобы переспрос не вышел дословно тем же текстом).
-Ни одно правило промпта Интервьюера историей не пользуется: запреты на повтор там ограничены одним
-сообщением. Раз conversation нет, `store` гасится, как во всех остальных вызовах харнесса
-(`core.llm_client.STORE_RESPONSES`), и прогоны перестают сорить в логи platform, где смотрят прод.
+**Stateless**: истории не видит: всё, что нужно сказать, приходит в инструкции этого хода, а код
+добавляет ровно два факта — сид с именами участников и предыдущее отправленное сообщение (чтобы
+переспрос не вышел дословно тем же текстом). Ни одно правило промпта Интервьюера историей не
+пользуется: запреты на повтор там ограничены одним сообщением. Раз conversation нет, `store` гасится,
+как во всех остальных вызовах харнесса (`core.llm_client.STORE_RESPONSES`), и прогоны не сорят в логи
+platform, где смотрят прод.
 
 Адаптация под ai-agents: spec (`screening_interviewer` из пакета `prompts`) и OpenAI-клиент
-инжектятся. Обе возвращают (text, usage) — QA нужен учёт.
+инжектятся. Возвращает (text, usage) — QA нужен учёт.
 """
 
 from typing import Any
@@ -32,41 +26,8 @@ def _params(spec: Any, kwargs: dict, attrs: tuple[str, ...]) -> dict:
     return kwargs
 
 
-class ScreeningInterviewer:
-    """ЛЕГАСИ, stateful: (instruction, message) в заданном conversation → сообщение кандидату."""
-
-    def __init__(self, spec: Any, client: Any) -> None:
-        self._spec = spec
-        self._client = client
-
-    def run(self, conversation_id: str, instruction: str, message: str) -> tuple[str, Any]:
-        """Вернуть (text_сообщения, usage)."""
-        kwargs: dict[str, Any] = {
-            "model": self._spec.model,
-            "conversation": conversation_id,
-            "input": self._build_turn(instruction, message),
-            "instructions": self._spec.system_text,  # системный промпт — на каждом ходу (как stored)
-            "text": {"format": self._spec.text_format},
-        }
-        # ВНИМАНИЕ: `store` здесь прокидывается из spec (в пакете `prompts` = true) и НЕ гасится:
-        # при store=false ответ приходит, но новые input/output НЕ дописываются в conversation —
-        # история ходов теряется (проверено вживую). Платим логами в platform.
-        kwargs = _params(self._spec, kwargs, ("temperature", "top_p", "max_output_tokens", "store"))
-        resp = self._client.responses.create(**kwargs)
-        return (getattr(resp, "output_text", "") or "").strip(), getattr(resp, "usage", None)
-
-    @staticmethod
-    def _build_turn(instruction: str, message: str) -> str:
-        parts = []
-        if message:
-            parts.append(f"[Сообщение кандидата]: {message}")
-        if instruction:
-            parts.append(f"[Внутренняя инструкция]: {instruction}")
-        return "\n\n".join(parts)
-
-
 class PolicyInterviewer:
-    """НОВЫЙ, stateless: (instruction, message) + сид и предыдущая реплика → сообщение кандидату."""
+    """(instruction, message) + сид и предыдущая реплика → одно сообщение кандидату."""
 
     def __init__(self, spec: Any, client: Any) -> None:
         self._spec = spec

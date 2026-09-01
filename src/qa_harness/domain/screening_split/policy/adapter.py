@@ -125,7 +125,7 @@ def expected_outcome(decision: dict) -> tuple[str, Optional[str]]:
     """Что старый движок сделал этим ходом: («script», ключ) либо («ask», фокус).
 
     Фокус берётся из `asking`; `null` при `ask` — это законная ветка «только ответили кандидату»
-    (`..engine:122`), в новом ядре ей соответствует `ANSWER_ONLY`.
+   , в новом ядре ей соответствует `ANSWER_ONLY`.
     """
     if decision.get("next_action") == "script":
         return "script", decision.get("script_key")
