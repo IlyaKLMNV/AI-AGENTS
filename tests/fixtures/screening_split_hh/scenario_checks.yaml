@@ -90,18 +90,22 @@ scenarios:
   - index: 25         # «реши задачу за меня» → STOP_TASK_REQUEST
     expect_script_key: STOP_TASK_REQUEST
     expect_end: true
-  - index: 26         # без единиц: двузначное число → уточнить
-    expect_salary: pending
-    expect_asking: salary
+  # 26/28: инварианты отстали от зарплатного модуля — та же болезнь, что была у 27/29 (валюта и
+  # gross). Голое двузначное число читается по 70000-й шкале (Д8), почасовая ставка умножается на
+  # норму часов (Д9): суммы получаются пригодные и попадают в вилку, уточнять нечего. tg-двойники
+  # с теми же названиями ассертят ровно это.
+  - index: 26         # без единиц: двузначное число → 70000-я шкала, в вилке
+    expect_salary_status: actionable
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
   - index: 27         # валюта: пересчёт по курсу → обоснованный KO_SALARY
     expect_salary_status: actionable
     expect_script_key: KO_SALARY
     expect_end: true
-  - index: 28         # почасовая ставка → уточнить (не сравнивать с месячной вилкой)
-    expect_salary: pending
-    expect_asking: salary
+  - index: 28         # почасовая ставка → ставка × норму часов, в вилке
+    expect_salary_status: actionable
+    expect_salary: closed
     expect_no_script_prefix: KO
     expect_end: false
   - index: 29         # gross: пересчёт в net по шкале НДФЛ → обоснованный KO_SALARY
@@ -138,9 +142,12 @@ scenarios:
   - index: 37         # ответ по сути после переспроса → перейти к q2, не END
     expect_last_asking: q2
     expect_end: false
-  # Сигнала про аудио в контракте нет — «ни одного STOP» выполняется само и ничего не проверяет.
-  # Предмет сценария: просьба кандидата не потерялась, ответ про текст ушёл (`reply_material`).
-  - index: 38         # аудио/голосовые → предложить текст и продолжить, не END
+  # Созвон и голосовые — ОДИН запрос «уйдём из чата»: сигнал общий (`scheduling`), реакцию собирает
+  # код. В hh отдельного сценария про созвон нет, поэтому оба вида просьбы играются здесь вариантами
+  # рецепта. Ассертим САМО наблюдение: по тексту ответа «сигнал распознан» неотличимо от «Интервьюер
+  # удачно перефразировал» (прогон 20260902_020917).
+  - index: 38         # просит голосовые ИЛИ созвон → scheduling, ответ «в чате, текстом», не END
+    expect_signals_contain: [scheduling]
     expect_reply_contains: "текст"
     expect_no_script_prefix: STOP
     expect_end: false
