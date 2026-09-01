@@ -327,6 +327,20 @@ def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: 
         evs_str = ", ".join(evs) or "—"
         details.append(f"event={want} (хоть раз): {'OK' if hit else 'не было (были: ' + evs_str + ')'}")
 
+    if spec.get("expect_signals_contain"):
+        # Что модель УСЛЫШАЛА, а не что из этого вышло. Нужен там, где исход один и тот же при разных
+        # наблюдениях: реакция на `scheduling` собирается кодом, и по тексту ответа не отличить
+        # «сигнал распознан» от «Интервьюер удачно перефразировал». Сканим все ходы.
+        want = spec["expect_signals_contain"]
+        wants = [want] if isinstance(want, str) else list(want)
+        heard = {code for t in turns
+                 for code in ((t.get("observation") or {}).get("signals") or [])}
+        missing = [w for w in wants if w not in heard]
+        hit = not missing
+        ok = ok and hit
+        details.append(f"сигналы {'/'.join(wants)} услышаны: "
+                       + ("OK" if hit else f"не было {missing} (были: {sorted(heard) or '—'})"))
+
     if spec.get("expect_guard_trips_lacks"):
         # ВТОРОЙ уровень канарейки. Первый (текст кандидату) под новым ядром зелёный почти всегда:
         # шлюз гардов чинит нарушение ДО того, как его увидит проверка — G3 срезает эмодзи, G7

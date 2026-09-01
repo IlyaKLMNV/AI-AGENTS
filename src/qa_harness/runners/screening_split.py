@@ -352,6 +352,15 @@ def _fixture_checks(scenarios, checks_by_index, inputs_by_index, vacancies, cons
     out.append(("констрейнты: нет записей вне CSV", not (cons_idx - known),
                 str(sorted(cons_idx - known))))
 
+    # Позитивный сценарий на КАЖДЫЙ терминальный сигнал. Без этого канал слеп к целому классу:
+    # прогон 01.09 дал в tg 55/57 при живом дефекте приоритета — просто потому, что сценариев под
+    # `maternity` и `task_request` там не было вовсе, и предъявить дефект было нечем (решение Р20).
+    from qa_harness.domain.screening_split.policy.observation import TERMINAL_SIGNAL_REASON
+    wanted = {spec.get("expect_script_key") for spec in checks_by_index.values()}
+    uncovered = sorted(key for key in TERMINAL_SIGNAL_REASON.values() if key not in wanted)
+    out.append(("у каждого терминального сигнала есть позитивный сценарий", not uncovered,
+                str(uncovered)))
+
     unresolved = []
     for scenario in scenarios:
         recipe = inputs_by_index.get(scenario.index)
