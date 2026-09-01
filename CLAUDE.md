@@ -57,7 +57,8 @@
 ошибки (какая роль):
 - **A (Наблюдатель):** детерминированные инварианты хода по трассе (`scenario_checks.yaml`:
   `expect_script_key`, `salary/format`, `state`, `asking`, `event`, `end`, `instruction_lacks`,
-  `reply_contains`, `instruction_url_valued`, `guard_trips_lacks`). LLM-судьи нет. Ключ ассертим
+  `reply_contains`, `instruction_url_valued`, `guard_trips_lacks`, `signals_contain` — что модель
+  УСЛЫШАЛА, нужен там, где исход одинаков при разных наблюдениях). LLM-судьи нет. Ключ ассертим
   ТОЧНЫЙ: `expect_script_prefix` снят — под префиксом STOP лежат 13 разных причин.
 - **B (Интервьюер):** `leak_scan` (нет утечки вилки/ссылки/сырого id формата) + `InterviewerJudge` (LLM:
   верно ли передал СМЫСЛ инструкции — не её уместность; судит каждый ход по инструкции ЭТОГО хода).
@@ -66,7 +67,8 @@
 - **C:** `ScenarioJudge` (LLM) — для сценариев БЕЗ инварианта. Сейчас таких нет ни одного: гейт
   во всех сценариях обоих каналов детерминированный, судья диалога не зовётся.
 Режим гейта: `analyzer` (инвариант ГЕЙТИТ — и scripted, и generated) / `dialogue` (гейтит ScenarioJudge).
-Сценариев после ревизии 01.09: **tg 57** (было 77), **hh 61** (было 75); нумерация сплошная, карта
+Сценариев: **tg 59**, **hh 61** (после ревизии 01.09 было 77 и 75; 02.09 в tg добавлены два —
+решение Р20). Нумерация сплошная, карта
 `старый → новый` — в `docs/screening_split/review_20260901.md`. Индексы связывают ПЯТЬ файлов на
 канал (`scenarios.csv`, `scenario_checks.yaml`, `candidate_inputs.yaml` + `generation/<канал>/
 {scenario_vacancies,constraints}.yaml`); их связность гейтится офлайном — расхождение тихое, сценарий

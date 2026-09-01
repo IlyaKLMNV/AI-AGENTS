@@ -73,6 +73,9 @@
 | `1374638` | `refactor(screening): replace analyzer decisions with in-code policy core` — 20 файлов `+1702/−462` | **запушен**, PR открыт, не смерджен |
 | `9c2faea` | `fix(screening): ask about relocation and make format KO reachable` — вопрос про переезд, два входа R6, `relocation_ready` в состоянии | **локальный**, не запушен: ждём приёмки hh (разбор — [screening_split/review_20260831.md](screening_split/review_20260831.md)) |
 
+Поверх этих коммитов в рабочем дереве лежат НЕЗАКОММИЧЕННЫЕ правки: Р18 (локация отдельным пунктом)
+и Р20 (порядок `TERMINAL_PRIORITY`).
+
 Прежняя ветка тех же правок семью коммитами — `feat/screening-policy-core` (`3232bfb`), держим как
 бэкап истории. Комментариев и докстрингов в файлах PR нет намеренно; удалены
 `ScreeningAnalyzerAssistant.py` и `screening_scripts.py`. Контекст для продолжения на hh —
@@ -90,8 +93,8 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 `app/assistants/screening/policy/` (13 модулей), `salary.py` + `salary_rules.py`, Alembic-ревизия
 `f1a2b3c4d5e6_screening_dialogues_salary_band`, три новых тест-файла; `scripts.py` и
 `test_screening_scripts.py` удалены. Порт написан **не в сессиях этого штаба** — при работе с ним
-сначала читать код, а не доверять этому описанию. Поверх него 01.09 донесено решение Р18 (локация
-отдельным пунктом повестки) и поправлены его тесты.
+сначала читать код, а не доверять этому описанию. Поверх него донесены решения Р18 (локация
+отдельным пунктом повестки, 01.09) и Р20 (порядок `TERMINAL_PRIORITY`, 02.09) вместе с их тестами.
 
 У репозитория **свой** `CLAUDE.md` (архитектурный курс «тонкий прокси над HH»), `TASKS.md`, `TECH_DEBT.md`
 — при работе с его файлами они главнее. Split пришёл в `Feature/po screening split (#110)`.
