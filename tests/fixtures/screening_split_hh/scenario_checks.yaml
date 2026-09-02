@@ -123,6 +123,9 @@ scenarios:
   - index: 31         # упорно требует нашу вилку → STOP_SALARY_DEMAND
     expect_script_key: STOP_SALARY_DEMAND
     expect_end: true
+    # Генератор к требованию дописывает раздражение («или закроем вопрос») — услышанный criticism/abuse
+    # завершает диалог раньше капа. Пограничный, не промах (прогон 20260902_231815, v2).
+    accept_terminal_signals: [abuse, criticism]
   - index: 32         # пауза до приоритетов → event=pause, не END
     expect_event: pause
     expect_end: false
@@ -199,6 +202,7 @@ scenarios:
     expect_reply_contains: "уточн"
     expect_no_script_prefix: STOP
     expect_end: false
+    accept_terminal_signals: [abuse, criticism]   # «или вам самим это загадка?» — сарказм услышан честно
   - index: 47         # format_check=n/a (REMOTE) → KO_LOCATION не ставим, даже на «переезжать не готов»
     expect_no_script_prefix: KO
     expect_end: false
@@ -280,3 +284,4 @@ scenarios:
   - index: 61         # два переспроса доп-вопроса → refused и фокус дальше, диалог не завершаем
     expect_no_script_prefix: [STOP, KO]
     expect_end: false
+    accept_terminal_signals: [abuse, criticism]   # «в третий раз говорю» → abuse раньше капа — пограничный

@@ -38,7 +38,7 @@
 документации — [README.md](README.md).
 
 ### prompts (`../prompts`)
-Пакет тел промптов (`pyproject.toml`, версия пакета `1.2.2`), релизится wheel'ом через
+Пакет тел промптов (`pyproject.toml`, версия пакета `1.2.3`), релизится wheel'ом через
 `.github/workflows/publish.yml` в GHCR-образ `ghcr.io/podbor/prompts`. Структура на компонент:
 `prompts/<component>/pointer.yaml` (ключ `active` = боевая версия) + `<vN>/system.md` (тело) +
 `<vN>/config.yaml` (параметры модели). Старые версии не удаляются — это мгновенный откат.
@@ -91,17 +91,21 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 `test_screening_policy.py`, `test_screening_salary.py`, `test_screening_counter_loops.py`
 (гонять из этого репо, не отсюда).
 
-**Порт нового ядра — ветка `feat/screening-policy-engine`, снапшот-коммит `ee1c522` поверх
-`master` (`512124a`), 02.09.2026**: `app/assistants/screening/policy/` (13 модулей), `salary.py` +
-`salary_rules.py`, Alembic-ревизия `f1a2b3c4d5e6_screening_dialogues_salary_band`, три новых
-тест-файла; `scripts.py` и `test_screening_scripts.py` удалены. Коммит — страховочный («чтобы не
-сломать»), перед PR его переписывают финальным. Порт написан **не в сессиях этого штаба** — при
-работе с ним сначала читать код, а не доверять этому описанию. Поверх него донесены решения Р18
-(локация отдельным пунктом повестки, 01.09) и Р20 (порядок `TERMINAL_PRIORITY`, 02.09) вместе с их
-тестами, а 02.09 в рабочем дереве — паритетная зачистка: комментарии и докстринги из файлов PR
-убраны (как в PR tgApi), в `policy/` донесены `STOP_PAUSE` + `INERT_SIGNALS` из tgApi `24fca71` и
-словарь гарда G2 сведён с tgApi (`on_site` → «работа из офиса»). Напоминалка
-`TODO_salary_reask_cap.md` удалена. Размер PR на 02.09: **35 файлов, +2964/−649**.
+**Порт нового ядра — ветка `feat/screening-policy-engine`, два коммита поверх `master` (`512124a`),
+рабочее дерево чистое (untracked только `docker-compose.override.yml`), PR не открыт:**
+
+| коммит | что |
+|---|---|
+| `ee1c522` | `wip screening policy engine snapshot` — `app/assistants/screening/policy/` (13 модулей), `salary.py` + `salary_rules.py`, Alembic-ревизия `app/migrations/versions/f1a2b3c4d5e6_screening_dialogues_salary_band.py`, три новых тест-файла; `scripts.py` и `test_screening_scripts.py` удалены. Страховочный, перед PR переписывается финальным |
+| `69ec645` | `refactor(screening): trim comments and unify stop/format wording` — паритетная зачистка 02.09: комментарии и докстринги убраны (как в PR tgApi), донесены `STOP_PAUSE` + `INERT_SIGNALS` из tgApi `24fca71`, словарь гарда G2 сведён (`on_site` → «работа из офиса»), напоминалка `TODO_salary_reask_cap.md` удалена |
+
+Порт написан **не в сессиях этого штаба** — при работе с ним сначала читать код. В нём есть решения
+Р18, Р20, Р21 с тестами. **02.09 сверен с hh-ядром харнесса по коду** (докстринги вырезаны AST-ом):
+`policy/`, `salary*`, Наблюдатель, формат хода Интервьюера и оркестрация `engine.run_turn` — одно и то
+же; расходятся обвязка (миграция `upgrade()` и парсинг фактов из строки контекста есть только там) и
+реальный вход HH — разбор в [screening_split/review_20260902.md](screening_split/review_20260902.md) §5.
+Флаг `SCREENING_ENGINE` (`app/common/config.py:51`, `.env.example:36`) по умолчанию `legacy` — split
+включается переменной окружения.
 
 У репозитория **свой** `CLAUDE.md` (архитектурный курс «тонкий прокси над HH»), `TASKS.md`, `TECH_DEBT.md`
 — при работе с его файлами они главнее. Split пришёл в `Feature/po screening split (#110)`.
@@ -115,9 +119,9 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 | Роль | Где | Заметки |
 |---|---|---|
 | прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник. Новое ядро — `app/common/screening/policy/` на ветке PR (см. выше) |
-| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, ветка `feat/screening-policy-engine`, коммит `ee1c522` (см. выше) |
+| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, ветка `feat/screening-policy-engine`, коммиты `ee1c522` + `69ec645` (см. выше); за флагом `SCREENING_ENGINE=split` |
 | QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | только новое ядро `policy/` (14 модулей) — старое удалено 01.09.2026; рядом `state/context/salary/store/conversation` и чисто тестовые `selfcheck/`, `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
-| QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальное ядро `policy/` (10 модулей, канало-независимое импортирует из tg) + `selfcheck/` на канальную дельту. **Это исходник переноса в `eggplant-api`** |
+| QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальное ядро `policy/` (10 модулей, канало-независимое импортирует из tg) + `selfcheck/` на канальную дельту. **Исходник переноса в `eggplant-api`**; 02.09 сверено с ним по коду — идентично ([review_20260902.md](screening_split/review_20260902.md) §5) |
 
 Правка поведения в одном порте — повод сразу проверить два других: правило «каналы держим сходящимися».
 
@@ -142,19 +146,21 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 владельцев репо (PR2 по кандидатам, задачи 8–12, событийная модель, синк снапшота резюме, уход кандидата
 из воронки HH). Читаем как контекст, задачами здесь не считаем.
 
-**Состояние `prompts`** (ветка `feat/screening-split-prompts`, **релиз 1.2.2 выпущен** 31.08.2026):
-тела v1, v2 и `screening_analyzer/v3` закоммичены и входят в пакет; `screening_analyzer_hh/v3`
-**untracked** — в релиз не попал. **Все четыре split-указателя (`screening_analyzer[_hh]`,
-`screening_interviewer[_hh]`) стоят на `active: v1`** — их вернули на v1 коммитом `05fb729` («ship the
-texts, switch nothing»): v2 отдаёт `salary_claim`, а на `tgApi master` его обработки нет вовсе, она
-только на ветке движка. То есть 1.2.2 привёз тексты и не изменил поведение ни одного потребителя.
+**Состояние `prompts`** (ветка `feat/screening-split-prompts`, **релиз 1.2.3 выпущен** — `dc96580`,
+дерево чистое): в пакете тела v1, v2, `screening_analyzer/v3` (с правками Р19 `94011bf` и Р21
+`1fe840a`) и `screening_analyzer_hh/v3` (`96e7512`, тоже с Р21). **Все четыре split-указателя
+(`screening_analyzer[_hh]`, `screening_interviewer[_hh]`) стоят на `active: v1`** — их вернули на v1
+коммитом `05fb729` («ship the texts, switch nothing»): v2 отдаёт `salary_claim`, а на `tgApi master`
+его обработки нет вовсе, она только на ветке движка. Релизы 1.2.2/1.2.3 привезли тексты и не
+изменили поведение ни одного потребителя.
 
-**Следствие для нового ядра:** отдельного релиза промптов ему НЕ нужно. `ScreeningObserver` пинит
-версию по имени (`PROMPT_VERSION = "v3"`), а v3 уже лежит в 1.2.2 — указатель ему не мешает.
-**Тела v3 правим на месте, пока прод на них не работал** (решение Р19 от 01.09.2026): указатели
-стоят на `active: v1`, новое ядро пинит версию по имени, поэтому двух разных «v3 в проде» не будет.
-Цена принята сознательно: отчёты прогонов 29–31.08 писали `local_version: v3` до правки текста, и
-теперь это имя означает два разных текста — при разборе старых прогонов сверяться по дате.
-**В 1.2.2 лежит текст ДО правки, нужен релиз 1.2.3.**
+**Следствие для нового ядра:** отдельного релиза промптов ему НЕ нужно. Наблюдатель пинит версию по
+имени (`v3` в tgApi `ScreeningObserver.PROMPT_VERSION`, в eggplant `SCREENING_ANALYZER_PROMPT_VERSION`),
+Интервьюер идёт по указателю (v1). **Тела v3 правим на месте, пока прод на них не работал** (решение
+Р19 от 01.09.2026): указатели стоят на `active: v1`, ядро пинит версию по имени, поэтому двух разных
+«v3 в проде» не будет. Цена принята сознательно: отчёты прогонов 29–31.08 писали `local_version: v3`
+до правок текста, и теперь это имя означает разные тексты — при разборе старых прогонов сверяться по
+дате. Харнесс гоняет `--prompts-path ../prompts`, то есть рабочее дерево, а не релиз: пока дерево
+чистое, это одно и то же.
 
 Открытые пункты — [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md).

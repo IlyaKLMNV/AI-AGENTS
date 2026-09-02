@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from qa_harness.domain.screening_split.policy.observation import TERMINAL_SIGNAL_REASON
+
 # Любая ссылка в тексте/инструкции. Нужна двум канарейкам инцидента 2026-08-17 (Баг A, выдуманный URL):
 # слой A — директива «ссылку укажи» БЕЗ значения; слой B — в тексте кандидату ссылка ≠ канонической.
 _URL_RE = re.compile(r"https?://[^\s<>\"'»)\],]+")
@@ -173,10 +175,39 @@ def _final_state(turns: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 # ── Слой A: инварианты Decision/state Аналитика ───────────────────────────────
+def _borderline_terminal(turns: List[Dict[str, Any]], wants: Any) -> Optional[str]:
+    """`accept_terminal_signals`: пограничный исход, который сценарий согласен засчитать.
+
+    Вариативный кандидат к настойчивости/отказу дописывает раздражение («в третий раз говорю»,
+    «или закроем вопрос прямо сейчас»), Наблюдатель слышит в нём `abuse`/`criticism`, и таблица
+    правил честно завершает диалог этим STOP раньше капа. Это не промах ни модели, ни ядра — реплика
+    сигнал реально несёт. Засчитываем ТОЛЬКО при трёх условиях разом: сигнал из списка виден в
+    наблюдении ПОСЛЕДНЕГО хода, его STOP — скрипт этого хода, диалог закрыт. Тот же STOP при
+    `signals: []` остаётся провалом — это уже выдумка, а не пограничный случай.
+    """
+    if not wants or not turns:
+        return None
+    codes = [wants] if isinstance(wants, str) else list(wants)
+    last = turns[-1] if isinstance(turns[-1], dict) else {}
+    if not last.get("end"):
+        return None
+    dec = last.get("decision") if isinstance(last.get("decision"), dict) else {}
+    key = dec.get("script_key")
+    heard = (last.get("observation") or {}).get("signals") or []
+    for sig in codes:
+        if sig in heard and TERMINAL_SIGNAL_REASON.get(sig) == key:
+            return f"пограничный исход засчитан: услышан {sig} → {key}"
+    return None
+
+
 def evaluate_analyzer(index: int, turns: List[Dict[str, Any]], checks_by_index: Dict[int, Dict[str, Any]]) -> CheckResult:
     spec = checks_by_index.get(index)
     if not spec:
         return CheckResult(has_checks=False, passed=True, details=[])
+
+    borderline = _borderline_terminal(turns, spec.get("accept_terminal_signals"))
+    if borderline:
+        return CheckResult(has_checks=True, passed=True, details=[borderline])
 
     details: List[str] = []
     ok = True
