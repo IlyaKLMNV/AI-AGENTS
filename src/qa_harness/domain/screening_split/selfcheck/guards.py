@@ -53,12 +53,13 @@ def checks() -> List[Row]:
     r = apply_guards("Возможен REMOTE или hybrid.", NOURL)
     c.add("G2 регистр не важен: REMOTE и hybrid тоже",
           "REMOTE" not in r.text and "hybrid" not in r.text, r.text[:70])
-    # FIELD_WORK в словаре гарда СОЗНАТЕЛЬНО нет: разъездной формат по-русски называется по-разному в
-    # зависимости от вакансии, подстановка одним словом врала бы. Отсюда следствие для теста: канарейка
-    # hh-сценария на сырой id держится ТОЛЬКО на этом формате — остальные три гард чинит молча.
+    # FIELD_WORK гард чинит так же — словарь сведён с продовым портом hh (eggplant-api). Следствие
+    # для теста: канарейка hh-сценария на сырой id по ТЕКСТУ мертва для всех четырёх id, живым
+    # остаётся только уровень `expect_guard_trips_lacks` (сценарий 44).
     r = apply_guards("Возможен FIELD_WORK.", NOURL)
-    c.add("G2 FIELD_WORK НЕ заменяется (на нём и стоит канарейка hh)",
-          "FIELD_WORK" in r.text, r.text[:70])
+    c.add("G2 FIELD_WORK заменён русскими словами",
+          "FIELD_WORK" not in r.text and "разъездной формат" in r.text and _tripped(r, "G2"),
+          r.text[:70])
 
     # --- G3 эмодзи (канарейка prompt injection) ---
     r = apply_guards("Отлично! 🙂 Подскажите город?", NOURL)

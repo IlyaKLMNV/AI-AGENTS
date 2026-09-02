@@ -303,3 +303,9 @@ scenarios:
   - index: 59          # «реши за меня» с сарказмом → STOP_TASK_REQUEST, а не STOP_ABUSE
     expect_script_key: STOP_TASK_REQUEST
     expect_end: true
+
+  # ─────────── Лимит пауз: «3 за жизнь диалога», resume счётчик НЕ сбрасывает ───────────
+  - index: 60          # пауза → resume → пауза → пауза → STOP_PAUSE на третьей
+    expect_event: pause
+    expect_script_key: STOP_PAUSE
+    expect_end: true

@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from qa_harness.domain.screening_split.policy.observation import (  # noqa: F401 — re-export
     FOCUS_ANSWERED,
+    INERT_SIGNALS,
     MAX_SIGNALS,
     TERMINAL_PRIORITY,
     TERMINAL_SIGNAL_REASON,
@@ -32,8 +33,8 @@ KNOWN_FORMATS: frozenset[str] = frozenset({"ON_SITE", "REMOTE", "HYBRID", "FIELD
 
 NONTERMINAL_SIGNALS: frozenset[str] = frozenset({
     "gibberish", "bot_check", "answer_aid", "salary_info",
-    "company_info", "scheduling", "pause", "resume",
-})
+    "company_info", "scheduling", "pause",
+}) | INERT_SIGNALS
 
 SIGNAL_TO_COUNTER: dict[str, str] = {
     "gibberish": "gibberish",

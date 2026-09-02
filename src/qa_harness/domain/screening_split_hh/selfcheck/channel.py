@@ -59,6 +59,15 @@ def checks() -> List[Row]:
     c.add("formats_ready: регистр нормализуется, мусор отброшен, дубль берётся последний",
           got == {"ON_SITE": "no"}, str(got))
 
+    # --- каждый принятый сигнал обработан кодом либо объявлен инертным (как в TG, канальные множества:
+    #     contact_source в hh не существует, company_info — исключение R3a + reply_material) ---
+    from qa_harness.domain.screening_split.policy.core import _CONVEY_ORDER
+    from ..policy.observation import INERT_SIGNALS, NONTERMINAL_SIGNALS, SIGNAL_TO_COUNTER
+    handled = set(SIGNAL_TO_COUNTER) | set(_CONVEY_ORDER) | {"company_info"}
+    unhandled = sorted(NONTERMINAL_SIGNALS - handled - INERT_SIGNALS)
+    c.add("каждый нетерминальный сигнал hh обработан или состоит в INERT_SIGNALS",
+          not unhandled, str(unhandled))
+
     # --- паритет бюджетов с TG ---
     common_events = set(EVENT_BUDGETS) & set(tg_budgets.EVENT_BUDGETS)
     diff = {k for k in common_events

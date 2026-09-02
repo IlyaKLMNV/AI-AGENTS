@@ -58,9 +58,8 @@ _STOP_BY_BUDGET = {
     "STOP_GIBBERISH_REPEAT": Reason("Прошу прощения за беспокойство.", True, CODE),
     "STOP_SALARY_DEMAND": Reason("Прошу прощения за беспокойство.", True, CODE),
     "STOP_PERSISTENT": Reason("Прошу прощения за беспокойство.", True, CODE),
-    "STOP_PAUSE": Reason(
-        "Хорошо, тогда я сама напишу вам позже, когда будет удобнее. Спасибо за уделённое время!",
-        True, CODE),
+    # Как в TG: «сама напишу вам позже» — невыполняемое обещание, текст общий с прочими стопами.
+    "STOP_PAUSE": Reason("Прошу прощения за беспокойство.", True, CODE),
 }
 
 _CONTINUE = {

@@ -65,13 +65,14 @@
 
 Коммиты: `PO-#### англ. суть (#PR)` либо conventional с номером PR. Всё через PR в `master`.
 
-**Порт policy-ядра — ветка `feat/screening-policy-engine`, два коммита поверх `origin/master`
-(`19c2514`), оба запушены; рабочее дерево чистое:**
+**Порт policy-ядра — ветка `feat/screening-policy-engine`, три коммита поверх `origin/master`
+(`19c2514`); рабочее дерево чистое:**
 
 | коммит | что | состояние |
 |---|---|---|
 | `1374638` | `refactor(screening): replace analyzer decisions with in-code policy core` — 20 файлов `+1702/−462` | запушен, отревьюен |
 | `c74a53a` | `feat(screening): rework location agenda, signal priority and scheduling` — 8 файлов `+127/−26`: решения Р18 (город и переезд отдельными пунктами), Р20 (порядок `TERMINAL_PRIORITY`), Р21 (реакция на `scheduling`) | запушен 02.09 **после** ревью первого — апрув, скорее всего, устарел |
+| `24fca71` | `fix(screening): conversation_id in llm_calls, STOP_PAUSE wording, dead code cleanup` — 9 файлов: policy-дельта = новый текст `STOP_PAUSE` («Прошу прощения за беспокойство.»), `INERT_SIGNALS = {resume}`, null-safety в `context.py`; остальное — аналитика llm_calls | локальный, **не запушен** (`origin/feat/screening-policy-engine` кончается на `c74a53a`); policy-дельта отзеркалена в оба ядра харнесса 02.09 |
 
 PR открыт, не смерджен. Вторая порция легла сверху одним коммитом сознательно: ревьюер видит её
 отдельным диффом. Промежуточные локальные `9c2faea` и `a24ba67` в историю не попали — на них не
@@ -85,17 +86,22 @@ PR открыт, не смерджен. Вторая порция легла с�
 ### eggplant-api (`../eggplant-api`)
 HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + RabbitMQ, Docker Compose).
 Свой порт split-движка — [../../eggplant-api/app/assistants/screening/](../../eggplant-api/app/assistants/screening/):
-`engine.py`, `assistants.py`, `context.py`, `scripts.py`, `state.py`. В отличие от tgApi здесь есть
+`engine.py`, `assistants.py`, `context.py`, `state.py`, `salary.py`, `policy/`. В отличие от tgApi здесь есть
 юнит-тесты движка: `app/tests/assistants/test_screening_engine.py`, `test_screening_state.py`,
 `test_screening_policy.py`, `test_screening_salary.py`, `test_screening_counter_loops.py`
 (гонять из этого репо, не отсюда).
 
-**В рабочем дереве ветки `feat/screening-policy-engine` лежит НЕЗАКОММИЧЕННЫЙ порт нового ядра**:
-`app/assistants/screening/policy/` (13 модулей), `salary.py` + `salary_rules.py`, Alembic-ревизия
-`f1a2b3c4d5e6_screening_dialogues_salary_band`, три новых тест-файла; `scripts.py` и
-`test_screening_scripts.py` удалены. Порт написан **не в сессиях этого штаба** — при работе с ним
-сначала читать код, а не доверять этому описанию. Поверх него донесены решения Р18 (локация
-отдельным пунктом повестки, 01.09) и Р20 (порядок `TERMINAL_PRIORITY`, 02.09) вместе с их тестами.
+**Порт нового ядра — ветка `feat/screening-policy-engine`, снапшот-коммит `ee1c522` поверх
+`master` (`512124a`), 02.09.2026**: `app/assistants/screening/policy/` (13 модулей), `salary.py` +
+`salary_rules.py`, Alembic-ревизия `f1a2b3c4d5e6_screening_dialogues_salary_band`, три новых
+тест-файла; `scripts.py` и `test_screening_scripts.py` удалены. Коммит — страховочный («чтобы не
+сломать»), перед PR его переписывают финальным. Порт написан **не в сессиях этого штаба** — при
+работе с ним сначала читать код, а не доверять этому описанию. Поверх него донесены решения Р18
+(локация отдельным пунктом повестки, 01.09) и Р20 (порядок `TERMINAL_PRIORITY`, 02.09) вместе с их
+тестами, а 02.09 в рабочем дереве — паритетная зачистка: комментарии и докстринги из файлов PR
+убраны (как в PR tgApi), в `policy/` донесены `STOP_PAUSE` + `INERT_SIGNALS` из tgApi `24fca71` и
+словарь гарда G2 сведён с tgApi (`on_site` → «работа из офиса»). Напоминалка
+`TODO_salary_reask_cap.md` удалена. Размер PR на 02.09: **35 файлов, +2964/−649**.
 
 У репозитория **свой** `CLAUDE.md` (архитектурный курс «тонкий прокси над HH»), `TASKS.md`, `TECH_DEBT.md`
 — при работе с его файлами они главнее. Split пришёл в `Feature/po screening split (#110)`.
@@ -109,11 +115,18 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 | Роль | Где | Заметки |
 |---|---|---|
 | прод, tg | `../tgApi/app/common/screening/ScreeningSplitEngine.py` | первоисточник. Новое ядро — `app/common/screening/policy/` на ветке PR (см. выше) |
-| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, лежит в рабочем дереве незакоммиченным (см. выше) |
+| прод, hh | `../eggplant-api/app/assistants/screening/engine.py` | свой порт; `REASK_CAP` **общий** для salary/format/field_work, в tgApi у зарплаты порог отдельный. Новое ядро — `policy/`, ветка `feat/screening-policy-engine`, коммит `ee1c522` (см. выше) |
 | QA, tg | [../src/qa_harness/domain/screening_split/](../src/qa_harness/domain/screening_split/) | только новое ядро `policy/` (14 модулей) — старое удалено 01.09.2026; рядом `state/context/salary/store/conversation` и чисто тестовые `selfcheck/`, `checks.py`, `interviewer_judge.py`, `candidate_script.py` |
 | QA, hh | [../src/qa_harness/domain/screening_split_hh/](../src/qa_harness/domain/screening_split_hh/) | канальное ядро `policy/` (10 модулей, канало-независимое импортирует из tg) + `selfcheck/` на канальную дельту. **Это исходник переноса в `eggplant-api`** |
 
 Правка поведения в одном порте — повод сразу проверить два других: правило «каналы держим сходящимися».
+
+**Словарь гарда G2 (02.09.2026):** во всех четырёх портах один и тот же — `on_site`/`office` →
+«работа из офиса», плюс `field_work` → «разъездной формат» (был только в hh-порте eggplant, теперь и
+в харнессе). Следствие для QA: `leak_scan` на сырой id формата мёртв целиком — гард разворачивает все
+четыре id ДО отчёта, и канарейка держится только на `expect_guard_trips_lacks: [G2]` в hh-сценарии 44
+(в `docs/screening_split/review_20260901.md` §2 сказано, что она держится на `FIELD_WORK` по тексту —
+это верно на дату разбора, сейчас нет).
 
 ## Открытая кросс-репная работа
 
@@ -122,7 +135,7 @@ HH-канал (FastAPI, Python 3.14, Postgres + SQLAlchemy async, Celery + Rabbi
 | Тема | Где лежит сейчас | Суть |
 |---|---|---|
 | salary reask-cap | решение Д1 в [screening_split/decisions_rearchitecture.md](screening_split/decisions_rearchitecture.md) | порог `salary_reasks >= 2` → `>= 3` делали и **откатили**. Порог проверяется ДО инкремента, поэтому `>= 2` = STOP на 3-м переспросе — ровно как пишут оба промпта Аналитика. Расходился не прод, а харнесс (`>= 3` = STOP на 4-м, коммит `0208c40`); 26.08.2026 приведён к проду. Решение — лечить инкремент, а не значение: см. Д1 |
-| salary reask-cap (hh) | `../eggplant-api/TODO_salary_reask_cap.md` | то же для eggplant; `REASK_CAP` — общая КОНСТАНТА для salary/format/field_work (счётчики раздельные), поднимать её глобально не нужно (Д2 в [screening_split/decisions_rearchitecture.md](screening_split/decisions_rearchitecture.md)). **Путь в файле устарел**: указан `app/assistants/screening_engine.py`, фактически `app/assistants/screening/engine.py` |
+| salary reask-cap (hh) | решение Д2 в [screening_split/decisions_rearchitecture.md](screening_split/decisions_rearchitecture.md) | то же для eggplant; `REASK_CAP` — общая КОНСТАНТА для salary/format/field_work (счётчики раздельные), поднимать её глобально не нужно. Напоминалка `TODO_salary_reask_cap.md` из `../eggplant-api` удалена 02.09.2026, её содержимое живёт в Д2 |
 | паритет split-движка | «Отложено» в [screening_split/plan_cross_repo.md](screening_split/plan_cross_repo.md) | 4 дефекта, найденных при ревью eggplant `#110` и исправленных там, были **живы в tgApi**. Три закрыты перестройкой движка (`app/common/screening/policy/`): пустой текст у `STOP_POLITICS` — инвариантом реестра `reasons.py`; типы в `updates` — поля `updates` в контракте `Observation` нет; переприменение код-форсов после перерешивания — веток перерешивания не осталось. Открытым остаётся только четвёртый: колонка `engine` больше не селектор, но выпилить нельзя — она гейт для до-split диалогов. Тестов в tgApi нет (последний удалён в `#107`) |
 
 Не наш скоуп (в штаб не тянем): `../eggplant-api/TASKS.md` и `../eggplant-api/TECH_DEBT.md` — план и техдолг

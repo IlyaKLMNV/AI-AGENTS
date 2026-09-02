@@ -132,6 +132,20 @@ def checks() -> List[Row]:
     c.add("реакция на scheduling называет канал и причину",
           "чате" in sched and "текст" in sched and "коллег" in sched, sched[:140])
 
+    # --- каждый принятый сигнал обработан кодом ЛИБО объявлен инертным (INERT_SIGNALS) ---
+    # «Обработан» = счётчик, convey-реакция или спец-ветка правил: contact_source — скрипт R10,
+    # company_info — исключение R3a (материал ответа приходит через reply_material). Сигнал вне этих
+    # множеств код принял бы и молча проглотил — ровно так до INERT_SIGNALS жил resume.
+    from ..policy.observation import INERT_SIGNALS, NONTERMINAL_SIGNALS, SIGNAL_TO_COUNTER
+    handled = set(SIGNAL_TO_COUNTER) | set(_CONVEY_ORDER) | {"contact_source", "company_info"}
+    unhandled = sorted(NONTERMINAL_SIGNALS - handled - INERT_SIGNALS)
+    c.add("каждый нетерминальный сигнал обработан или состоит в INERT_SIGNALS",
+          not unhandled, str(unhandled))
+    overlap = sorted(INERT_SIGNALS & handled)
+    c.add("инертный сигнал не обрабатывается нигде (иначе он не инертный)", not overlap, str(overlap))
+    c.add("INERT_SIGNALS входят в принимаемые нетерминальные",
+          INERT_SIGNALS <= NONTERMINAL_SIGNALS, str(sorted(INERT_SIGNALS - NONTERMINAL_SIGNALS)))
+
     # --- пустое наблюдение безопасно: правил оно не запускает ---
     empty = Observation()
     c.add("пустое наблюдение не несёт ни сигналов, ни фактов",

@@ -69,11 +69,16 @@ TERMINAL_SIGNAL_REASON: dict[str, str] = {
     "task_request": "STOP_TASK_REQUEST",
 }
 
+# Осознанно-инертные: принимаются от модели, кодом намеренно не обрабатываются.
+# resume — «безопасная корзина» промпта для «давайте продолжим» (иначе модель может
+# отнести реплику к чужому коду); сам ход продолжает повестку обычным порядком.
+INERT_SIGNALS: frozenset[str] = frozenset({"resume"})
+
 # Нетерминальные — диалог продолжается, но ход может быть обработан особым образом.
 NONTERMINAL_SIGNALS: frozenset[str] = frozenset({
     "gibberish", "bot_check", "answer_aid", "salary_info",
-    "contact_source", "company_info", "scheduling", "pause", "resume",
-})
+    "contact_source", "company_info", "scheduling", "pause",
+}) | INERT_SIGNALS
 
 # Сигнал → счётчик состояния. Отображение ТОТАЛЬНОЕ по счётным ключам, кроме `demand`: он не триггер
 # (в таблице приоритета `system.md:137` его нет вовсе), а надстройка над другим триггером — «настойчиво
